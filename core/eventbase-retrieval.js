@@ -15,6 +15,7 @@
 
 import { queryEvents } from './eventbase-store.js';
 import { getChatUUID } from './collection-ids.js';
+import { extractChatKeywords, applyKeywordBoost } from './keyword-boost.js';
 
 // ---------------------------------------------------------------------------
 // Default re-rank weights (tuned for long-form SillyTavern RP)
@@ -117,8 +118,24 @@ export async function retrieveEvents({ searchText, chatLength, settings, chatUUI
         console.log(`[EventBase] Query returned ${rawCandidates.length} raw candidates`);
     }
 
-    // 2. Filter by minimum importance
-    const importanceFiltered = rawCandidates.filter(m => {
+    // 2. Keyword boost — honour the same Core-tab settings as the legacy pipeline.
+    //    Extracts keywords from searchText and multiplies the cosine score of events
+    //    whose stored keywords overlap with the query keywords.
+    //    Runs before re-rank so the boosted score feeds into the 4-weight formula.
+    const extractionLevel = settings.keyword_extraction_level || 'balanced';
+    const baseWeight = settings.keyword_boost_base_weight || 1.5;
+    const queryKeywords = extractChatKeywords(searchText, { level: extractionLevel, baseWeight });
+    let boostedCandidates = rawCandidates;
+    if (queryKeywords.length > 0) {
+        boostedCandidates = applyKeywordBoost(rawCandidates, searchText, { diminishingReturns: true, perKeywordCap: true });
+        if (debugLog) {
+            const boostedCount = boostedCandidates.filter(c => c.keywordBoosted).length;
+            console.log(`[EventBase] Keyword boost: ${queryKeywords.length} query keywords, ${boostedCount}/${boostedCandidates.length} events boosted`);
+        }
+    }
+
+    // 3. Filter by minimum importance
+    const importanceFiltered = boostedCandidates.filter(m => {
         const imp = m.importance ?? m.metadata?.importance ?? 0;
         return imp >= minImportance;
     });
@@ -204,6 +221,8 @@ export async function retrieveEvents({ searchText, chatLength, settings, chatUUI
         events: finalEvents,
         debug: {
             rawCount: rawCandidates.length,
+            keywordsBoosted: boostedCandidates.filter(c => c.keywordBoosted).length,
+            queryKeywords: queryKeywords.map(k => k.text),
             afterImportanceFilter: importanceFiltered.length,
             afterDedup: dedupedEvents.length,
             afterContextDedup: contextDedupedEvents.length,

@@ -159,3 +159,34 @@ Why this speeds up:
 
 Related client-side behavior (VectHare):
 - In `core/core-vector-api.js`, local GPU sources default to small batch behavior unless user explicitly overrides `insert_batch_size`.
+
+---
+
+## 8) Module Integration Analysis — EventBase Compatibility
+
+Analysis of whether non-EventBase modules should be integrated into the EventBase pipeline.
+
+### temporal-decay.js — NOT compatible
+
+**Module:** [`core/temporal-decay.js`](core/temporal-decay.js)
+**Decision:** ❌ Do not add to EventBase.
+
+`applyDecayToResults` checks `chunk.metadata.source === 'chat'` and `chunk.metadata.messageId`. EventBase [`EventBase`](core/eventbase-schema.js) events do not carry `source: 'chat'` or a `messageId` field — they use `source_window_end`. Every event would be skipped with `decayApplied: false`.
+
+Additionally, EventBase already has its own `_recencyBonus` — an exponential decay term computed from `source_window_end` and `chatLength` — baked into the 4-weight re-ranker formula in [`eventbase-store.js`](core/eventbase-store.js). Applying `temporal-decay.js` would be redundant and silently do nothing.
+
+### hybrid-search.js — NOT compatible
+
+**Module:** [`core/hybrid-search.js`](core/hybrid-search.js)
+**Decision:** ❌ Do not add to EventBase.
+
+`hybridSearch()` takes a `collectionId` and queries it with both vector + BM25/text fusion. It operates at the backend/collection layer directly — it queries the collection and returns `{ hashes, metadata }` like a raw backend call, completely bypassing [`queryEvents()`](core/eventbase-store.js) and the EventBase store layer.
+
+Plugging it in would require duplicating the store resolution logic (collection ID mapping, schema-aware hydration, score normalization). It would also fail to populate EventBase-specific fields (`score`, `importance`, etc.) correctly. The keyword boost already added to the retrieval pipeline covers the "term frequency matters" use case without this plumbing complexity.
+
+### Summary table
+
+| Module | Add to EventBase? | Reason |
+|---|---|---|
+| [`temporal-decay.js`](core/temporal-decay.js) | No | Already covered by `_recencyBonus` in the 4-weight formula; `applyDecayToResults` would silently skip all events due to missing `source: 'chat'` / `messageId` fields |
+| [`hybrid-search.js`](core/hybrid-search.js) | No | Operates at the backend/collection layer, bypasses EventBase store; keyword boost (just added) already covers term-frequency relevance |

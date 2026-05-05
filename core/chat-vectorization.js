@@ -1826,6 +1826,11 @@ export async function rearrangeChat(chat, settings, type) {
                     settings,
                     chatUUID: getChatUUID(),
                 });
+            } else {
+                // Empty query — clear any stale injection from a previous generation.
+                const { setExtensionPrompt } = await import('../../../../../script.js');
+                const { EXTENSION_PROMPT_TAG } = await import('./constants.js');
+                setExtensionPrompt(`${EXTENSION_PROMPT_TAG}_eventbase`, '', settings.position, settings.depth, false);
             }
             return;
         }

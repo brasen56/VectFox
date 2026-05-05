@@ -454,15 +454,10 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
 
     // Call provider
     let rawReply;
-    try {
-        if (provider === 'vllm') {
-            rawReply = await _callVLLM(prompt, settings, windowIndex);
-        } else {
-            rawReply = await _callOpenRouter(prompt, settings, windowIndex);
-        }
-    } catch (err) {
-        // Fatal errors propagate; extraction errors are caught by caller
-        throw err;
+    if (provider === 'vllm') {
+        rawReply = await _callVLLM(prompt, settings, windowIndex);
+    } else {
+        rawReply = await _callOpenRouter(prompt, settings, windowIndex);
     }
 
     if (debugLog) {

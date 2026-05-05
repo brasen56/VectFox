@@ -329,6 +329,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         if (settings.retrieval_popup_on_result) {
             toastr.info('EventBase: no events matched', 'VectHarePlus Retrieval');
         }
+        setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }
 
@@ -337,6 +338,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     const injectedCount = injectionResult.includedCount;
     if (!injectionText) {
         if (debugLog) console.log('[EventBase] Injection text empty after formatting');
+        setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }
 

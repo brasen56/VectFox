@@ -71,12 +71,3 @@ export function formatEventsForInjectionDetailed(events, _settings) {
     };
 }
 
-/**
- * Backward-compatible wrapper that returns only the formatted text.
- * @param {object[]} events
- * @param {object} settings
- * @returns {string}
- */
-export function formatEventsForInjection(events, settings) {
-    return formatEventsForInjectionDetailed(events, settings).text;
-}
