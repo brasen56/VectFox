@@ -176,6 +176,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     const extractionLevel = settings.keyword_extraction_level || 'balanced';
     const baseWeight = settings.keyword_boost_base_weight || 1.5;
     const queryKeywords = extractChatKeywords(boostText, { level: extractionLevel, baseWeight });
+    const queryKeywordTexts = queryKeywords.map(k => k.text);
     let boostedCandidates = rawCandidates;
     if (!useHybrid && queryKeywords.length > 0) {
         // Non-hybrid path: apply term-level keyword boost on top of raw cosine results.
@@ -187,6 +188,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         }
     } else if (useHybrid && debugLog) {
         console.log(`[EventBase] Keyword boost skipped — hybrid search (${settings.hybrid_fusion_method || 'rrf'}) already includes BM25 scoring`);
+        console.log(`[EventBase] Hybrid keyword debug — extracted ${queryKeywords.length} keyword(s) from boostText: ${queryKeywordTexts.length ? queryKeywordTexts.join(', ') : '(none)'}`);
     }
 
     // 3. Filter by minimum importance

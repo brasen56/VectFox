@@ -190,3 +190,27 @@ Plugging it in would require duplicating the store resolution logic (collection 
 |---|---|---|
 | [`temporal-decay.js`](core/temporal-decay.js) | No | Already covered by `_recencyBonus` in the 4-weight formula; `applyDecayToResults` would silently skip all events due to missing `source: 'chat'` / `messageId` fields |
 | [`hybrid-search.js`](core/hybrid-search.js) | No | Operates at the backend/collection layer, bypasses EventBase store; keyword boost (just added) already covers term-frequency relevance |
+
+---
+
+## 9) EventBase Settings Impact Table
+
+After wiring EventBase to use hydrant native hybrid search, these settings affect EventBase as follows:
+
+| Setting | Affects EventBase? | Notes |
+|---|---|---|
+| `hybrid_search_enabled` | Yes | Directly toggles hybrid retrieval for EventBase. When enabled, EventBase uses hybrid search; when disabled, it falls back to pure vector search plus simple keyword boost. |
+| `hybrid_fusion_method` (`rrf` / `weighted`) | Yes | Controls the fusion strategy used by EventBase when hybrid search is enabled. |
+| `prefer_native_backend_hybrid` | Yes | If enabled and the backend supports native hybrid (for example Qdrant / Milvus), EventBase uses the backend-native hybrid path. |
+| `bm25_k1`, `bm25_b` | Yes | Used by the client-side BM25 fallback when native hybrid is unavailable. |
+| `hybrid_vector_weight`, `hybrid_text_weight` | Yes | Used only when fusion method is `weighted`. |
+| `hybrid_rrf_k` | Yes | Used only when fusion method is `rrf`. |
+| `keyword_scoring_method` (`keyword`, `bm25`, `hybrid`) | No | This setting affects the main chat chunk pipeline, not EventBase. EventBase is controlled by `hybrid_search_enabled` instead. |
+| `keyword_extraction_level`, `keyword_boost_base_weight` | Only when hybrid is disabled | These affect the fallback `applyKeywordBoost()` path when EventBase hybrid search is off. |
+| `deduplication_depth` | Yes | Used by EventBase context deduplication to suppress events that are already visible in the recent chat window. |
+| `eventbase_retrieval_top_k`, `eventbase_retrieval_min_importance`, EventBase rerank weights | Yes | Still active for both hybrid and non-hybrid EventBase retrieval. |
+
+### Key takeaway
+- Use `hybrid_search_enabled`, `hybrid_fusion_method`, and `prefer_native_backend_hybrid` to control EventBase hybrid retrieval.
+- `keyword_scoring_method` does **not** control EventBase.
+- If hybrid is disabled, EventBase falls back to its original pure-vector-plus-keyword-boost path.
