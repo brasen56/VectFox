@@ -156,7 +156,7 @@ function prepareItemsForInsertion(items) {
 async function groupMessagesByStrategy(messages, strategy, batchSize = 4, keywordLevel = 'balanced', settings = {}) {
     if (!messages.length) return [];
 
-    console.log(`[VectHare] groupMessagesByStrategy: ${messages.length} messages, strategy=${strategy}, summarize_provider=${settings?.summarize_provider || 'off'}`);
+    console.log(`[VectHare] groupMessagesByStrategy: ${messages.length} messages, strategy=${strategy}, summarize_provider=${settings?.summarize_provider || 'openrouter'}`);
 
     const summarize = (text) => summarizeText(text, settings);
     const summarizeGroup = (texts) => summarizeTextGroup(texts, settings);

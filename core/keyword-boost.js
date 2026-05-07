@@ -180,7 +180,7 @@ function shouldKeepCjkKeyword(token, frequency, isJapaneseMode, isTraditionalChi
 }
 
 function isSummarizationEnabled(settings) {
-    return (settings?.summarize_provider || 'off') !== 'off';
+    return ['openrouter', 'vllm'].includes(String(settings?.summarize_provider || 'openrouter'));
 }
 
 function getEffectiveHeaderSize(config, level, settings) {

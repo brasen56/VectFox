@@ -732,26 +732,9 @@ export function renderSettings(containerId, settings, callbacks) {
 
                             <!-- Collection lock moved to Database Browser (per-collection settings) -->
 
-                            <label for="vecthare_chunking_strategy" style="margin-top: 12px;">
-                                <small>Chunking Strategy</small>
-                            </label>
-                            <select id="vecthare_chunking_strategy" class="vecthare-select">
-                                <!-- Populated dynamically from content-types.js -->
-                            </select>
-
-                            <!-- Strategy description (populated dynamically) -->
-                            <div id="vecthare_strategy_info" class="vecthare_hint" style="margin-top: 4px; margin-bottom: 12px;">
-                                <span id="vecthare_strategy_description"></span>
-                            </div>
-
-                            <!-- Message Batch settings (only shown for message_batch strategy) -->
-                            <div id="vecthare_batch_settings" style="display: none;">
-                                <label for="vecthare_batch_size">
-                                    <small>Messages per Batch: <span id="vecthare_batch_size_value">4</span></small>
-                                </label>
-                                <input type="range" id="vecthare_batch_size" class="vecthare-slider" min="2" max="10" step="1" />
-                                <small class="vecthare_hint">How many messages to group together</small>
-                            </div>
+                            <small class="vecthare_hint" style="display:block; margin-top: 12px;">
+                                Chat Auto-Sync follows the EventBase extraction settings. Legacy chat chunking controls are hidden because chat history no longer uses the old chunk-based retrieval path.
+                            </small>
 
                             <!-- Message Group Batch settings (only shown for message_group_batch strategy) -->
                             <div id="vecthare_group_batch_settings" style="display: none; margin-top: 10px;">
@@ -782,11 +765,10 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <small>Summarization Provider</small>
                             </label>
                             <select id="vecthare_summarize_provider" class="vecthare-select">
-                                <option value="off">Off</option>
                                 <option value="openrouter">OpenRouter</option>
                                 <option value="vllm">vLLM</option>
                             </select>
-                            <small class="vecthare_hint">Provider used for summarization LLM calls</small>
+                            <small class="vecthare_hint">Provider required for summarization / EventBase extraction LLM calls</small>
 
                             <div id="vecthare_summarize_settings" style="display:none; margin-top:12px;">
 
@@ -2046,23 +2028,19 @@ function bindSettingsEvents(settings, callbacks) {
 
     // Summarization provider
     const updateSummarizeUI = (provider) => {
-        if (provider === 'off') {
-            $('#vecthare_summarize_settings').hide();
-        } else {
-            $('#vecthare_summarize_settings').show();
-            $('#vecthare_summarize_openrouter_row').toggle(provider === 'openrouter');
-            $('#vecthare_summarize_vllm_url_row').toggle(provider === 'vllm');
-        }
+        $('#vecthare_summarize_settings').show();
+        $('#vecthare_summarize_openrouter_row').toggle(provider === 'openrouter');
+        $('#vecthare_summarize_vllm_url_row').toggle(provider === 'vllm');
     };
     $('#vecthare_summarize_provider')
-        .val(settings.summarize_provider || 'off')
+        .val(settings.summarize_provider || 'openrouter')
         .on('change', function() {
             settings.summarize_provider = String($(this).val());
             Object.assign(extension_settings.vecthareplus, settings);
             saveSettingsDebounced();
             updateSummarizeUI(settings.summarize_provider);
         });
-    updateSummarizeUI(settings.summarize_provider || 'off');
+    updateSummarizeUI(settings.summarize_provider || 'openrouter');
 
     $('#vecthare_summarize_model')
         .val(settings.summarize_model || '')

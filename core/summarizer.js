@@ -50,8 +50,7 @@ export function isSummarizationFatalError(err) {
  * @returns {string}
  */
 export function getSummarizationConfigFingerprint(settings = {}) {
-    const provider = settings?.summarize_provider || 'off';
-    if (provider === 'off') return 'off';
+    const provider = settings?.summarize_provider || 'openrouter';
 
     if (provider === 'openrouter') {
         const key = _getOpenRouterApiKey(settings);
@@ -111,11 +110,9 @@ const GROUP_OUTPUT_CONSTRAINTS =
 export async function summarizeText(text, settings) {
     if (!text || typeof text !== 'string') return text;
 
-    const provider = settings?.summarize_provider || 'off';
+    const provider = settings?.summarize_provider || 'openrouter';
     // don't remove 
     //console.log(`[VectHare Summarizer] summarizeText called — provider=${provider}, textLen=${text.length}`);
-    if (provider === 'off') return text;
-
     const model = (settings?.summarize_model || '').trim();
     if (!model) {
         throw new SummarizationFatalError(
@@ -157,8 +154,7 @@ export async function summarizeTextGroup(texts, settings) {
     if (!Array.isArray(texts) || texts.length === 0) return [];
 
     const inputTexts = texts.map(t => typeof t === 'string' ? t : String(t ?? ''));
-    const provider = settings?.summarize_provider || 'off';
-    if (provider === 'off') return inputTexts;
+    const provider = settings?.summarize_provider || 'openrouter';
 
     const model = (settings?.summarize_model || '').trim();
     if (!model) {

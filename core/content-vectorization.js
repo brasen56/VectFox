@@ -137,7 +137,7 @@ export async function vectorizeContent({ contentType, source, settings, abortSig
         // Step 3.5 + 4 combined: For chat with summarization, pipeline each chunk
         // (summarize → embed → insert immediately) to start filling Qdrant right away.
         // For everything else, do the original batch approach.
-        if (contentType === 'chat' && (vecthareSettings?.summarize_provider || 'off') !== 'off') {
+        if (contentType === 'chat') {
             progressTracker.updateProgress(3, `Summarizing and inserting ${finalChunks.length} chunks...`);
             console.log(`[VectHare Summarizer] Pipelining ${finalChunks.length} chat chunks via ${vecthareSettings.summarize_provider}...`);
 
