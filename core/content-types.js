@@ -200,6 +200,10 @@ export const CONTENT_TYPES = {
             scenes: true,
         },
 
+        // LEGACY CHAT STRATEGIES NOTE:
+        // *** will be remove in future version because no longer used by eventbased path ***
+        // These remain in the registry for backward compatibility, but EventBase-only chat
+        // retrieval means they are no longer surfaced in the chat Auto-Sync GUI.
         // Chat strategies: per_message, conversation_turns, message_batch, message_group_batch, per_scene, adaptive
         chunkingStrategies: ['per_message', 'conversation_turns', 'message_batch', 'message_group_batch', 'per_scene', 'adaptive'],
         defaultStrategy: 'per_message',

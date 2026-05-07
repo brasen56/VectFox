@@ -149,6 +149,10 @@ function prepareItemsForInsertion(items) {
  * @param {string} keywordLevel Keyword extraction level: 'off', 'minimal', 'balanced', 'aggressive'
  * @returns {object[]} Grouped message items ready for chunking
  */
+// LEGACY CHAT STRATEGIES NOTE:
+// *** will be remove in future version because no longer used by eventbased path ***
+// EventBase-enabled chat sync no longer depends on these chat chunk grouping modes, but
+// they are kept temporarily for backward compatibility and non-EventBase legacy flows.
 async function groupMessagesByStrategy(messages, strategy, batchSize = 4, keywordLevel = 'balanced', settings = {}) {
     if (!messages.length) return [];
 
@@ -536,6 +540,9 @@ export async function synchronizeChat(settings, batchSize = 5) {
         return { remaining: -1, messagesProcessed: 0, chunksCreated: 0 };
     }
 
+    // LEGACY CHAT STRATEGY NOTE:
+    // *** will be remove in future version because no longer used by eventbased path ***
+    // Per Scene belongs to the old chunk-based chat pipeline.
     // Per Scene strategy: don't auto-vectorize on message events
     // Scenes are vectorized when user marks scene end (via createSceneChunk)
     if (settings.chunking_strategy === 'per_scene') {
@@ -583,6 +590,9 @@ export async function synchronizeChat(settings, batchSize = 5) {
         // Step 1: What's already vectorized? (source of truth = DB)
         const existingHashes = new Set(await getSavedHashes(collectionId, settings));
 
+        // LEGACY CHAT STRATEGY NOTE:
+        // *** will be remove in future version because no longer used by eventbased path ***
+        // This chunking_strategy/batch_size branch is only relevant to the legacy chat chunk pipeline.
         // Step 2: Build list of messages NOT in DB
         const strategy = settings.chunking_strategy || 'per_message';
         const strategyBatchSize = settings.batch_size || 4;

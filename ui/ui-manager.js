@@ -2038,59 +2038,11 @@ function bindSettingsEvents(settings, callbacks) {
 
         // Collection lock handled inside Database Browser per-collection settings
 
-    // Chunking strategy - populate from content-types.js (single source of truth)
-    const chatStrategies = getChunkingStrategies('chat');
-    const strategySelect = $('#vecthare_chunking_strategy');
-    strategySelect.empty();
-    for (const strategy of chatStrategies) {
-        const selected = strategy.id === (settings.chunking_strategy || 'per_message');
-        strategySelect.append(`<option value="${strategy.id}" ${selected ? 'selected' : ''}>${strategy.name}</option>`);
-    }
-
-    function updateStrategyUI(strategyId) {
-        // Update description from content-types.js
-        const strategy = chatStrategies.find(s => s.id === strategyId);
-        $('#vecthare_strategy_description').text(strategy?.description || '');
-        // Show/hide strategy-specific settings
-        $('#vecthare_batch_settings').toggle(strategyId === 'message_batch' || strategyId === 'message_group_batch');
-        $('#vecthare_group_batch_settings').toggle(strategyId === 'message_group_batch');
-    }
-
-    strategySelect.on('change', function() {
-        settings.chunking_strategy = String($(this).val());
-        Object.assign(extension_settings.vecthareplus, settings);
-        saveSettingsDebounced();
-        updateStrategyUI(settings.chunking_strategy);
-    });
-    updateStrategyUI(settings.chunking_strategy || 'per_message');
-
-    // Batch size (for message_batch strategy)
-    $('#vecthare_batch_size')
-        .val(settings.batch_size || 4)
-        .on('input', function() {
-            const value = Number($(this).val());
-            $('#vecthare_batch_size_value').text(value);
-            settings.batch_size = value;
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
-        });
-    $('#vecthare_batch_size_value').text(settings.batch_size || 4);
-
-    // Group request size (for message_group_batch strategy)
-    const clampedGroupBatchSize = Math.min(30, Math.max(6, Number(settings.group_batch_size || 10)));
-    settings.group_batch_size = clampedGroupBatchSize;
-    $('#vecthare_group_batch_size')
-        .val(clampedGroupBatchSize)
-        .on('input', function() {
-            const raw = Number($(this).val());
-            const value = Math.min(30, Math.max(6, raw));
-            $(this).val(value);
-            $('#vecthare_group_batch_size_value').text(value);
-            settings.group_batch_size = value;
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
-        });
-    $('#vecthare_group_batch_size_value').text(clampedGroupBatchSize);
+    // LEGACY CHAT CHUNKING STRATEGIES NOTE:
+    // *** will be remove in future version because no longer used by eventbased path ***
+    // The old chat chunking strategy selector and related batch/group-batch sliders were
+    // removed from the GUI because chat auto-sync now follows EventBase extraction settings.
+    // Keep the underlying settings fields for backward compatibility / migration only.
 
     // Summarization provider
     const updateSummarizeUI = (provider) => {
