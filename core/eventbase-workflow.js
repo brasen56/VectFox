@@ -53,6 +53,24 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     const debugVectorizing = settings.debug_vectorizing_log === true;
     const uuid = chatUUID || getChatUUID();
 
+    // Respect the global collection pause toggle before doing any extraction,
+    // ingestion, or insertion work. Pause is a hard stop regardless of chat locks.
+    const collectionId = buildEventBaseCollectionId(uuid, settings?.vector_backend);
+    const backend = settings?.vector_backend || 'standard';
+    const source = settings?.source || 'transformers';
+    const candidateKeys = [
+        collectionId,
+        `${source}:${collectionId}`,
+        `${backend}:${source}:${collectionId}`,
+    ].filter(Boolean);
+    const disabledKey = candidateKeys.find(key => key && !isCollectionEnabled(key));
+    if (disabledKey) {
+        if (debugLog) {
+            console.log(`[EventBase] Collection paused (key="${disabledKey}") — skipping ingestion`);
+        }
+        return { eventsExtracted: 0, windowsProcessed: 0, windowsSkipped: 0 };
+    }
+
     const windowSize = Math.max(2, settings.eventbase_window_size || 6);
     const windowOverlap = Math.max(0, Math.min(windowSize - 1, settings.eventbase_window_overlap ?? 1));
     const step = windowSize - windowOverlap;
@@ -68,7 +86,6 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     const cacheEntries = extension_settings?.vecthareplus?.eventbase_extracted_windows?.[uuid];
     if (Array.isArray(cacheEntries) && cacheEntries.length > 0) {
         try {
-            const collectionId = buildEventBaseCollectionId(uuid, settings?.vector_backend);
             const existingHashes = collectionId ? await getSavedHashes(collectionId, settings) : [];
             if (!existingHashes?.length) {
                 if (debugLog) console.log('[EventBase] Collection is empty but cache has entries — resetting window cache');

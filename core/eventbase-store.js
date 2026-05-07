@@ -19,6 +19,7 @@ import { getCurrentChatId, chat_metadata, saveSettingsDebounced } from '../../..
 import { extension_settings } from '../../../../extensions.js';
 import { getChatUUID, buildEventBaseCollectionId } from './collection-ids.js';
 import { registerCollection } from './collection-loader.js';
+import { setCollectionLock } from './collection-metadata.js';
 import { buildEmbedText } from './eventbase-schema.js';
 
 // Re-export so callers can import from here if needed
@@ -96,6 +97,16 @@ export async function insertEvents(events, settings, abortSignal = null) {
 
     // Register collection so it appears in the registry / DB browser
     await registerCollection(collectionId, settings);
+
+    // Mirror legacy chat collection behavior: EventBase chat collections should
+    // automatically become active for the current chat after first successful insert.
+    const currentChatId = getCurrentChatId();
+    if (currentChatId) {
+        setCollectionLock(collectionId, currentChatId);
+        if (debugLog) {
+            console.log(`[EventBase] Locked collection "${collectionId}" to current chat "${currentChatId}"`);
+        }
+    }
 
     if (debugLog) {
         console.log(`[EventBase] Insert complete for collection "${collectionId}"`);
