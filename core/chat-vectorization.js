@@ -757,15 +757,16 @@ function gatherCollectionsToQuery(settings) {
     }
 
     // Get all other registered collections that are enabled.
-    // Enforce workflow isolation symmetrically:
-    //   EventBase OFF  → skip vecthare_eventbase_* (chunk pipeline should not touch them)
-    //   EventBase ON   → skip vecthare_chat_*       (eventbase pipeline owns those)
+    // Workflow isolation:
+    //   vecthare_eventbase_* → always excluded from standard pipeline (EventBase pipeline owns them)
+    //   vecthare_chat_*      → excluded when EventBase is ON (eventbase pipeline owns them)
     for (const registryKey of registry) {
         // Use proper registry key parser to extract collection ID
         const parsedKey = parseRegistryKey(registryKey);
         const collectionId = parsedKey.collectionId;
 
-        if (!settings?.eventbase_enabled && collectionId?.startsWith(COLLECTION_PREFIXES.VECTHARE_EVENTBASE)) {
+        // EventBase collections are always owned by the EventBase pipeline — never the standard pipeline
+        if (collectionId?.startsWith(COLLECTION_PREFIXES.VECTHARE_EVENTBASE)) {
             continue;
         }
 

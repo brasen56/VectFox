@@ -1,6 +1,30 @@
 # Dev Helper
 
-## 1) Extraction Level Location
+## 1) Pipeline Architecture — EventBase Always On
+
+EventBase is the **default and permanent** retrieval mode. There is no "EventBase OFF" path going forward.
+
+### Two pipelines, strict ownership
+
+| Pipeline | Owned collections | Code entry point |
+|---|---|---|
+| **EventBase pipeline** | `vecthare_eventbase_*` | `eventbase-workflow.js` → `eventbase-retrieval.js` |
+| **Standard pipeline** | `vecthare_lorebook_*`, `vecthare_document_*`, user collections | `chat-vectorization.js` → `queryAndMergeCollections` |
+
+`vecthare_chat_*` collections (plain chunk-based chat history) are being phased out. When they still exist, they are excluded from the standard pipeline when EventBase is ON.
+
+### Key isolation rule (`core/chat-vectorization.js` → `gatherCollectionsToQuery`)
+
+- `vecthare_eventbase_*` → **always** skipped by the standard pipeline (EventBase pipeline owns them exclusively)
+- `vecthare_chat_*` → skipped by the standard pipeline when EventBase is ON
+
+### Why this matters
+
+Before this was fixed, `vecthare_eventbase_*` collections were included in the standard pipeline when EventBase was ON, causing them to be queried twice per generation: once by the EventBase pipeline (structured event retrieval with dedup-depth) and once by the standard pipeline (raw chunk retrieval). The standard pipeline query was always redundant and could inject duplicate content.
+
+---
+
+## 2) Extraction Level Location
 Extraction levels are defined in: `core/keyword-boost.js`
 
 Exact export name:
@@ -40,14 +64,14 @@ export const EXTRACTION_LEVELS = {
 };
 ```
 
-## 2) Default Summarizer Token/Timeout Constants 
+## 3) Default Summarizer Token/Timeout Constants 
 Located in: `core/summarizer.js`
 
 Exact constant names:
 - `DEFAULT_MAX_TOKENS`
 - `DEFAULT_TIMEOUT_MS`
 
-## 3) Group Batch Message Settings (going to demise as this is chunk based logic)
+## 4) Group Batch Message Settings (going to demise as this is chunk based logic)
 Located in: `core/summarizer.js`
 
 Exact variable names used in grouped summarize flow:
@@ -58,7 +82,7 @@ Notes:
 - `groupMaxTokens` is computed from per-item budget and count, capped at 8192.
 - `groupTimeoutMs` is computed as base timeout + per-item scaling, capped at 180000 ms.
 
-## 4) Collection Active State — Two Separate Controls
+## 5) Collection Active State — Two Separate Controls
 
 There are **two independent toggles** for collection activity. They store data in different fields and must be checked separately.
 
@@ -108,7 +132,7 @@ Behaviour matrix:
 
 ---
 
-## 5) EventBase Window Dedup — chat_metadata Fingerprint Cache
+## 6) EventBase Window Dedup — chat_metadata Fingerprint Cache
 
 ### Problem with old approach
 `isWindowAlreadyExtracted` used a semantic DB query (`queryCollection(..., 50, ...)`) to check if a window was already extracted. This was:
@@ -132,7 +156,7 @@ Windows extracted before this fix have no fingerprint in cache. First run after 
 
 ---
 
-## 6) GUI Settings — EventBase Relevance
+## 7) GUI Settings — EventBase Relevance
 
 Two settings in the VectHare settings panel that look similar to EventBase internals:
 
@@ -143,7 +167,7 @@ Two settings in the VectHare settings panel that look similar to EventBase inter
 
 ---
 
-## 7) Similharity Plugin Speedup (Simultaneous Embedding Requests)
+## 8) Similharity Plugin Speedup (Simultaneous Embedding Requests)
 Plugin file changed: `../similharity/index.js`
 
 What we changed:
@@ -171,7 +195,7 @@ Related client-side behavior (VectHare):
 
 ---
 
-## 8) Module Integration Analysis — EventBase Compatibility
+## 9) Module Integration Analysis — EventBase Compatibility
 
 Analysis of whether non-EventBase modules should be integrated into the EventBase pipeline.
 
@@ -202,7 +226,7 @@ Do **not** call `hybridSearch()` directly from `eventbase-retrieval.js` or `even
 
 ---
 
-## 9) EventBase Settings Impact Table
+## 10) EventBase Settings Impact Table
 
 Three retrieval paths exist after the keyword-level simplification. All paths are chosen inside `queryCollection()` — EventBase inherits whichever applies to the active backend.
 
@@ -228,7 +252,7 @@ Three retrieval paths exist after the keyword-level simplification. All paths ar
 
 ---
 
-## 10) Mirrored Function — `extractQueryKeywords`
+## 11) Mirrored Function — `extractQueryKeywords`
 
 | Item | Value |
 |---|---|
@@ -240,7 +264,7 @@ Three retrieval paths exist after the keyword-level simplification. All paths ar
 **Keep-in-sync note:** if the extraction algorithm changes in `similharity/index.js` (e.g. anchor budget, bigram fallback, Latin regex), update `core/query-keyword-extractor.js` to match. The console log prefix was changed from `[Qdrant]` to `[VectHare]` — that difference is intentional.
 
 
-## 11) javascript to get these variables in chrome console
+## 12) javascript to get these variables in chrome console
 const ctx = SillyTavern.getContext();
 const chatUUID = ctx.chatMetadata?.integrity || ctx.chatId;
 const handleId = (ctx.name1 || 'user').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substring(0, 30) || 'user';
