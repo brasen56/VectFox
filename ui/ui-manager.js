@@ -2161,13 +2161,34 @@ function bindSettingsEvents(settings, callbacks) {
         $('#vecthare_bm25_params').toggle(!nativeActive);
     }
 
+    // Apply backend-specific hybrid defaults when backend changes or on first load.
+    // Only rewrites settings that make sense for the new backend — does not touch user-tuned values
+    // like rrf_k, vector/text weights, or BM25 k1/b.
+    function applyBackendHybridDefaults(backend) {
+        const isNative = backend === 'qdrant' || backend === 'milvus';
+        if (isNative) {
+            // Qdrant/Milvus: prefer native hybrid, RRF fusion
+            settings.hybrid_native_prefer = true;
+            settings.hybrid_fusion_method = settings.hybrid_fusion_method || 'rrf';
+        } else {
+            // Standard/LanceDB: no native hybrid, BM25 fast re-rank, RRF fusion
+            settings.hybrid_native_prefer = false;
+            settings.keyword_scoring_method = settings.keyword_scoring_method || 'bm25';
+            settings.hybrid_fusion_method = settings.hybrid_fusion_method || 'rrf';
+        }
+        // Sync UI controls
+        $('#vecthare_hybrid_native_prefer').prop('checked', settings.hybrid_native_prefer);
+        $('#vecthare_keyword_scoring_method').val(settings.keyword_scoring_method || 'bm25');
+        $('#vecthare_hybrid_fusion_method').val(settings.hybrid_fusion_method || 'rrf');
+        Object.assign(extension_settings.vecthareplus, settings);
+        saveSettingsDebounced();
+    }
+
     // Vector backend selection
     $('#vecthare_vector_backend')
         .val(settings.vector_backend || 'qdrant')
         .on('change', function() {
             settings.vector_backend = String($(this).val());
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
 
             // Show/hide Qdrant settings
             if (settings.vector_backend === 'qdrant') {
@@ -2181,6 +2202,7 @@ function bindSettingsEvents(settings, callbacks) {
                 $('#vecthare_milvus_settings').hide();
             }
 
+            applyBackendHybridDefaults(settings.vector_backend);
             updateNativeHybridUI();
             console.log(`VectHare: Vector backend changed to ${settings.vector_backend}`);
             // Reset health cache so new backend gets properly initialized
