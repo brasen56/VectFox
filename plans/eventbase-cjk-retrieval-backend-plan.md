@@ -71,7 +71,7 @@ This is only the frontend proper-noun-biased extractor view. It is not the real 
 From the backend portion of [`Doc/log.txt`](Doc/log.txt):
 
 ```text
-[Hdrant-backend] Hybrid query keywords (10): mayla,
+[Qdrant-backend] Hybrid query keywords (10): mayla,
 "你記得我當時怎樣為你贖身的嗎?",
 好，來仔細思考一下這次的劇情！,
 回顧當前情況,
@@ -86,9 +86,9 @@ This is the key issue:
 Then the fused results show the keyword side mostly matching `mayla`:
 
 ```text
-[Hdrant-backend] [0] finalScore=0.013716, vectorScore=0.779071, keywordScore=0.150000, vectorRank=5, keywordRank=23, matchedKeywordList=mayla:text
-[Hdrant-backend] [1] finalScore=0.013682, vectorScore=0.692217, keywordScore=0.150000, vectorRank=19, keywordRank=8, matchedKeywordList=mayla:text
-[Hdrant-backend] [3] finalScore=0.013100, vectorScore=0.721028, keywordScore=0.300000, vectorRank=8, keywordRank=27, matchedKeywordList=mayla:text, mayla:payload
+[Qdrant-backend] [0] finalScore=0.013716, vectorScore=0.779071, keywordScore=0.150000, vectorRank=5, keywordRank=23, matchedKeywordList=mayla:text
+[Qdrant-backend] [1] finalScore=0.013682, vectorScore=0.692217, keywordScore=0.150000, vectorRank=19, keywordRank=8, matchedKeywordList=mayla:text
+[Qdrant-backend] [3] finalScore=0.013100, vectorScore=0.721028, keywordScore=0.300000, vectorRank=8, keywordRank=27, matchedKeywordList=mayla:text, mayla:payload
 ```
 
 This tells us:
@@ -217,7 +217,7 @@ Improves precision significantly, especially for CJK where exact payload keyword
 We now have the right visibility to diagnose the keyword side. This should be preserved while improving tokenization.
 
 #### What to do
-Keep the `Debug Hdrant backend` path and ensure logs continue to show:
+Keep the `Debug Qdrant backend` path and ensure logs continue to show:
 - received backend keyword list
 - `vectorScore`
 - `keywordScore`
@@ -347,7 +347,7 @@ The work is successful when:
 2. `matchedKeywordList` includes meaningful CJK terms regularly.
 3. Keyword branch contributes more than just English names.
 4. Retrieval quality improves on CJK-heavy EventBase queries.
-5. Debug remains controllable through the `Debug Hdrant backend` GUI checkbox.
+5. Debug remains controllable through the `Debug Qdrant backend` GUI checkbox.
 
 ---
 

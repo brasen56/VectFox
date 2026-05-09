@@ -29,7 +29,8 @@ import { textgen_types, textgenerationwebui_settings } from '../../../../textgen
 import { oai_settings } from '../../../../openai.js';
 import { isWebLlmSupported } from '../../../shared.js';
 import { getWebLlmProvider } from '../providers/webllm.js';
-import { getBackend, invalidateBackendHealth, recordQuery, recordInsert, recordDelete, recordError } from '../backends/backend-manager.js';
+import { getBackend, getBackendForCollection, invalidateBackendHealth, recordQuery, recordInsert, recordDelete, recordError } from '../backends/backend-manager.js';
+import { parseRegistryKey } from './collection-ids.js';
 import {
     getProviderConfig,
     getModelField,
@@ -831,7 +832,10 @@ export async function deleteVectorItems(collectionId, hashes, settings) {
  * @returns {Promise<{ hashes: number[], metadata: object[]}>} - Hashes and metadata of the results
  */
 export async function queryCollection(collectionId, searchText, topK, settings) {
-    const backend = await getBackend(settings);
+    const parsed = parseRegistryKey(collectionId);
+    const backend = parsed.backend
+        ? await getBackendForCollection(parsed.backend, settings)
+        : await getBackend(settings);
 
     // Sources that require client-side embedding generation
     const clientSideEmbeddingSources = ['webllm', 'koboldcpp', 'bananabread'];

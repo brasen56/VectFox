@@ -176,12 +176,16 @@ export class QdrantBackend extends VectorBackend {
 
         const parts = collectionId.split(':');
 
-        // Check if it starts with backend:source: prefix
+        // New format: backend:collectionId (2-part, part[0] is a known backend)
+        if (parts.length >= 2 && knownBackends.includes(parts[0]) && !knownSources.includes(parts[1])) {
+            return parts.slice(1).join(':');
+        }
+        // Old 3-part format: backend:source:collectionId
         if (parts.length >= 3 && knownBackends.includes(parts[0]) && knownSources.includes(parts[1])) {
             return parts.slice(2).join(':');
         }
-        // Check if it starts with source: prefix (old format)
-        else if (parts.length >= 2 && knownSources.includes(parts[0])) {
+        // Legacy source-only prefix: source:collectionId
+        if (parts.length >= 2 && knownSources.includes(parts[0])) {
             return parts.slice(1).join(':');
         }
 
@@ -759,7 +763,7 @@ export class QdrantBackend extends VectorBackend {
                 textWeight,
                 fusionMethod,
                 rrfK,
-                eventbaseDebug: !!settings.eventbase_debug_hdrant_backend,
+                eventbaseDebug: !!settings.eventbase_debug_qdrant_backend,
             },
         };
 

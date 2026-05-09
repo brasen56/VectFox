@@ -926,9 +926,10 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
         }
     }
 
-    // Sort merged results by score (descending) and limit to topK
+    // Sort merged results by score (descending).
+    // No global topK cap here — each collection already queried with effectiveTopK.
+    // Downstream stages (threshold, decay, dedup) handle final count.
     chunksForVisualizer.sort((a, b) => b.score - a.score);
-    chunksForVisualizer = chunksForVisualizer.slice(0, effectiveTopK);
 
     return chunksForVisualizer;
 }
