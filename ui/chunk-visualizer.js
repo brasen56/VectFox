@@ -586,9 +586,9 @@ function renderSceneList() {
         if (scene.text) {
             preview = scene.text.substring(0, 60).replace(/\s+/g, ' ');
             if (scene.text.length > 60) preview += '...';
-        } else if (meta.summary) {
-            preview = meta.summary.substring(0, 60);
-            if (meta.summary.length > 60) preview += '...';
+        } else if (meta.text) {
+            preview = meta.text.substring(0, 60).replace(/\s+/g, ' ');
+            if (meta.text.length > 60) preview += '...';
         }
 
         html += `

@@ -287,6 +287,23 @@ Three retrieval paths exist after the keyword-level simplification. All paths ar
 **Keep-in-sync note:** if the extraction algorithm changes in `similharity/index.js` (e.g. anchor budget, bigram fallback, Latin regex), update `core/query-keyword-extractor.js` to match. The console log prefix was changed from `[Qdrant]` to `[VectHare]` — that difference is intentional.
 
 
+## Scene summary field — intentionally kept
+
+The `summary` field on scene chunks is a **user-editable search hint** (not AI-generated). It is unrelated to the EventBase `summary` that was removed.
+
+`ui/chunk-visualizer.js` line ~642 reads `meta.summary || ''` — correct, no change needed.
+
+**Storage split for scene chunks:**
+- Scene metadata (title, summary, keywords, sceneStart/End, containedHashes) → **vector DB payload** (read back via `scene.metadata`)
+- Operational flags (disabledByScene, temporallyBlind) → **extension settings** via `saveChunkMetadata` (fast access without DB query)
+- User edits to title/summary/keywords → extension settings via `updateSceneChunkMetadata` (overrides vector DB value in the merge)
+
+Read path in `renderSceneDetailPanel`: `{ ...scene.metadata, ...getChunkMetadata(hash) }` — vector DB base, extension settings overlay.
+
+`similharity/qdrant-backend.js` explicitly stores `summary: item.metadata?.summary ?? null` in the Qdrant payload. EventBase items have no `summary` in metadata (dropped in `eventbase-store.js`), so they get `null`. Scene chunks carry it correctly.
+
+---
+
 ## 12) javascript to get these variables in chrome console
 const ctx = SillyTavern.getContext();
 const chatUUID = ctx.chatMetadata?.integrity || ctx.chatId;

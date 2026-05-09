@@ -325,7 +325,6 @@ export class QdrantBackend extends VectorBackend {
                             disabledKeywords: item.disabledKeywords,
                             chunkGroup: item.chunkGroup,
                             conditions: item.conditions,
-                            summary: item.summary,
                             isSummaryChunk: item.isSummaryChunk,
                             parentHash: item.parentHash,
                         };

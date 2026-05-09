@@ -31,7 +31,7 @@ export { buildEventBaseCollectionId };
 
 /**
  * Embed and insert a batch of validated EventRecord objects into Qdrant.
- * Each event gets its own Qdrant point (vector = embed_text embedding, payload = full record).
+ * Each event gets its own Qdrant point (vector = embedText embedding, payload = full record).
  *
  * @param {object[]} events      - Array of full EventRecord objects (with ingestion metadata)
  * @param {object}   settings    - VectHare settings
@@ -60,6 +60,11 @@ export async function insertEvents(events, settings, abortSignal = null, collect
         const hash = _eventHash(event.event_id);
         const vector = clientEmbeddings?.[embedText] || null;
 
+        // The summary string lives inside `text` (first line, after the [event_type] prefix).
+        // Storing it again as a separate field is pure duplication, so we strip it from both
+        // the top-level item and the metadata spread before sending to the backend.
+        const { summary: _droppedSummary, ...eventWithoutSummary } = event;
+
         return {
             hash,
             text: embedText,
@@ -69,10 +74,9 @@ export async function insertEvents(events, settings, abortSignal = null, collect
             // qdrant.js spreads item.metadata first then explicitly overwrites these
             // fields from the top-level item. Without them defined here, they are
             // undefined → JSON.stringify drops them → Similharity server applies its
-            // own defaults (importance=100, summary=null). EventBase does not use the
-            // legacy chunk fields (chunkGroup, conditions, parentHash) so they stay null.
+            // own defaults (importance=100). EventBase does not use the legacy chunk
+            // fields (chunkGroup, conditions, parentHash) so they stay null.
             importance: event.importance,
-            summary: event.summary,
             keywords: event.keywords || [],
             customWeights: [],
             disabledKeywords: [],
@@ -81,8 +85,7 @@ export async function insertEvents(events, settings, abortSignal = null, collect
             isSummaryChunk: false,
             parentHash: null,
             metadata: {
-                ...event,
-                embed_text: embedText,
+                ...eventWithoutSummary,
                 eventbase: true,        // marker for filter queries
                 eventbase_schema_version: event.schema_version,
             },

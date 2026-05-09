@@ -1,30 +1,84 @@
->>> [Qdrant] Listed 1058 items from vecthare_chat_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0
-Discovered Qdrant Collection: vecthare_chat_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0 1058 items
->>> [Qdrant] Listed 1090 items from vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0
-Discovered Qdrant Collection: vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0 1090 items
->>> [Qdrant] Listed 18 items from vecthare_eventbase_qdrant_critblade_異世界學校_60d40b35-fa7a-4f30-8485-805303f4916a
-Discovered Qdrant Collection: vecthare_eventbase_qdrant_critblade_異世界學校_60d40b35-fa7a-4f30-8485-805303f4916a 18 items
-[Qdrant] extractQueryKeywords anchor CJK pass → 5 unique tokens (showing top 5): 我對, 記得, 當時, 為你, 贖身
-[Qdrant] extractQueryKeywords context CJK pass → 5 unique tokens (showing top 0): (none)
-[Qdrant] extractQueryKeywords Latin pass → 1 unique tokens (showing top 1): mayla
-[Qdrant] extractQueryKeywords final → 6 tokens (fullCJK=false): 我對, 記得, 當時, 為你, 贖身, mayla
-[Qdrant] Hybrid query START: collection=vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0, keywords=6, topK=16
-[Qdrant] Hybrid options: vectorWeight=0.5, keywordWeight=0.5, fusion=rrf
-[Qdrant] Collection vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0 exists, proceeding with hybrid search
-[Qdrant] Vector search complete: 32 results
-[Qdrant] Starting BM25 keyword search with 6 keywords: 我對, 記得, 當時, 為你, 贖身, mayla
-[Qdrant] BM25 scoring complete: 112 scored from 112 candidates (N=112, avgdl=30.2)
-[Qdrant] Starting fusion: 32 vector + 112 keyword results
-[Qdrant] Hybrid query: 32 vector + 112 keyword = 16 fused results
-[Qdrant] extractQueryKeywords anchor CJK pass → 35 unique tokens (showing top 15): 單獨, 我對, 記得, 當時, 為你, 贖身, 仔細, 思考, 劇情, 回顧, 當前, 情況, 時間, 晚上, 位置
-[Qdrant] extractQueryKeywords context CJK pass → 565 unique tokens (showing top 35): 帶著, 起身, 兩個, 依然, 眼眸, 父親, 不能, 找到, 新大陸, 房間, 角落, 反應, 你要, 眷屬, 角色, 內心, 軍師, 恐懼, 精明, 忠誠, 方式, 掃過, 女人, 套房, 崩潰, 都會, 點醒, 能力, 整天, 愁眉苦臉, 表面, 內容, 這間, 沒有, 完整
-[Qdrant] extractQueryKeywords Latin pass → 45 unique tokens (showing top 10): mayla, critblade, engni, kashier, lia, fern, master, valerie, lead, nsfw
-[Qdrant] extractQueryKeywords final → 60 tokens (fullCJK=true): 單獨, 我對, 記得, 當時, 為你, 贖身, 仔細, 思考, 劇情, 回顧, 當前, 情況, 時間, 晚上, 位置, 帶著, 起身, 兩個, 依然, 眼眸, 父親, 不能, 找到, 新大陸, 房間, 角落, 反應, 你要, 眷屬, 角色, 內心, 軍師, 恐懼, 精明, 忠誠, 方式, 掃過, 女人, 套房, 崩潰, 都會, 點醒, 能力, 整天, 愁眉苦臉, 表面, 內容, 這間, 沒有, 完整, mayla, critblade, engni, kashier, lia, fern, master, valerie, lead, nsfw
-[Qdrant] Hybrid query START: collection=vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0, keywords=60, topK=16
-[Qdrant] Hybrid options: vectorWeight=0.5, keywordWeight=0.5, fusion=rrf
-[Qdrant] Collection vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0 exists, proceeding with hybrid search
-[Qdrant] Vector search complete: 32 results
-[Qdrant] Starting BM25 keyword search with 60 keywords: 單獨, 我對, 記得, 當時, 為你, 贖身, 仔細, 思考, 劇情, 回顧, 當前, 情況, 時間, 晚上, 位置, 帶著, 起身, 兩個, 依然, 眼眸, 父親, 不能, 找到, 新大陸, 房間, 角落, 反應, 你要, 眷屬, 角色, 內心, 軍師, 恐懼, 精明, 忠誠, 方式, 掃過, 女人, 套房, 崩潰, 都會, 點醒, 能力, 整天, 愁眉苦臉, 表面, 內容, 這間, 沒有, 完整, mayla, critblade, engni, kashier, lia, fern, master, valerie, lead, nsfw
-[Qdrant] BM25 scoring complete: 869 scored from 869 candidates (N=869, avgdl=29.0)
-[Qdrant] Starting fusion: 32 vector + 869 keyword results
-[Qdrant] Hybrid query: 32 vector + 869 keyword = 16 fused results
+{
+"event_type":"revelation"
+"importance":9
+"summary":"阿爾法揭示最後一名失格聖女維茲在帝都市集開魔法雜貨店，為頂級魔法系使用者但商業笨拙濫好人。團隊決定先找維茲補齊7名聖女再處理雪兔姬與魔王族風險。九条光建議收購店鋪補完後勤。"
+"DateTime":
+NULL
+"cause":"勇希計算需3名聖女打贏魔王族，先找齊7名聖女。"
+"result":"確認維茲位置，帝都潛行計劃啟動。"
+"characters":[
+0:"阿爾法"
+1:"維茲"
+2:"勇希"
+]
+"locations":[
+0:"帝都"
+1:"維茲魔法雜貨店"
+]
+"factions":[]
+"items":[]
+"concepts":[
+0:"失格聖女"
+1:"魔王族"
+2:"魔法雜貨店"
+]
+"keywords":[
+0:"維茲"
+1:"第7名聖女"
+2:"魔法雜貨店"
+3:"帝都市集"
+4:"頂級魔法系"
+5:"濫好人"
+6:"收購店鋪"
+7:"補完拼圖"
+8:"魔王族實力"
+9:"3名聖女"
+10:"雪兔姬"
+11:"失格聖女"
+12:"魔王族"
+]
+"open_threads":[
+0:"找齊維茲"
+1:"減低魔王族風險"
+2:"雪兔姬位置"
+]
+"should_persist":true
+"event_id":"eb_1778367951521_8_1_gxzft"
+"source_message_ids":[
+0:8
+1:9
+2:10
+3:11
+]
+"source_message_hashes":[
+0:854669445
+1:1818565204
+2:1499091502
+3:2577320706
+]
+"source_window_start":8
+"source_window_end":11
+"created_at":1778367951521
+"schema_version":1
+"chat_uuid":"60d40b35-fa7a-4f30-8485-805303f4916a"
+"embed_text":"[revelation] 阿爾法揭示最後一名失格聖女維茲在帝都市集開魔法雜貨店，為頂級魔法系使用者但商業笨拙濫好人。團隊決定先找維茲補齊7名聖女再處理雪兔姬與魔王族風險。九条光建議收購店鋪補完後勤。 CAUSE: 勇希計算需3名聖女打贏魔王族，先找齊7名聖女。 RESULT: 確認維茲位置，帝都潛行計劃啟動。 CHARS: 阿爾法, 維茲, 勇希 LOCS: 帝都, 維茲魔法雜貨店 KEYS: 維茲, 第7名聖女, 魔法雜貨店, 帝都市集, 頂級魔法系, 濫好人, 收購店鋪, 補完拼圖, 魔王族實力, 3名聖女, 雪兔姬, 失格聖女, 魔王族 THREADS: 找齊維茲, 減低魔王族風險, 雪兔姬位置"
+"eventbase":true
+"eventbase_schema_version":1
+"customWeights":[]
+"disabledKeywords":[]
+"chunkGroup":
+NULL
+"conditions":
+NULL
+"isSummaryChunk":false
+"parentHash":
+NULL
+"text":"[revelation] 阿爾法揭示最後一名失格聖女維茲在帝都市集開魔法雜貨店，為頂級魔法系使用者但商業笨拙濫好人。團隊決定先找維茲補齊7名聖女再處理雪兔姬與魔王族風險。九条光建議收購店鋪補完後勤。 CAUSE: 勇希計算需3名聖女打贏魔王族，先找齊7名聖女。 RESULT: 確認維茲位置，帝都潛行計劃啟動。 CHARS: 阿爾法, 維茲, 勇希 LOCS: 帝都, 維茲魔法雜貨店 KEYS: 維茲, 第7名聖女, 魔法雜貨店, 帝都市集, 頂級魔法系, 濫好人, 收購店鋪, 補完拼圖, 魔王族實力, 3名聖女, 雪兔姬, 失格聖女, 魔王族 THREADS: 找齊維茲, 減低魔王族風險, 雪兔姬位置 [KEYWORDS: 維茲 第7名聖女 魔法雜貨店 帝都市集 頂級魔法系 濫好人 收購店鋪 補完拼圖 魔王族實力 3名聖女 雪兔姬 失格聖女 魔王族]"
+"hash":3025563852
+"type":"chat"
+"sourceId":"unknown"
+"embeddingSource":"openrouter"
+"embeddingModel":"qwen/qwen3-embedding-8b"
+"timestamp":1778367952313
+"messageIndex":9
+}

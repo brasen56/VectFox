@@ -13,6 +13,20 @@
 // ---------------------------------------------------------------------------
 
 /**
+ * Extract the summary line from an event's stored embed text.
+ * The text is built by buildEmbedText() and starts with "[event_type] summary"
+ * on its first line. Strips the bracketed event_type prefix.
+ * @param {string} text
+ * @returns {string}
+ */
+function _summaryFromText(text) {
+    if (!text) return '';
+    const firstLine = String(text).split('\n')[0];
+    const match = firstLine.match(/^\[[^\]]+\]\s*(.*)$/);
+    return match ? match[1] : firstLine;
+}
+
+/**
  * Strip internal scoring/ingestion fields that should not be injected.
  * Returns only the canonical EventRecord fields.
  * @param {object} event
@@ -22,7 +36,7 @@ function _cleanEventForInjection(event) {
     return {
         event_type: event.event_type,
         importance: event.importance,
-        summary: event.summary,
+        summary: _summaryFromText(event.text),
         DateTime: event.DateTime || null,
         cause: event.cause || '',
         result: event.result || '',
