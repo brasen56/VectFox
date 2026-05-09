@@ -1,8 +1,20 @@
 # Archive Chat History — EventBase Ingestion Plan
 
+## Session changes that affect this plan
+
+Three things changed during the session that this plan must account for:
+
+| # | Change | Impact on plan |
+|---|---|---|
+| 1 | **Activation filter — no more auto-activate** | Archive collections (`vecthare_archiveevent_*`) have no triggers/conditions → they now default to BLOCKED. Phase A gatherer (Step 8) must check `isCollectionEnabled` + `isCollectionLockedToChat` directly instead of routing through `shouldCollectionActivate`. |
+| 2 | **Standard pipeline always excludes `vecthare_eventbase_*`** | Same exclusion must be added for `vecthare_archiveevent_*` in `gatherCollectionsToQuery` (Step 9b — new step). |
+| 3 | **`getContext` is from `extensions.js` not `script.js`** | `buildArchiveEventCollectionId` (Step 3) must import `getContext` from `../../../../extensions.js`. |
+
+---
+
 ## Major pivot from previous draft
 
-Previous draft repurposed the **Document** content type ("Custom Document" → "Archive Chat History") to use EventBase. **That is reversed.**
+Previous draft repurposed the **Document** content type ("Custom Document" → "Archive Chat History") to use EventBase. **That should be reversed.**
 
 - **Document content type stays untouched.** It keeps the chunk-based pipeline. Revert any prior renames/prefix changes that touched Document.
 - **Archive chat ingestion uses the existing `Chat → Upload` tab instead.** That tab already has a parser ([`handleChatFileUpload` at ui/content-vectorizer.js:2215](../ui/content-vectorizer.js#L2215)) and produces `sourceData = { type: 'file', messages: [...], ... }`. Today this path falls through to chunk-based ingestion; we change it to route through EventBase.
@@ -26,21 +38,10 @@ SillyTavern exports use a deterministic filename pattern:
 e.g. "異世界學校 - 2025-12-16@09h56m28s.jsonl"
 ```
 
-**Decision:** parse `characterName` out of the filename — everything left of the last `" - "` followed by the date pattern. This survives Unicode names (Chinese, Japanese, Cyrillic, etc.).
+**Decision:** parse `characterName` out of the filename.  Check of any special char not suitable for name, remove invalid char, CJK lanaguage should survive.
 
-Filename parser regex (proposed):
 
-```js
-function extractCharNameFromFilename(filename) {
-    // strip extension
-    const stem = filename.replace(/\.(jsonl|json|txt)$/i, '');
-    // SillyTavern pattern: "<name> - YYYY-MM-DD@HHhMMmSSs"
-    const m = stem.match(/^(.*?)\s+-\s+\d{4}-\d{2}-\d{2}@\d{2}h\d{2}m\d{2}s$/);
-    if (m) return m[1].trim();
-    // Fallback: full stem
-    return stem;
-}
-```
+
 
 Then sanitize the same way as `buildEventBaseCollectionId` — `lowercase`, `replace(/[^a-z0-9]+/g, '_')`, trim leading/trailing underscores, cap to 30 chars.
 
@@ -55,7 +56,7 @@ vecthare_archiveevent_{backend}_{handle}_{filenameCharName}_{archiveUUID}
 - `{handle}`: `getContext()?.name1` (current user persona — same as live EventBase). Sanitized identically.
 - `{filenameCharName}`: parsed from filename per above. Sanitized identically.
 - `{archiveUUID}`: archive's own `chat_metadata.integrity` from line 1 of the jsonl. **Fallback: SHA-1 hash of the raw file content (hex)** when integrity is absent — applies to `.json`/`.txt` uploads (no metadata at all), partial jsonl exports, or any file lacking `chat_metadata.integrity`. This makes re-uploads of the same archive idempotent (same hash → same ID → fingerprint-cache hits → no LLM calls).
-- `{backend}`: `normalizeBackendForId(settings.vector_backend)` — same as live EventBase.
+- `{backend}`: `normalizeBackendForId(settings.vector_backend)` — same as live EventBase.  (should be either standard or qdrant)
 
 This ID is **independent of the current chat's UUID**. Different archive, different ID. Different chat in ST, same archive uploaded → still same archive collection (because UUID derives from the archive, not the current chat).
 
@@ -126,11 +127,13 @@ File: [`core/collection-ids.js`](../core/collection-ids.js)
 - Add `COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT = 'vecthare_archiveevent_'`. Do **not** touch `VECTHARE_DOCUMENT`.
 - Add new builder:
 
+**Import note (session change):** `getContext` must be imported from `../../../../extensions.js`, NOT from `../../../../../script.js`. `script.js` does not export `getContext`.
+
 ```js
 export function buildArchiveEventCollectionId({ filenameCharName, archiveUUID, backend }) {
     if (!archiveUUID) return null;
 
-    const context = getContext();
+    const context = getContext(); // from extensions.js
     const sanitizedHandle = (context?.name1 || 'user')
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
@@ -281,7 +284,13 @@ All other logic (windowing, extraction, dedup, insertion) unchanged.
 
 File: [`core/eventbase-workflow.js`](../core/eventbase-workflow.js)
 
-Add a sibling to the live `vecthare_eventbase_*` discovery: scan registered collections for `vecthare_archiveevent_{backend}_{currentHandle}_*` and include their events in the retrieval candidate set. Respect collection-active locks (a user may toggle a particular archive on/off via the collection card).
+Add a sibling to the live `vecthare_eventbase_*` discovery: scan registered collections for `vecthare_archiveevent_{backend}_{currentHandle}_*` and include their events in the retrieval candidate set.
+
+**Activation gate (updated — session change):** The activation filter (`shouldCollectionActivate`) no longer auto-activates collections that have no triggers and no conditions. Archive collections have neither by default, so they would be blocked. The Phase A gatherer must **not** route these through `shouldCollectionActivate`. Instead, check directly:
+1. `isCollectionEnabled(registryKey)` — respects the DB Browser Pause button (global disable).
+2. `isCollectionLockedToChat(collectionId, currentChatId)` — respects the "Active for current chat" checkbox.
+
+Only include the archive collection if both pass. This means users must explicitly check "Active for current chat" on each archive collection card to include it in retrieval for a given chat. Document this in the UI (tooltip or hint on the collection card).
 
 This is symmetric with the live EventBase retrieval — same re-ranker, same scoring. No `_chunkToEventCandidate` needed because the storage is already event-shaped.
 
@@ -290,6 +299,19 @@ This is symmetric with the live EventBase retrieval — same re-ranker, same sco
 File: [`ui/content-vectorizer.js`](../ui/content-vectorizer.js)
 
 When `currentContentType === 'chat'`, `source.type === 'file'`, and `eventbase_enabled === true`, hide Step 3 (Chunking strategy). Preserve everything else (Scope, Text Cleaning, Keyword Extraction, EventBase Extraction tab).
+
+### Step 9b — Exclude `vecthare_archiveevent_*` from standard pipeline
+
+File: [`core/chat-vectorization.js`](../core/chat-vectorization.js) → `gatherCollectionsToQuery`
+
+**Session change:** `vecthare_eventbase_*` is now always excluded from the standard (chunk) pipeline. Add the same exclusion for `vecthare_archiveevent_*`. Archive event collections are owned by Phase A (EventBase pipeline) — the standard pipeline must never touch them.
+
+```js
+if (collectionId?.startsWith(COLLECTION_PREFIXES.VECTHARE_EVENTBASE) ||
+    collectionId?.startsWith(COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT)) {
+    continue;
+}
+```
 
 ### Step 10 — Tests
 

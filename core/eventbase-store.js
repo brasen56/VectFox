@@ -17,7 +17,7 @@ import {
 } from './core-vector-api.js';
 import { getCurrentChatId, chat_metadata, saveSettingsDebounced } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
-import { getChatUUID, buildEventBaseCollectionId, getRegistryBackend } from './collection-ids.js';
+import { getChatUUID, buildEventBaseCollectionId, getRegistryBackend, COLLECTION_PREFIXES } from './collection-ids.js';
 import { registerCollection } from './collection-loader.js';
 import { setCollectionLock } from './collection-metadata.js';
 import { buildEmbedText } from './eventbase-schema.js';
@@ -38,11 +38,11 @@ export { buildEventBaseCollectionId };
  * @param {AbortSignal|null} [abortSignal]
  * @returns {Promise<void>}
  */
-export async function insertEvents(events, settings, abortSignal = null) {
+export async function insertEvents(events, settings, abortSignal = null, collectionIdOverride = null) {
     if (!events?.length) return;
 
     const chatUUID = events[0].chat_uuid;
-    const collectionId = buildEventBaseCollectionId(chatUUID, settings?.vector_backend);
+    const collectionId = collectionIdOverride || buildEventBaseCollectionId(chatUUID, settings?.vector_backend);
     if (!collectionId) throw new Error('EventBase: Cannot build collection ID — no active chat');
 
     const debugLog = settings.eventbase_debug_logging;
@@ -102,10 +102,12 @@ export async function insertEvents(events, settings, abortSignal = null) {
     const registryKey = `${registryBackend}:${collectionId}`;
     registerCollection(registryKey);
 
-    // Mirror legacy chat collection behavior: EventBase chat collections should
-    // automatically become active for the current chat after first successful insert.
+    // Auto-lock live EventBase collections to the current chat after first insert.
+    // Archive event collections are NOT auto-locked — users must enable them manually
+    // via the "Active for current chat" checkbox on the collection card.
+    const isArchive = collectionId.startsWith(COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT);
     const currentChatId = getCurrentChatId();
-    if (currentChatId) {
+    if (!isArchive && currentChatId) {
         setCollectionLock(collectionId, currentChatId);
         if (debugLog) {
             console.log(`[EventBase] Locked collection "${collectionId}" to current chat "${currentChatId}"`);

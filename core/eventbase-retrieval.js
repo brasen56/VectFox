@@ -94,11 +94,10 @@ function _normalizeWeights(w) {
  * @param {number} params.chatLength    - Current total chat message count (for recency)
  * @param {object} params.settings      - VectHare settings
  * @param {string} [params.chatUUID]    - Override chat UUID
- * @param {object[]} [params.additionalCandidates] - Pre-queried results (e.g. DOCUMENT chunks)
- *        already converted to event-like format. Merged into raw candidates before re-ranking.
- * @param {boolean}  [params.skipLiveQuery] - When true, skip the EventBase collection query
- *        and rely solely on additionalCandidates. Used when the live collection is paused/not locked
- *        but archive collections are available.
+ * @param {object[]} [params.additionalCandidates] - Pre-queried events from archive event
+ *        collections (vecthare_archiveevent_*). Already event-shaped; merged before re-ranking.
+ * @param {boolean}  [params.skipLiveQuery] - When true, skip live EventBase collection query.
+ *        Used when the live collection is paused or not locked to the current chat.
  * @returns {Promise<{ events: object[], debug: object }>}
  */
 export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, chatUUID, additionalCandidates, skipLiveQuery }) {
@@ -166,19 +165,17 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         }
     }
 
-    // Keyword re-ranking is handled inside queryCollection() (A1/A2/A3 routing).
-    // EventBase only needs to pass rawCandidates through to the importance filter.
-    // Merge in DOCUMENT (Archive Chat History) chunks queried by the caller.
-    const boostedCandidates = additionalCandidates?.length
+    // Merge in events pre-queried from archive event collections (vecthare_archiveevent_*).
+    const allCandidates = additionalCandidates?.length
         ? [...rawCandidates, ...additionalCandidates]
         : rawCandidates;
 
     if (debugLog && additionalCandidates?.length) {
-        console.log(`[EventBase] Merged ${additionalCandidates.length} archive-chat chunk(s) into ${rawCandidates.length} event candidates`);
+        console.log(`[EventBase] Merged ${additionalCandidates.length} archive event(s) into ${rawCandidates.length} live candidates`);
     }
 
     // 3. Filter by minimum importance
-    const importanceFiltered = boostedCandidates.filter(m => {
+    const importanceFiltered = allCandidates.filter(m => {
         const imp = m.importance ?? m.metadata?.importance ?? 0;
         return imp >= minImportance;
     });

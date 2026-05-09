@@ -714,7 +714,7 @@ async function discoverViaFallback(settings) {
     for (const char of characters) {
         if (!char.name) continue;
 
-        const sanitizedName = char.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').substring(0, 30);
+        const sanitizedName = char.name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').substring(0, 30);
 
         // VectHare character collection format
         const charCollectionId = `${COLLECTION_PREFIXES.VECTHARE_CHARACTER}${sanitizedName}`;
@@ -733,7 +733,7 @@ async function discoverViaFallback(settings) {
     const contentPatterns = [
         // Lorebook patterns
         `${COLLECTION_PREFIXES.VECTHARE_LOREBOOK}`,
-        // Archive Chat History patterns
+        // Document patterns
         `${COLLECTION_PREFIXES.VECTHARE_DOCUMENT}`,
         // File patterns (legacy)
         `${COLLECTION_PREFIXES.FILE}`,

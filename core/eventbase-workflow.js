@@ -50,14 +50,14 @@ const EVENTBASE_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_eventbase`;
  * @param {{ strategy?: string, batchSize?: number, totalChunks?: number }|null} [params.progressPlan]
  * @returns {Promise<{ eventsExtracted: number, windowsProcessed: number, windowsSkipped: number }>}
  */
-export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null }) {
+export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null }) {
     const debugLog = settings.eventbase_debug_logging;
     const debugVectorizing = settings.debug_vectorizing_log === true;
     const uuid = chatUUID || getChatUUID();
 
     // Respect the global collection pause toggle before doing any extraction,
     // ingestion, or insertion work. Pause is a hard stop regardless of chat locks.
-    const collectionId = buildEventBaseCollectionId(uuid, settings?.vector_backend);
+    const collectionId = collectionIdOverride || buildEventBaseCollectionId(uuid, settings?.vector_backend);
     const backend = getRegistryBackend(settings?.vector_backend);
     const candidateKeys = [
         `${backend}:${collectionId}`,
@@ -198,9 +198,9 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                     console.log(`[EventBase] Window ${wIdx}: dropped ${annotated.length - toStore.length} event(s) below minImportance=${minImportanceStore}`);
                 }
 
-                // Insert
+                // Insert — pass collectionId so archive uploads go to vecthare_archiveevent_*
                 if (toStore.length > 0) {
-                    await insertEvents(toStore, settings, abortSignal);
+                    await insertEvents(toStore, settings, abortSignal, collectionId);
                 }
 
                 // Mark window as done in the extension_settings fingerprint cache
@@ -269,66 +269,45 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
 // ---------------------------------------------------------------------------
 
 /**
- * Scan the registry for DOCUMENT-type collections that are enabled and locked
- * to the current chat. These are "Archive Chat History" collections that belong
- * in Phase A (EventBase) retrieval.
+ * Scan the registry for archive event collections (vecthare_archiveevent_*) that are
+ * enabled and locked to the current chat. These are included in Phase A retrieval.
+ *
+ * Uses direct enabled + lock checks (not shouldCollectionActivate) because archive
+ * collections have no triggers/conditions and would be BLOCKED by the activation filter.
+ *
  * @param {string} currentChatId
  * @param {boolean} debugLog
  * @returns {{ collectionId: string, registryKey: string }[]}
  */
-function _gatherArchiveChatCollections(currentChatId, debugLog) {
+function _gatherArchiveEventCollections(currentChatId, debugLog) {
     if (!currentChatId) return [];
     const registry = getCollectionRegistry();
     const results = [];
     for (const registryKey of registry) {
         const parsed = parseRegistryKey(registryKey);
         const colId = parsed.collectionId;
-        if (!colId?.startsWith(COLLECTION_PREFIXES.VECTHARE_DOCUMENT)) continue;
-        if (!isCollectionEnabled(registryKey)) {
-            if (debugLog) console.log(`[EventBase] Archive collection skipped (paused): ${colId}`);
+        if (!colId?.startsWith(COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT)) continue;
+
+        // Pause and lock metadata can live under either the registry key (backend:collectionId)
+        // or the bare collectionId — the DB Browser pause toggle uses registry key while the
+        // "Active for current chat" checkbox uses bare collectionId. Check both for safety.
+        const candidateKeys = [registryKey, colId].filter(Boolean);
+
+        const pausedKey = candidateKeys.find(key => !isCollectionEnabled(key));
+        if (pausedKey) {
+            if (debugLog) console.log(`[EventBase] Archive event collection skipped (paused: "${pausedKey}")`);
             continue;
         }
-        if (!isCollectionLockedToChat(registryKey, currentChatId)) {
-            if (debugLog) console.log(`[EventBase] Archive collection skipped (not locked to chat): ${colId}`);
+
+        const isLocked = candidateKeys.some(key => isCollectionLockedToChat(key, currentChatId));
+        if (!isLocked) {
+            if (debugLog) console.log(`[EventBase] Archive event collection skipped (not locked to chat): ${colId}`);
             continue;
         }
+
         results.push({ collectionId: colId, registryKey });
     }
     return results;
-}
-
-/**
- * Convert a chunk result from queryCollection into an event-like object
- * that the EventBase re-ranker can score alongside real events.
- * @param {object} meta - Metadata from queryCollection
- * @param {number} hash - Chunk hash
- * @param {string} sourceCollectionId - Which DOCUMENT collection it came from
- * @returns {object}
- */
-function _chunkToEventCandidate(meta, hash, sourceCollectionId) {
-    return {
-        event_type: 'archive_chat_chunk',
-        importance: 5,
-        should_persist: false,
-        source_window_end: -1,
-        characters: [],
-        locations: [],
-        factions: [],
-        items: [],
-        concepts: [],
-        keywords: meta.keywords || [],
-        open_threads: [],
-        summary: meta.text || meta.content || '',
-        DateTime: null,
-        cause: '',
-        result: '',
-        score: meta.score ?? 0,
-        vectorScore: meta.vectorScore ?? meta.score ?? 0,
-        event_id: `archive_${sourceCollectionId}_${hash}`,
-        _hash: hash,
-        _isArchiveChunk: true,
-        _sourceCollection: sourceCollectionId,
-    };
 }
 
 /**
@@ -370,8 +349,8 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         }
     }
 
-    // --- Find DOCUMENT (Archive Chat History) collections locked to this chat ---
-    const archiveCollections = _gatherArchiveChatCollections(currentChatId, debugLog);
+    // --- Find archive event collections locked to this chat ---
+    const archiveCollections = _gatherArchiveEventCollections(currentChatId, debugLog);
 
     if (!queryEventbase && archiveCollections.length === 0) {
         if (debugLog) console.log('[EventBase] No live collection and no archive collections — skipping Phase A');
@@ -397,25 +376,26 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         console.log(`[EventBase] Keyword query (user last message, ${keywordQuery.length} chars):`, keywordQuery.slice(0, 120));
     }
 
-    // --- Query archive (DOCUMENT) collections in parallel, convert to event-like format ---
-    const archiveChunkPromises = archiveCollections.map(async ({ collectionId: archColId, registryKey }) => {
+    // --- Query archive event collections in parallel ---
+    // Archive events are stored with the same schema as live EventBase events so we
+    // query them via queryCollection directly and attach _hash (same as queryEvents does).
+    const topK = (settings.eventbase_retrieval_top_k || 8) * 2;
+    const archiveEventPromises = archiveCollections.map(async ({ collectionId: archColId }) => {
         try {
-            const topK = (settings.eventbase_retrieval_top_k || 8);
             const { hashes, metadata } = await queryCollection(archColId, searchText, topK, settings);
             if (!hashes?.length) return [];
-            return metadata.map((meta, i) => _chunkToEventCandidate(meta, hashes[i], archColId));
+            return metadata.map((meta, i) => ({ ...meta, _hash: hashes[i] }));
         } catch (err) {
-            console.error(`[EventBase] Archive collection query failed (${archColId}):`, err);
+            console.error(`[EventBase] Archive event collection query failed (${archColId}):`, err);
             return [];
         }
     });
 
-    // Fire archive queries; retrieveEvents will handle the EventBase query internally
-    const archiveResults = await Promise.all(archiveChunkPromises);
+    const archiveResults = await Promise.all(archiveEventPromises);
     const additionalCandidates = archiveResults.flat();
 
     if (debugLog && additionalCandidates.length > 0) {
-        console.log(`[EventBase] Queried ${archiveCollections.length} archive collection(s) → ${additionalCandidates.length} chunk(s)`);
+        console.log(`[EventBase] Queried ${archiveCollections.length} archive event collection(s) → ${additionalCandidates.length} event(s)`);
     }
 
     const { events, debug } = await retrieveEvents({

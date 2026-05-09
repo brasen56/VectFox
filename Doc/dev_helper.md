@@ -8,7 +8,7 @@ EventBase is the **default and permanent** retrieval mode. There is no "EventBas
 
 | Pipeline | Owned collections | Code entry point |
 |---|---|---|
-| **EventBase pipeline** | `vecthare_eventbase_*` | `eventbase-workflow.js` → `eventbase-retrieval.js` |
+| **EventBase pipeline** | `vecthare_eventbase_*`, `vecthare_archiveevent_*` | `eventbase-workflow.js` → `eventbase-retrieval.js` |
 | **Standard pipeline** | `vecthare_lorebook_*`, `vecthare_document_*`, user collections | `chat-vectorization.js` → `queryAndMergeCollections` |
 
 `vecthare_chat_*` collections (plain chunk-based chat history) are being phased out. When they still exist, they are excluded from the standard pipeline when EventBase is ON.
@@ -16,7 +16,17 @@ EventBase is the **default and permanent** retrieval mode. There is no "EventBas
 ### Key isolation rule (`core/chat-vectorization.js` → `gatherCollectionsToQuery`)
 
 - `vecthare_eventbase_*` → **always** skipped by the standard pipeline (EventBase pipeline owns them exclusively)
+- `vecthare_archiveevent_*` → **always** skipped by the standard pipeline (EventBase pipeline owns them exclusively)
 - `vecthare_chat_*` → skipped by the standard pipeline when EventBase is ON
+
+### Archive Chat History — Two content paths
+
+| Path | Content Type in UI | Collection prefix | Storage format | Retrieval |
+|---|---|---|---|---|
+| **A — EventBase** | `Chat → Upload` tab (EventBase ON) | `vecthare_archiveevent_*` | Event-shaped (same schema as live EventBase) | Phase A (EventBase re-ranker) |
+| **B — Chunk** | `Document` content type | `vecthare_document_*` | Chunk-shaped | Phase B (standard pipeline) |
+
+Archive event collections are **not** auto-locked to any chat after ingestion. Users must manually check "Active for current chat" on the collection card to activate retrieval for a given chat.
 
 ### Why this matters
 
@@ -267,6 +277,6 @@ Three retrieval paths exist after the keyword-level simplification. All paths ar
 ## 12) javascript to get these variables in chrome console
 const ctx = SillyTavern.getContext();
 const chatUUID = ctx.chatMetadata?.integrity || ctx.chatId;
-const handleId = (ctx.name1 || 'user').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substring(0, 30) || 'user';
-const charName = (ctx.name2 || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substring(0, 30) || 'chat';
+const handleId = (ctx.name1 || 'user').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_|_$/g, '').substring(0, 30) || 'user';
+const charName = (ctx.name2 || 'chat').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_|_$/g, '').substring(0, 30) || 'chat';
 console.log({ chatUUID, handleId, charName });

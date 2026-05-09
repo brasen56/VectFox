@@ -32,7 +32,8 @@ export const COLLECTION_PREFIXES = {
     VECTHARE_CHAT: 'vecthare_chat_',
     VECTHARE_LOREBOOK: 'vecthare_lorebook_',
     VECTHARE_CHARACTER: 'vecthare_character_',
-    VECTHARE_DOCUMENT: 'vecthare_archivechat_',
+    VECTHARE_DOCUMENT: 'vecthare_document_',
+    VECTHARE_ARCHIVE_EVENT: 'vecthare_archiveevent_',
     VECTHARE_EVENTBASE: 'vecthare_eventbase_',
 
     // Legacy/external formats
@@ -48,6 +49,7 @@ export const COLLECTION_TYPES = {
     LOREBOOK: 'lorebook',
     CHARACTER: 'character',
     DOCUMENT: 'document',
+    ARCHIVE_EVENT: 'archive_event',
     FILE: 'file',
     URL: 'url',
     WIKI: 'wiki',
@@ -134,13 +136,13 @@ export function buildChatCollectionId(chatUUID) {
     // Sanitize handle/character names (lowercase, alphanumeric only)
     const sanitizedHandle = handleId
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
         .replace(/^_|_$/g, '')
         .substring(0, 30) || 'user';
 
     const sanitizedChar = charName
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
         .replace(/^_|_$/g, '')
         .substring(0, 30) || 'chat';
 
@@ -170,7 +172,7 @@ export function buildLegacyChatCollectionId(chatId) {
 export function buildLorebookCollectionId(lorebookName, timestamp) {
     const sanitizedName = lorebookName
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
         .substring(0, 50);
     return `${COLLECTION_PREFIXES.VECTHARE_LOREBOOK}${sanitizedName}_${timestamp || Date.now()}`;
 }
@@ -184,7 +186,7 @@ export function buildLorebookCollectionId(lorebookName, timestamp) {
 export function buildCharacterCollectionId(characterName, timestamp) {
     const sanitizedName = characterName
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
         .substring(0, 50);
     return `${COLLECTION_PREFIXES.VECTHARE_CHARACTER}${sanitizedName}_${timestamp || Date.now()}`;
 }
@@ -198,7 +200,7 @@ export function buildCharacterCollectionId(characterName, timestamp) {
 export function buildDocumentCollectionId(documentName, timestamp) {
     const sanitizedName = documentName
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
         .substring(0, 50);
     return `${COLLECTION_PREFIXES.VECTHARE_DOCUMENT}${sanitizedName}_${timestamp || Date.now()}`;
 }
@@ -219,13 +221,13 @@ export function buildEventBaseCollectionId(chatUUID, backend) {
     const context = getContext();
     const sanitizedHandle = (context?.name1 || 'user')
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
         .replace(/^_|_$/g, '')
         .substring(0, 30) || 'user';
 
     const sanitizedChar = (context?.name2 || 'chat')
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
         .replace(/^_|_$/g, '')
         .substring(0, 30) || 'chat';
 
@@ -235,6 +237,42 @@ export function buildEventBaseCollectionId(chatUUID, backend) {
     }
 
     return `${COLLECTION_PREFIXES.VECTHARE_EVENTBASE}${sanitizedHandle}_${sanitizedChar}_${uuid}`;
+}
+
+/**
+ * Builds a collection ID for an archived chat's EventBase events.
+ * Format: vecthare_archiveevent_{backend}_{handle}_{filenameCharName}_{archiveUUID}
+ *
+ * The ID is independent of the current chat's UUID — same archive uploaded from
+ * any ST chat produces the same ID, enabling fingerprint-cache dedup across re-uploads.
+ *
+ * @param {object} params
+ * @param {string} params.filenameCharName  - Character name parsed from the archive filename
+ * @param {string} params.archiveUUID       - archive's chat_metadata.integrity, or SHA-1 of file content
+ * @param {string} [params.backend]         - Vector backend (defaults to settings.vector_backend)
+ * @returns {string|null}
+ */
+export function buildArchiveEventCollectionId({ filenameCharName, archiveUUID, backend }) {
+    if (!archiveUUID) return null;
+
+    const context = getContext();
+    const sanitizedHandle = (context?.name1 || 'user')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
+        .replace(/^_|_$/g, '')
+        .substring(0, 30) || 'user';
+
+    const sanitizedChar = (filenameCharName || 'archive')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
+        .replace(/^_|_$/g, '')
+        .substring(0, 30) || 'archive';
+
+    const normalizedBackend = normalizeBackendForId(backend);
+    if (normalizedBackend) {
+        return `${COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT}${normalizedBackend}_${sanitizedHandle}_${sanitizedChar}_${archiveUUID}`;
+    }
+    return `${COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT}${sanitizedHandle}_${sanitizedChar}_${archiveUUID}`;
 }
 
 /**
@@ -314,11 +352,21 @@ export function parseCollectionId(collectionId) {
         };
     }
 
-    // VectHare archive chat format: vecthare_archivechat_*
+    // VectHare document format: vecthare_document_*
     if (collectionId.startsWith(COLLECTION_PREFIXES.VECTHARE_DOCUMENT)) {
         return {
             type: COLLECTION_TYPES.DOCUMENT,
             rawId: collectionId.replace(COLLECTION_PREFIXES.VECTHARE_DOCUMENT, ''),
+            scope: COLLECTION_SCOPES.GLOBAL,
+            format: 'vecthare',
+        };
+    }
+
+    // VectHare archive event format: vecthare_archiveevent_*
+    if (collectionId.startsWith(COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT)) {
+        return {
+            type: COLLECTION_TYPES.ARCHIVE_EVENT,
+            rawId: collectionId.replace(COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT, ''),
             scope: COLLECTION_SCOPES.GLOBAL,
             format: 'vecthare',
         };

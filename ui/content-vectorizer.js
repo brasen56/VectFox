@@ -27,6 +27,7 @@ import {
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { getChatUUID } from '../core/chat-vectorization.js';
+import { buildArchiveEventCollectionId } from '../core/collection-ids.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../popup.js';
 import { openTextCleaningManager } from './text-cleaning-manager.js';
 import { getCleaningSettings } from '../core/text-cleaning.js';
@@ -766,6 +767,10 @@ function updateChunkingSection(type) {
     const selectedStrategyId = currentSettings.strategy || type.defaultStrategy;
     const isChatType = type.id === 'chat';
 
+    // Default: ensure section is visible. The chat branch below may hide it for the
+    // archive+EventBase route; non-chat types always need it visible.
+    $('.vecthare-cv-chunking-section').show();
+
     const strategySelect = $('#vecthare_cv_strategy');
     strategySelect.empty();
 
@@ -805,6 +810,11 @@ function updateChunkingSection(type) {
     if (isChatType) {
         $('#vecthare_cv_strategy_desc').text('');
         $('#vecthare_cv_size_controls').hide();
+        // Hide the entire chunking section when the Upload tab is active and EventBase is on
+        const activeTab = $('.vecthare-cv-chat-source .vecthare-cv-source-tab.active').data('source');
+        const globalSettings = extension_settings.vecthareplus || {};
+        const hideChunking = activeTab === 'upload' && globalSettings.eventbase_enabled;
+        $('.vecthare-cv-chunking-section').toggle(!hideChunking);
         return;
     }
 
@@ -1418,6 +1428,14 @@ function bindSourceEvents(type) {
 
         // Clear sourceData when switching tabs
         sourceData = null;
+
+        // Hide chunking section for archive uploads when EventBase is enabled
+        // (chunking settings are irrelevant — EventBase uses its own window/overlap settings)
+        if (currentContentType === 'chat') {
+            const globalSettings = extension_settings.vecthareplus || {};
+            const hideChunking = source === 'upload' && globalSettings.eventbase_enabled;
+            $('.vecthare-cv-chunking-section').toggle(!hideChunking);
+        }
     });
 
     // Input method tabs (for document type)
@@ -2209,15 +2227,41 @@ function parseYouTubeId(url) {
 // ============================================================================
 
 /**
+ * Parse the character name from a SillyTavern export filename.
+ * Pattern: "{CharacterName} - YYYY-MM-DD@HHhMMmSSs.{ext}"
+ * Falls back to the full stem when the pattern doesn't match.
+ * CJK and other Unicode chars survive unchanged.
+ */
+function extractCharNameFromArchiveFilename(filename) {
+    const stem = filename.replace(/\.(jsonl|json|txt)$/i, '');
+    const m = stem.match(/^(.*?)\s+-\s+\d{4}-\d{2}-\d{2}@\d{2}h\d{2}m\d{2}s$/);
+    return (m ? m[1] : stem).trim();
+}
+
+/**
+ * Compute a hex SHA-1 digest of text via SubtleCrypto.
+ * Used as a stable, content-derived archive UUID when the file lacks chat_metadata.integrity.
+ * @param {string} text
+ * @returns {Promise<string>}
+ */
+async function sha1Hex(text) {
+    const buf = new TextEncoder().encode(text);
+    const hash = await crypto.subtle.digest('SHA-1', buf);
+    return Array.from(new Uint8Array(hash))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+/**
  * Handles chat file upload (.txt, .jsonl, .json)
  * Supports SillyTavern JSONL backup format (first line = metadata, rest = messages)
  */
-function handleChatFileUpload(e) {
+async function handleChatFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = function(event) {
+    reader.onload = async function(event) {
         const content = event.target.result;
         const ext = file.name.split('.').pop().toLowerCase();
 
@@ -2259,23 +2303,27 @@ function handleChatFileUpload(e) {
                 const data = JSON.parse(content);
 
                 if (Array.isArray(data)) {
-                    // Array of messages
-                    messages = data.filter(m => m.mes || m.text || m.content).map(m => ({
-                        name: m.name || (m.is_user ? 'User' : 'Assistant'),
-                        mes: m.mes || m.text || m.content || '',
-                        is_user: m.is_user || false,
-                        send_date: m.send_date,
-                    }));
+                    // Array of messages — skip system messages (parity with .jsonl handling)
+                    messages = data
+                        .filter(m => !m.is_system && (m.mes || m.text || m.content))
+                        .map(m => ({
+                            name: m.name || (m.is_user ? 'User' : 'Assistant'),
+                            mes: m.mes || m.text || m.content || '',
+                            is_user: m.is_user || false,
+                            send_date: m.send_date,
+                        }));
                 } else if (data.chat || data.messages) {
-                    // Object with chat/messages array
+                    // Object with chat/messages array — skip system messages
                     const arr = data.chat || data.messages;
                     metadata = { user_name: data.user_name, character_name: data.character_name };
-                    messages = arr.filter(m => m.mes || m.text || m.content).map(m => ({
-                        name: m.name || (m.is_user ? 'User' : 'Assistant'),
-                        mes: m.mes || m.text || m.content || '',
-                        is_user: m.is_user || false,
-                        send_date: m.send_date,
-                    }));
+                    messages = arr
+                        .filter(m => !m.is_system && (m.mes || m.text || m.content))
+                        .map(m => ({
+                            name: m.name || (m.is_user ? 'User' : 'Assistant'),
+                            mes: m.mes || m.text || m.content || '',
+                            is_user: m.is_user || false,
+                            send_date: m.send_date,
+                        }));
                 } else if (data.mes || data.text || data.content) {
                     // Single message object
                     messages = [{
@@ -2320,6 +2368,18 @@ function handleChatFileUpload(e) {
             if (firstCharMessage?.name) characterName = firstCharMessage.name;
         }
 
+        // Derive a stable archive UUID for EventBase ingestion.
+        // Priority: chat_metadata.integrity (jsonl only) → SHA-1 of raw file content.
+        const integrity = metadata?.chat_metadata?.integrity;
+        const archiveUUID = integrity || await sha1Hex(content);
+        if (!integrity) {
+            console.warn(`[VectHare] Archive "${file.name}" has no chat_metadata.integrity — using SHA-1 hash as UUID`);
+        }
+
+        const filenameCharName = extractCharNameFromArchiveFilename(file.name)
+            || metadata?.character_name
+            || 'archive';
+
         // Store as sourceData
         sourceData = {
             type: 'file',
@@ -2328,6 +2388,8 @@ function handleChatFileUpload(e) {
             messages: messages,
             metadata: metadata,
             characterName: characterName,
+            archiveUUID,
+            filenameCharName,
         };
 
         // Show upload info
@@ -2575,7 +2637,7 @@ async function startContinueVectorization() {
     }
 
     // If no vectors exist yet, just run the normal vectorization
-    if (currentContentType === 'chat' && source.type === 'current') {
+    if (currentContentType === 'chat' && (source.type === 'current' || source.type === 'file')) {
         const globalSettings = extension_settings.vecthareplus || {};
         if (globalSettings.eventbase_enabled) {
             return _runEventBaseBackfill();
@@ -2629,7 +2691,7 @@ async function startContinueVectorization() {
 }
 
 /**
- * Runs EventBase ingestion as a backfill for the current chat.
+ * Runs EventBase ingestion for the current chat (live) or an uploaded archive file.
  * Called by startVectorization / continueVectorization when eventbase_enabled.
  */
 async function _runEventBaseBackfill() {
@@ -2645,32 +2707,45 @@ async function _runEventBaseBackfill() {
     progressTracker.setCancelHandler(() => stopActiveVectorization());
 
     try {
-        console.log('[EventBase] Importing runEventBaseIngestion...');
         const { runEventBaseIngestion } = await import('../core/eventbase-workflow.js');
-        const { getChatUUID } = await import('../core/chat-vectorization.js');
         const { chunkText } = await import('../core/chunking.js');
         const context = getContext();
         const settings = extension_settings.vecthareplus || {};
+        const source = getSourceData();
 
-        console.log('[EventBase] Context chat length:', context.chat?.length, 'EventBase enabled:', settings.eventbase_enabled);
+        let messages, chatUUID, collectionIdOverride = null;
 
-        if (!Array.isArray(context.chat) || context.chat.length === 0) {
-            toastr.warning('No chat messages to process', 'EventBase');
-            console.warn('[EventBase] No chat messages available');
-            return;
+        if (source?.type === 'file') {
+            // Archive upload route — .jsonl / .json / .txt
+            if (!source.messages?.length) {
+                toastr.warning('Archive contains no usable messages', 'EventBase');
+                return;
+            }
+            messages = source.messages.filter(m => m.mes && m.mes.trim().length > 0);
+            chatUUID = source.archiveUUID;
+            collectionIdOverride = buildArchiveEventCollectionId({
+                filenameCharName: source.filenameCharName,
+                archiveUUID: source.archiveUUID,
+                backend: settings.vector_backend,
+            });
+            console.log(`[EventBase] Archive upload route — collection: ${collectionIdOverride}, messages: ${messages.length}`);
+        } else {
+            // Live chat route — unchanged behavior
+            console.log('[EventBase] Context chat length:', context.chat?.length, 'EventBase enabled:', settings.eventbase_enabled);
+            if (!Array.isArray(context.chat) || context.chat.length === 0) {
+                toastr.warning('No chat messages to process', 'EventBase');
+                return;
+            }
+            const allMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+            messages = allMessages;
+            if (startFromMessage > 1) {
+                const sliceIdx = Math.min(startFromMessage - 1, allMessages.length);
+                console.log(`[EventBase] Start-from message ${startFromMessage} — skipping first ${sliceIdx} messages, ${allMessages.length - sliceIdx} remaining`);
+                messages = allMessages.slice(sliceIdx);
+            }
+            chatUUID = getChatUUID();
         }
 
-        // Include all messages that have text content — narrator/system messages carry
-        // story events just as much as regular user/AI turns and must not be excluded.
-        const allMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
-
-        // Apply start-from slice (1-based, same logic as prepareChatContent)
-        let messages = allMessages;
-        if (startFromMessage > 1) {
-            const sliceIdx = Math.min(startFromMessage - 1, allMessages.length);
-            console.log(`[EventBase] Start-from message ${startFromMessage} — skipping first ${sliceIdx} messages, ${allMessages.length - sliceIdx} remaining`);
-            messages = allMessages.slice(sliceIdx);
-        }
         const legacyStrategy = currentSettings.strategy || 'per_message';
         const legacyBatchSize = Number(currentSettings.batchSize) || 4;
         const legacyGroupBatchSize = Number(currentSettings.groupBatchSize) || 10;
@@ -2685,8 +2760,8 @@ async function _runEventBaseBackfill() {
         });
         const legacyTotalChunks = Array.isArray(legacyChunks) ? legacyChunks.length : 0;
 
-        console.log('[EventBase] Filtered messages (non-system):', messages.length);
-        console.log('[EventBase] Starting ingestion with settings:', { 
+        console.log('[EventBase] Filtered messages:', messages.length);
+        console.log('[EventBase] Starting ingestion with settings:', {
             eventbase_enabled: settings.eventbase_enabled,
             eventbase_window_size: settings.eventbase_window_size,
             eventbase_window_overlap: settings.eventbase_window_overlap,
@@ -2697,7 +2772,7 @@ async function _runEventBaseBackfill() {
 
         const result = await runEventBaseIngestion({
             messages,
-            chatUUID: getChatUUID(),
+            chatUUID,
             settings,
             abortSignal: activeVectorizeAbortController.signal,
             progressPlan: {
@@ -2705,6 +2780,7 @@ async function _runEventBaseBackfill() {
                 batchSize: legacyBatchSize,
                 totalChunks: legacyTotalChunks,
             },
+            collectionIdOverride,
         });
 
         console.log('[EventBase] Ingestion result:', result);
@@ -2758,8 +2834,8 @@ async function startVectorization() {
         return;
     }
 
-    // EventBase mode: redirect chat backfill through EventBase ingestion pipeline
-    if (currentContentType === 'chat' && source.type === 'current') {
+    // EventBase mode: redirect chat (live or archive upload) through EventBase ingestion pipeline
+    if (currentContentType === 'chat' && (source.type === 'current' || source.type === 'file')) {
         const globalSettings = extension_settings.vecthareplus || {};
         if (globalSettings.eventbase_enabled) {
             return _runEventBaseBackfill();

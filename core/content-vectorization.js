@@ -855,10 +855,10 @@ function generateCollectionId(contentType, source, settings) {
     const context = getContext();
     const baseName = sourceName;
 
-    // Sanitize name for use in ID
+    // Sanitize name for use in ID — Unicode-aware so CJK / Cyrillic / etc. survive
     const sanitizedName = baseName
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/[^\p{L}\p{N}]+/gu, '_')
         .substring(0, 50);
 
     // Add scope prefix
