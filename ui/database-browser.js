@@ -2298,6 +2298,15 @@ function refreshActivationLockButton() {
     const isLockedToCurrentChar = charId && isCollectionLockedToCharacter(collId, charId);
     const totalLocks = chatLockCount + charLockCount;
 
+    // Keep the "Active for current chat" checkbox in sync with the actual lock state.
+    // Without this, saveActivation() reads a stale unchecked checkbox and calls
+    // removeCollectionLock(), undoing any lock the user just added via the lock dialog.
+    const shouldBeActive = Boolean(isLockedToCurrentChat || isLockedToCurrentChar);
+    if (activationEditorState.collectionId) {
+      activationEditorState.alwaysActive = shouldBeActive;
+      $("#vecthare_always_active").prop("checked", shouldBeActive);
+    }
+
     if (totalLocks === 0) {
       $btn.prop("disabled", false).text("🔒 Manage Locks");
       $btn.attr("title", "No locks set. Click to add locks");
@@ -2360,6 +2369,7 @@ function saveActivation() {
 
   const isChecked = $("#vecthare_always_active").prop("checked");
   const currentChatId = getCurrentChatId();
+  console.log(`[VectHare] saveActivation: alwaysActive checkbox=${isChecked}, chatId=${currentChatId || 'none'}, collection=${state.collectionId}`);
   if (currentChatId) {
     if (isChecked) {
       setCollectionLock(state.collectionId, currentChatId);

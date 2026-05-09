@@ -1,135 +1,27 @@
-Generate entered
+[VectHare DB Browser] Active-for-current-chat resolution for vecthare_eventbase_qdrant_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a: resolved=false, chatScopedActive=false, currentChatId=異世界學校 - 2025-12-16@09h56m28s
+collection-metadata.js:261 VectHare: Updated metadata for collection vecthare_eventbase_qdrant_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a
+collection-metadata.js:541 VectHare: Collection vecthare_eventbase_qdrant_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a locks updated: ['異世界學校 - 2025-12-16@09h56m28s']
+collection-metadata.js:261 VectHare: Updated metadata for collection vecthare_eventbase_qdrant_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a
+collection-metadata.js:261 VectHare: Updated metadata for collection vecthare_eventbase_qdrant_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a
+database-browser.js:195 VectHare Database Browser: Closed
+script.js:4232 Generate entered
 index.js:19 [QR2] calling {args: Array(3), functionToCall: ƒ}
-chat-vectorization.js:1844 🐰 VectHare: rearrangeChat called (type: normal, chat length: 14)
-eventbase-workflow.js:383 [EventBase] Phase A: live=true, archiveCollections=0, searchText length=2326
-eventbase-workflow.js:397 [EventBase] Keyword query (user last message, 400 chars): <最新互动>
-我説 "Alpha, 你的分析沒有錯.  不過, 我有一個你不知道的資訊可以跟你分享.  我們跟5龍族有很大的關聯, 我的龍脈之氣, 有2脈 (黃, 赤) 都是來自2個龍族公主, 御膳是跟Nikita.  而5龍族的守護神是一
-eventbase-retrieval.js:114 [EventBase] Retrieval start — topK overfetch=16, minImportance=1, method=hybrid, nativePrefer=true
-backend-manager.js:278 VectHare: Health cache stale for standard, re-verifying...
-backend-manager.js:278 VectHare: Health cache stale for standard, re-verifying...
-core-vector-api.js:876 [VectHare] Hybrid search (client-side), dispatching to hybrid search module
-hybrid-search.js:67 [HybridSearch] Using client-side RRF fusion
-hybrid-search.js:103 [HybridSearch] Fetching 48 vector results from collection: vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a
-hybrid-search.js:104 [HybridSearch] Backend: StandardBackend, Source: openrouter
-standard.js:374 [VectHare] queryCollection via plugin: collectionId=vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a, source=openrouter, model=qwen/qwen3-embedding-8b, topK=48, threshold=0.25, hasQueryVector=false
-core-vector-api.js:876 [VectHare] Hybrid search (client-side), dispatching to hybrid search module
-hybrid-search.js:67 [HybridSearch] Using client-side RRF fusion
-hybrid-search.js:103 [HybridSearch] Fetching 48 vector results from collection: vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a
-hybrid-search.js:104 [HybridSearch] Backend: StandardBackend, Source: openrouter
-standard.js:374 [VectHare] queryCollection via plugin: collectionId=vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a, source=openrouter, model=qwen/qwen3-embedding-8b, topK=48, threshold=0.25, hasQueryVector=false
-standard.js:382 [VectHare] plugin query response: status=200 ok=true
-standard.js:391 [VectHare] plugin query result: count=28, results.length=28, error=none
-hybrid-search.js:115 [HybridSearch] Raw vector results: hashes=28, metadata=28
-hybrid-search.js:138 [HybridSearch] Computing BM25 scores for 28 results...
-bm25-scorer.js:497 [BM25+] Indexed 28 documents, avg length: 67.2 tokens, sublinearTf=true, fieldBoosting=true
-query-keyword-extractor.js:115 [VectHare] extractQueryKeywords anchor CJK -> 35 unique (top 15): 老人家, 笑着, 着説, 不要, 最新, 互动, 我説, 分析, 沒有, 我有, 不知道, 資訊, 分享, 很大, 關聯
-query-keyword-extractor.js:116 [VectHare] extractQueryKeywords context CJK -> 60 unique (top 35): 輸入, 接下來, 劇情, 相關, 記憶, 龍脈, 都是, 公主, 御膳, 守護神, 深不可測, 老頑童, 雪兎, 有沒有, 打贏, 魔王, 光笑, 最好, 魔女, 也沒有, 必勝, 機會, 我笑, 對對, 就好, 今天, 晚上, 休息, 明天, 才會, 使用者, 以下, 代碼, 目的, 對應
-query-keyword-extractor.js:117 [VectHare] extractQueryKeywords Latin -> 5 unique (top 5): alpha, nikita, best_candidate_id, am01, am02
-query-keyword-extractor.js:118 [VectHare] extractQueryKeywords final -> 55 tokens (fullCJK=true): 老人家, 笑着, 着説, 不要, 最新, 互动, 我説, 分析, 沒有, 我有, 不知道, 資訊, 分享, 很大, 關聯, 輸入, 接下來, 劇情, 相關, 記憶, 龍脈, 都是, 公主, 御膳, 守護神, 深不可測, 老頑童, 雪兎, 有沒有, 打贏, 魔王, 光笑, 最好, 魔女, 也沒有, 必勝, 機會, 我笑, 對對, 就好, 今天, 晚上, 休息, 明天, 才會, 使用者, 以下, 代碼, 目的, 對應, alpha, nikita, best_candidate_id, am01, am02
-hybrid-search.js:149 [HybridSearch] Applying RRF fusion (k=60)...
-hybrid-search.js:167 [HybridSearch] Returning 16 fused results
-hybrid-search.js:171 [HybridSearch] Score distribution: min=0.4793, max=0.9123
-hybrid-search.js:172 [HybridSearch] Top 3 results:
-hybrid-search.js:179   [1] finalScore=0.9123, vectorRank=1, textRank=1, vectorScore=0.8069, textScore=0.9182
-hybrid-search.js:179   [2] finalScore=0.6386, vectorRank=10, textRank=2, vectorScore=0.5773, textScore=0.6558
-hybrid-search.js:179   [3] finalScore=0.6386, vectorRank=8, textRank=3, vectorScore=0.5844, textScore=0.6460
-core-vector-api.js:886 [VectHare] Hybrid search (RRF) response: 16 result(s) in 550ms, scores=[0.9123, 0.6386, 0.6386, 0.6250, 0.6046, 0.6014, 0.5945, 0.5927, 0.5877, 0.5562, 0.5520, 0.5300, 0.5233, 0.5115, 0.4879, 0.4793]
-standard.js:382 [VectHare] plugin query response: status=200 ok=true
-standard.js:391 [VectHare] plugin query result: count=28, results.length=28, error=none
-hybrid-search.js:115 [HybridSearch] Raw vector results: hashes=28, metadata=28
-hybrid-search.js:138 [HybridSearch] Computing BM25 scores for 28 results...
-bm25-scorer.js:497 [BM25+] Indexed 28 documents, avg length: 67.2 tokens, sublinearTf=true, fieldBoosting=true
-query-keyword-extractor.js:115 [VectHare] extractQueryKeywords anchor CJK -> 56 unique (top 15): 雪兔, 兔姬, 龍脈, 守護神, 聽完, 描述, 藍色, 眸子, 收縮, 伸出, 食指, 虛空, 代表, 能量, 數據
-query-keyword-extractor.js:116 [VectHare] extractQueryKeywords context CJK -> 397 unique (top 35): 感度, 職位, 眷屬, 明天, 魔女, 長髮, 正式, 主人, 語氣, 客廳, 休息, 那位, 老人家, 核心, 代碼, 看向, 校園, 都市, 九条, 一抹, 狸貓, 眼眸, 關懷, 準備, 今晚, 帶著, 紫羅蘭, 看著, 色慾, 魅惑, 魔羅, 安靜, 沒有, 精靈, 策略
-query-keyword-extractor.js:117 [VectHare] extractQueryKeywords Latin -> 12 unique (top 10): cup, alpha, best_candidate_id, echidna, kamira, satella, ooc, vex, critblade, nikita
-query-keyword-extractor.js:118 [VectHare] extractQueryKeywords final -> 60 tokens (fullCJK=true): 雪兔, 兔姬, 龍脈, 守護神, 聽完, 描述, 藍色, 眸子, 收縮, 伸出, 食指, 虛空, 代表, 能量, 數據, 感度, 職位, 眷屬, 明天, 魔女, 長髮, 正式, 主人, 語氣, 客廳, 休息, 那位, 老人家, 核心, 代碼, 看向, 校園, 都市, 九条, 一抹, 狸貓, 眼眸, 關懷, 準備, 今晚, 帶著, 紫羅蘭, 看著, 色慾, 魅惑, 魔羅, 安靜, 沒有, 精靈, 策略, cup, alpha, best_candidate_id, echidna, kamira, satella, ooc, vex, critblade, nikita
-hybrid-search.js:149 [HybridSearch] Applying RRF fusion (k=60)...
-hybrid-search.js:167 [HybridSearch] Returning 16 fused results
-hybrid-search.js:171 [HybridSearch] Score distribution: min=0.6403, max=0.9530
-hybrid-search.js:172 [HybridSearch] Top 3 results:
-hybrid-search.js:179   [1] finalScore=0.9530, vectorRank=1, textRank=1, vectorScore=0.8800, textScore=0.9030
-hybrid-search.js:179   [2] finalScore=0.8160, vectorRank=2, textRank=2, vectorScore=0.7476, textScore=0.7987
-hybrid-search.js:179   [3] finalScore=0.7644, vectorRank=3, textRank=6, vectorScore=0.7349, textScore=0.7132
-core-vector-api.js:886 [VectHare] Hybrid search (RRF) response: 16 result(s) in 1141ms, scores=[0.9530, 0.8160, 0.7644, 0.7492, 0.7198, 0.7175, 0.7134, 0.6908, 0.6820, 0.6794, 0.6793, 0.6791, 0.6709, 0.6445, 0.6410, 0.6403]
-eventbase-retrieval.js:154 [EventBase] Dual-query: user=16 + context=16 → merged=20 unique events
-eventbase-retrieval.js:187 [EventBase] After importance filter (>=1): 20 candidates
-eventbase-retrieval.js:262 [EventBase] Final events after dedup + trim: 8
-eventbase-retrieval.js:264   [0] type=main_quest_update imp=9 score=0.814 persist=true
-eventbase-retrieval.js:264   [1] type=revelation imp=10 score=0.761 persist=true
-eventbase-retrieval.js:264   [2] type=revelation imp=10 score=0.723 persist=true
-eventbase-retrieval.js:264   [3] type=revelation imp=10 score=0.722 persist=true
-eventbase-retrieval.js:264   [4] type=main_quest_update imp=10 score=0.713 persist=true
-eventbase-retrieval.js:264   [5] type=revelation imp=9 score=0.712 persist=true
-eventbase-retrieval.js:264   [6] type=revelation imp=9 score=0.708 persist=true
-eventbase-retrieval.js:264   [7] type=relationship_change imp=10 score=0.692 persist=true
-eventbase-workflow.js:432 [EventBase] Retrieval debug: {dualQuery: true, keywordScoringMethod: 'hybrid', nativeHybridPrefer: true, fusionMethod: 'rrf', rawCount: 20, …}
-eventbase-workflow.js:476 [EventBase] Injected 8 event(s) (requested 8), text length: 4039
-eventbase-workflow.js:477 [EventBase] setExtensionPrompt tag="3_vecthare_eventbase" position=0 depth=2
-eventbase-workflow.js:480 [EventBase] Slot verification — key exists: true, value type: string, length: 4039
-eventbase-workflow.js:481 [EventBase] extension_prompts keys: (10) ['1_memory', '2_floating_prompt', 'QUIET_PROMPT', 'PERSONA_DESCRIPTION', '__STORY_STRING__', '3_vecthare', '3_vecthare_eventbase', '3_vectors', '4_vectors_data_bank', 'DEPTH_PROMPT']
-eventbase-workflow.js:482 [EventBase] Injection preview: <VectHareMemory>
-# Event 1
-event_type: main_quest_update
-importance: 9
-summary: 勇希分享與五龍族之深厚關聯，其龍脈之氣來自兩龍族公主及御膳Nikita，五龍族守護神為雪兔姬，可求教打贏魔王族之法。光警告勿直呼其老人家否則難勝。眾人決定今晚休息，明日先見雪兔姬。阿爾法納入計算，將其視為底層代碼守護者並標註關鍵轉折點。
-DateTime: -
-cause: 阿爾法分析後，勇希提供未知資訊補充。
-result: 緊張氣氛消解，眾女散去休息，為明日旅程及測試做準備。
-characters: 勇希, 阿爾法, 光, 九条光,
-chat-vectorization.js:1908 VectHare: Will query 1 collections: ['vectra:vecthare_lorebook_story1_1778288919954']
-chat-vectorization.js:1927 VectHare: Extracted 8 keywords from query: (8) ['cup', 'echidna', 'kamira', 'satella', 'vex', 'alpha', '阿爾法', '聽完']
+chat-vectorization.js:1841 🐰 VectHare: rearrangeChat called (type: normal, chat length: 14)
+eventbase-workflow.js:348 [EventBase] Live collection not locked to chat (異世界學校 - 2025-12-16@09h56m28s), lockedChats=[]
+eventbase-workflow.js:356 [EventBase] No live collection and no archive collections — skipping Phase A
+chat-vectorization.js:1905 VectHare: Will query 1 collections: ['vectra:vecthare_lorebook_story1_1778288919954']
+chat-vectorization.js:1924 VectHare: Extracted 8 keywords from query: (8) ['cup', 'echidna', 'kamira', 'satella', 'vex', 'alpha', '阿爾法', '聽完']
 collection-metadata.js:908 [VectHare Activation Filter] Collection vectra:vecthare_lorebook_story1_1778288919954: hasTriggers=false, hasConditions=false
-collection-metadata.js:934 [VectHare Activation Filter] Collection vectra:vecthare_lorebook_story1_1778288919954: ✓ LOCKED_TO_CURRENT_CHAT (異世界學校 - 2025-12-16@09h56m28s)
-collection-metadata.js:965 [VectHare Activation Filter] Summary: 1 collections → 1 active
-collection-metadata.js:967 [VectHare Activation Filter] Active collections: ['vectra:vecthare_lorebook_story1_1778288919954']
-chat-vectorization.js:1959 ✅ VectHare: 1 collections passed activation filters: ['vectra:vecthare_lorebook_story1_1778288919954']
-core-vector-api.js:876 [VectHare] Hybrid search (client-side), dispatching to hybrid search module
-hybrid-search.js:67 [HybridSearch] Using client-side RRF fusion
-hybrid-search.js:103 [HybridSearch] Fetching 21 vector results from collection: vectra:vecthare_lorebook_story1_1778288919954
-hybrid-search.js:104 [HybridSearch] Backend: StandardBackend, Source: openrouter
-standard.js:374 [VectHare] queryCollection via plugin: collectionId=vecthare_lorebook_story1_1778288919954, source=openrouter, model=qwen/qwen3-embedding-8b, topK=21, threshold=0.25, hasQueryVector=false
-standard.js:382 [VectHare] plugin query response: status=200 ok=true
-standard.js:391 [VectHare] plugin query result: count=21, results.length=21, error=none
-hybrid-search.js:115 [HybridSearch] Raw vector results: hashes=21, metadata=21
-hybrid-search.js:138 [HybridSearch] Computing BM25 scores for 21 results...
-bm25-scorer.js:497 [BM25+] Indexed 21 documents, avg length: 92.7 tokens, sublinearTf=true, fieldBoosting=true
-query-keyword-extractor.js:115 [VectHare] extractQueryKeywords anchor CJK -> 56 unique (top 15): 雪兔, 兔姬, 龍脈, 守護神, 聽完, 描述, 藍色, 眸子, 收縮, 伸出, 食指, 虛空, 代表, 能量, 數據
-query-keyword-extractor.js:116 [VectHare] extractQueryKeywords context CJK -> 397 unique (top 35): 感度, 職位, 眷屬, 明天, 魔女, 長髮, 正式, 主人, 語氣, 客廳, 休息, 那位, 老人家, 核心, 代碼, 看向, 校園, 都市, 九条, 一抹, 狸貓, 眼眸, 關懷, 準備, 今晚, 帶著, 紫羅蘭, 看著, 色慾, 魅惑, 魔羅, 安靜, 沒有, 精靈, 策略
-query-keyword-extractor.js:117 [VectHare] extractQueryKeywords Latin -> 12 unique (top 10): cup, alpha, best_candidate_id, echidna, kamira, satella, ooc, vex, critblade, nikita
-query-keyword-extractor.js:118 [VectHare] extractQueryKeywords final -> 60 tokens (fullCJK=true): 雪兔, 兔姬, 龍脈, 守護神, 聽完, 描述, 藍色, 眸子, 收縮, 伸出, 食指, 虛空, 代表, 能量, 數據, 感度, 職位, 眷屬, 明天, 魔女, 長髮, 正式, 主人, 語氣, 客廳, 休息, 那位, 老人家, 核心, 代碼, 看向, 校園, 都市, 九条, 一抹, 狸貓, 眼眸, 關懷, 準備, 今晚, 帶著, 紫羅蘭, 看著, 色慾, 魅惑, 魔羅, 安靜, 沒有, 精靈, 策略, cup, alpha, best_candidate_id, echidna, kamira, satella, ooc, vex, critblade, nikita
-hybrid-search.js:149 [HybridSearch] Applying RRF fusion (k=60)...
-hybrid-search.js:167 [HybridSearch] Returning 7 fused results
-hybrid-search.js:171 [HybridSearch] Score distribution: min=0.6788, max=0.7495
-hybrid-search.js:172 [HybridSearch] Top 3 results:
-hybrid-search.js:179   [1] finalScore=0.7495, vectorRank=4, textRank=1, vectorScore=0.6439, textScore=0.7970
-hybrid-search.js:179   [2] finalScore=0.7078, vectorRank=1, textRank=5, vectorScore=0.6527, textScore=0.6977
-hybrid-search.js:179   [3] finalScore=0.7062, vectorRank=7, textRank=2, vectorScore=0.6303, textScore=0.7260
-core-vector-api.js:886 [VectHare] Hybrid search (RRF) response: 7 result(s) in 534ms, scores=[0.7495, 0.7078, 0.7062, 0.6852, 0.6845, 0.6845, 0.6788]
-chat-vectorization.js:866 VectHare: Retrieved 7 chunks from vectra:vecthare_lorebook_story1_1778288919954
-chat-vectorization.js:2028 VectHare: Boosted 2/7 chunks with matching keywords to 100% score
-chat-vectorization.js:2079 VectHare: Retrieved 7 total chunks from 1 collections
-chat-vectorization.js:2132 VectHare: Stored 7 chunks for visualizer
-chat-vectorization.js:2135 [VectHare Deduplication] Starting with 7 chunks before deduplication
-chat-vectorization.js:2136 [VectHare Deduplication] Current chat has 14 messages
-chat-vectorization.js:1496 [VectHare Dedup] Building hash set from 14 recent messages (depth: 50)
-chat-vectorization.js:1497 [VectHare Dedup] Total chat length: 14, checking duplicates in last 14 messages
-chat-vectorization.js:1523 [VectHare Dedup] Built hash set with 10 unique message hashes from recent context
-chat-vectorization.js:1561 [VectHare Dedup] FINAL: 7 will inject, 0 skipped as duplicates
-chat-vectorization.js:2140 [VectHare Deduplication] After deduplication: 7 to inject, 0 skipped
-chat-vectorization.js:2163 [VectHare Deduplication] ✅ 7 chunks will proceed to injection
-chat-vectorization.js:2168 
-✅ VectHare: Successfully injected 7 chunk(s) into prompt
-chat-vectorization.js:2169    Verification: ✓ PASSED
-chat-vectorization.js:2170    Total characters injected: 2451
-
-search-debug.js:148 VectHare Debug: Stored search debug data {query: '.\n阿爾法聽完關於「雪兔姬」的描述，那雙冰藍色的眸子微微收縮。她伸出食指，在虛空中輕點，幾條代表龍脈...', stages: {…}, historyCount: 2}
-chat-vectorization.js:2196 VectHare: ✅ Injected 7 chunks (0 skipped - already in context)
+collection-metadata.js:945 [VectHare Activation Filter] Collection vectra:vecthare_lorebook_story1_1778288919954: ✗ NOT_ACTIVATED (no trigger match, no condition pass, not locked)
+collection-metadata.js:965 [VectHare Activation Filter] Summary: 1 collections → 0 active
+chat-vectorization.js:1951 ⚠️ VectHare: No collections passed activation conditions and World Info disabled - chunks cannot be injected!
+chat-vectorization.js:1952    💡 Check your collection activation conditions in VectHare settings
 script.js:4547 Core/all messages: 14/731
 world-info.js:5159 [WI] Adding 38 entries to prompt (38) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
 index.js:19 [QR2] calling {args: Array(1), functionToCall: ƒ}
 script.js:4606 skipWIAN not active, adding WIAN
-handler.ts:225 [Prompt Template] start generate after 39 messages
-handler.ts:395 [Prompt Template] processing 39 messages in 5ms
+handler.ts:225 [Prompt Template] start generate after 37 messages
+handler.ts:395 [Prompt Template] processing 37 messages in 5ms
 index.js:1524 [shujuku_v91] ACU GENERATION_ENDED event for message_id: 731
 index.js:1524 [shujuku_v91] New message event (GENERATION_ENDED) detected for ACU, debouncing for 500ms...
 index.js:1524 [shujuku_v91] [剧情推进] [Plot] savePlotToLatestMessage_ACU 被调用
