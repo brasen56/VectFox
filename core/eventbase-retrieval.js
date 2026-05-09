@@ -97,11 +97,14 @@ function _normalizeWeights(w) {
  *        Empty/missing → no live query.
  * @param {object[]} [params.additionalCandidates] - Pre-queried events from archive event
  *        collections (vecthare_archiveevent_*). Already event-shaped; merged before re-ranking.
- * @param {boolean}  [params.skipLiveQuery] - When true, skip live EventBase collection query.
+ * @param {boolean}  [params.skipLiveQuery]    - When true, skip live EventBase collection query.
  *        Used when the live collection is paused or not locked to the current chat.
+ * @param {boolean}  [params.skipContextDedup] - When true, skip the dedup-depth step.
+ *        Set when locked cross-chat: source_window_end values belong to a different conversation
+ *        and cannot be compared to the current chat length.
  * @returns {Promise<{ events: object[], debug: object }>}
  */
-export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery }) {
+export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false }) {
     const debugLog = settings.eventbase_debug_logging;
 
     const topK = (settings.eventbase_retrieval_top_k || 8) * 2; // overfetch for re-rank
@@ -232,17 +235,21 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     // 6. Dedup depth — skip events whose source window is already visible in recent context.
     // If source_window_end falls within the last deduplication_depth messages, the LLM can
     // already see that content directly; injecting the event adds redundant information.
+    // Skipped when cross-chat locked: source_window_end belongs to a different conversation
+    // and is meaningless relative to the current chat length.
     const dedupDepth = settings.deduplication_depth ?? 50;
     const visibleThreshold = dedupDepth > 0 ? chatLength - dedupDepth : -1;
 
-    const contextDedupedEvents = dedupedEvents.filter(e => {
-        const windowEnd = e.source_window_end ?? -1;
-        const inRecentContext = dedupDepth > 0 && windowEnd >= visibleThreshold;
-        if (inRecentContext && debugLog) {
-            console.log(`[EventBase] Dedup-depth skip: event "${e.event_type}" source_window_end=${windowEnd} is within last ${dedupDepth} messages (threshold=${visibleThreshold})`);
-        }
-        return !inRecentContext;
-    });
+    const contextDedupedEvents = (skipContextDedup || dedupDepth <= 0)
+        ? dedupedEvents
+        : dedupedEvents.filter(e => {
+            const windowEnd = e.source_window_end ?? -1;
+            const inRecentContext = windowEnd >= visibleThreshold;
+            if (inRecentContext && debugLog) {
+                console.log(`[EventBase] Dedup-depth skip: event "${e.event_type}" source_window_end=${windowEnd} is within last ${dedupDepth} messages (threshold=${visibleThreshold})`);
+            }
+            return !inRecentContext;
+        });
 
     if (debugLog && contextDedupedEvents.length < dedupedEvents.length) {
         console.log(`[EventBase] Dedup depth (${dedupDepth}) removed ${dedupedEvents.length - contextDedupedEvents.length} event(s) already visible in context`);

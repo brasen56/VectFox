@@ -427,6 +427,11 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         console.log(`[EventBase] Queried ${archiveCollections.length} archive event collection(s) → ${additionalCandidates.length} event(s)`);
     }
 
+    // Cross-chat lock: collection UUID embedded in the ID differs from the current chat UUID.
+    // When locked cross-chat, source_window_end values belong to a different conversation and
+    // cannot be compared to the current chat length — skip the context-dedup step entirely.
+    const isCrossChat = lockedLiveCollections.some(c => !c.collectionId.includes(uuid));
+
     const { events, debug } = await retrieveEvents({
         searchText,
         keywordQuery,
@@ -435,6 +440,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         liveCollectionIds: lockedLiveCollections.map(c => c.collectionId),
         additionalCandidates,
         skipLiveQuery: !queryEventbase,
+        skipContextDedup: isCrossChat,
     });
 
     if (debugLog) {
