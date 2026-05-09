@@ -1872,7 +1872,9 @@ export async function rearrangeChat(chat, settings, type) {
             return;
         }
 
-        // EventBase workflow: structured event retrieval instead of chunk-based RAG
+        // EventBase workflow: Phase A — structured event retrieval.
+        // Does NOT return — falls through to Phase B below so chunk-based collections
+        // (lorebooks, characters, URLs, etc.) are still queried on the same turn.
         if (settings.eventbase_enabled) {
             const queryText = buildSearchQuery(chat, settings);
             if (queryText) {
@@ -1889,7 +1891,6 @@ export async function rearrangeChat(chat, settings, type) {
                 const { EXTENSION_PROMPT_TAG } = await import('./constants.js');
                 setExtensionPrompt(`${EXTENSION_PROMPT_TAG}_eventbase`, '', settings.position, settings.depth, false);
             }
-            return;
         }
 
         // === STAGE 1: Gather collections to query ===

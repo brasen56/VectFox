@@ -229,3 +229,11 @@ Three retrieval paths exist after the keyword-level simplification. All paths ar
 | Stop-word source | Imports `DEFAULT_STOP_WORD_SET` from `./stop-words.js` (full multi-language list, English + CJK; mirrored from `similharity/stop-words.js`) |
 
 **Keep-in-sync note:** if the extraction algorithm changes in `similharity/index.js` (e.g. anchor budget, bigram fallback, Latin regex), update `core/query-keyword-extractor.js` to match. The console log prefix was changed from `[Qdrant]` to `[VectHare]` — that difference is intentional.
+
+
+## 11) javascript to get these variables in chrome console
+const ctx = SillyTavern.getContext();
+const chatUUID = ctx.chatMetadata?.integrity || ctx.chatId;
+const handleId = (ctx.name1 || 'user').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substring(0, 30) || 'user';
+const charName = (ctx.name2 || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substring(0, 30) || 'chat';
+console.log({ chatUUID, handleId, charName });

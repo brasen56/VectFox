@@ -1,13 +1,14 @@
 Generate entered
 index.js:19 [QR2] calling {args: Array(3), functionToCall: ƒ}
-chat-vectorization.js:1839 🐰 VectHare: rearrangeChat called (type: normal, chat length: 14)
-eventbase-workflow.js:321 [EventBase] Not active for current chat (異世界學校 - 2025-12-16@09h56m28s), lockMetaKey=none, lockedChats=[] — skipping retrieval
+chat-vectorization.js:1844 🐰 VectHare: rearrangeChat called (type: normal, chat length: 14)
+eventbase-workflow.js:373 [EventBase] Live collection not locked to chat (異世界學校 - 2025-12-16@09h56m28s), lockedChats=[]
+eventbase-workflow.js:381 [EventBase] No live collection and no archive collections — skipping Phase A
 script.js:4547 Core/all messages: 14/731
 world-info.js:5159 [WI] Adding 38 entries to prompt (38) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
 index.js:19 [QR2] calling {args: Array(1), functionToCall: ƒ}
 script.js:4606 skipWIAN not active, adding WIAN
 handler.ts:225 [Prompt Template] start generate after 37 messages
-handler.ts:395 [Prompt Template] processing 37 messages in 7ms
+handler.ts:395 [Prompt Template] processing 37 messages in 5ms
 index.js:1524 [shujuku_v91] ACU GENERATION_ENDED event for message_id: 731
 index.js:1524 [shujuku_v91] New message event (GENERATION_ENDED) detected for ACU, debouncing for 500ms...
 index.js:1524 [shujuku_v91] [剧情推进] [Plot] savePlotToLatestMessage_ACU 被调用
