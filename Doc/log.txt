@@ -1,31 +1,40 @@
 VectHare: Using plugin for collection discovery
 collection-loader.js:387 ✅ VectHare: Plugin found 12 collections across all sources
-collection-loader.js:499    Final registry size: 4
+collection-loader.js:464    🗑️ Skipped 8 empty collection(s) with 0 chunks (not added to registry):
+collection-loader.js:465       - vectra:Your Wives - 2026-04-28@19h07m24s830ms imported
+collection-loader.js:465       - vectra:vecthare_chat_ArtificRealm創世域 - 2026-05-06@22h12m22s372ms
+collection-loader.js:465       - vectra:vecthare_chat_critblade_artificrealm_41879811-a1ae-442b-bae0-d376b2ceda33
+collection-loader.js:465       - vectra:vecthare_chat_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0
+collection-loader.js:465       - vectra:vecthare_chat_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a
+collection-loader.js:465       - vectra:vecthare_chat_異世界學校 - 2025-12-16@09h56m28s
+collection-loader.js:465       - vectra:vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0
+collection-loader.js:465       - vectra:__vecthare_health_check__
+collection-loader.js:506    Final registry size: 4
 
-collection-loader.js:888 VectHare: Loading collection: vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a (backend: vectra, source: unknown)
-collection-loader.js:900 VectHare:   Type: unknown, Scope: unknown (parsed from ID)
-collection-loader.js:913 VectHare:   Using plugin mode - getting data from cache
-collection-loader.js:935 VectHare:   Plugin reported 28 chunks (backend: vectra, source: openrouter, models: 1)
-collection-loader.js:966 VectHare:   Display name: vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a
-collection-loader.js:988 VectHare:   ✓ Added to collections list
-collection-loader.js:888 VectHare: Loading collection: vecthare_lorebook_story1_1778288919954 (backend: vectra, source: unknown)
-collection-loader.js:900 VectHare:   Type: lorebook, Scope: global (from stored meta)
-collection-loader.js:913 VectHare:   Using plugin mode - getting data from cache
-collection-loader.js:935 VectHare:   Plugin reported 49 chunks (backend: vectra, source: openrouter, models: 1)
-collection-loader.js:966 VectHare:   Display name: 📚 Lorebook: story1_1778288919954
-collection-loader.js:988 VectHare:   ✓ Added to collections list
-collection-loader.js:888 VectHare: Loading collection: vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0 (backend: qdrant, source: unknown)
-collection-loader.js:900 VectHare:   Type: unknown, Scope: unknown (parsed from ID)
-collection-loader.js:913 VectHare:   Using plugin mode - getting data from cache
-collection-loader.js:935 VectHare:   Plugin reported 1090 chunks (backend: qdrant, source: openrouter, models: 0)
-collection-loader.js:966 VectHare:   Display name: vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0
-collection-loader.js:988 VectHare:   ✓ Added to collections list
-collection-loader.js:888 VectHare: Loading collection: vecthare_chat_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0 (backend: qdrant, source: unknown)
-collection-loader.js:900 VectHare:   Type: chat, Scope: unknown (parsed from ID)
-collection-loader.js:913 VectHare:   Using plugin mode - getting data from cache
-collection-loader.js:935 VectHare:   Plugin reported 1058 chunks (backend: qdrant, source: openrouter, models: 0)
-collection-loader.js:966 VectHare:   Display name: 💬 Chat: critblade_artificrealm
-collection-loader.js:988 VectHare:   ✓ Added to collections list
-collection-loader.js:997 
+collection-loader.js:895 VectHare: Loading collection: vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a (backend: vectra, source: unknown)
+collection-loader.js:907 VectHare:   Type: unknown, Scope: unknown (parsed from ID)
+collection-loader.js:920 VectHare:   Using plugin mode - getting data from cache
+collection-loader.js:942 VectHare:   Plugin reported 28 chunks (backend: vectra, source: openrouter, models: 1)
+collection-loader.js:973 VectHare:   Display name: vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a
+collection-loader.js:995 VectHare:   ✓ Added to collections list
+collection-loader.js:895 VectHare: Loading collection: vecthare_lorebook_story1_1778288919954 (backend: vectra, source: unknown)
+collection-loader.js:907 VectHare:   Type: lorebook, Scope: global (from stored meta)
+collection-loader.js:920 VectHare:   Using plugin mode - getting data from cache
+collection-loader.js:942 VectHare:   Plugin reported 49 chunks (backend: vectra, source: openrouter, models: 1)
+collection-loader.js:973 VectHare:   Display name: 📚 Lorebook: story1_1778288919954
+collection-loader.js:995 VectHare:   ✓ Added to collections list
+collection-loader.js:895 VectHare: Loading collection: vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0 (backend: qdrant, source: unknown)
+collection-loader.js:907 VectHare:   Type: unknown, Scope: unknown (parsed from ID)
+collection-loader.js:920 VectHare:   Using plugin mode - getting data from cache
+collection-loader.js:942 VectHare:   Plugin reported 1090 chunks (backend: qdrant, source: openrouter, models: 0)
+collection-loader.js:973 VectHare:   Display name: vecthare_eventbase_qdrant_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0
+collection-loader.js:995 VectHare:   ✓ Added to collections list
+collection-loader.js:895 VectHare: Loading collection: vecthare_chat_critblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e44f43d0 (backend: qdrant, source: unknown)
+collection-loader.js:907 VectHare:   Type: chat, Scope: unknown (parsed from ID)
+collection-loader.js:920 VectHare:   Using plugin mode - getting data from cache
+collection-loader.js:942 VectHare:   Plugin reported 1058 chunks (backend: qdrant, source: openrouter, models: 0)
+collection-loader.js:973 VectHare:   Display name: 💬 Chat: critblade_artificrealm
+collection-loader.js:995 VectHare:   ✓ Added to collections list
+collection-loader.js:1004 
 ✅ VectHare: Loaded 4 non-empty collections for Database Browser
 database-browser.js:172 VectHare Database Browser: Opened

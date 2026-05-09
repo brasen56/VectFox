@@ -59,13 +59,18 @@ let pluginAvailable = null;
 export function getCollectionFilterReason(collectionId) {
     if (!collectionId || typeof collectionId !== 'string') return null;
 
-    // (1) Stacked-prefix corruption. Real collection IDs never start with a backend
+    // (1) Internal VectHare system collections (health checks, test indexes).
+    if (collectionId.startsWith('__vecthare_')) {
+        return 'internal-system';
+    }
+
+    // (2) Stacked-prefix corruption. Real collection IDs never start with a backend
     // name; backend is only used in the registry key with colon separators.
     if (/^(vectra|qdrant|milvus|lancedb|standard)(?![:_])/i.test(collectionId)) {
         return 'corrupted-prefix-stacked';
     }
 
-    // (2) ST-native file attachments — `file_` followed by digits.
+    // (3) ST-native file attachments — `file_` followed by digits.
     if (/^file_\d+$/.test(collectionId)) {
         return 'st-native-file';
     }
@@ -400,8 +405,9 @@ async function discoverViaPlugin(settings) {
 
             let skippedCorruption = 0;
             let skippedStFile = 0;
-            let skippedEmpty = 0;
-            const skippedEmptyList = [];
+            let skippedInternal = 0;
+            let emptyCount = 0;
+            const emptyList = [];
             for (const collection of data.collections) {
                 const backend = collection.backend || 'standard';
 
@@ -413,24 +419,24 @@ async function discoverViaPlugin(settings) {
                     console.debug(`   🔧 Stripped backend prefix from collection ID: ${collection.id} → ${collectionId}`);
                 }
 
-                // Skip corrupted/ST-native IDs at discovery time
+                // Skip corrupted/ST-native/internal IDs at discovery time
                 const filterReason = getCollectionFilterReason(collectionId);
                 if (filterReason) {
                     if (filterReason === 'corrupted-prefix-stacked') skippedCorruption++;
                     else if (filterReason === 'st-native-file') skippedStFile++;
+                    else if (filterReason === 'internal-system') skippedInternal++;
                     console.debug(`   ⛔ Skipping ${collectionId} (${filterReason})`);
                     continue;
                 }
 
-                console.debug(`   - ${backend}:${collectionId} (${collection.chunkCount} chunks)`);
-
-                // Skip empty collections — no data to serve, treat as stale so the registry
-                // entry gets removed and retrieval stops wasting a round-trip on them.
+                // Track empty collections for the summary log (still added to registry
+                // so DB Browser can show them and the user can delete them)
                 if (!collection.chunkCount) {
-                    skippedEmpty++;
-                    skippedEmptyList.push(`${backend}:${collectionId}`);
-                    continue;
+                    emptyCount++;
+                    emptyList.push(`${backend}:${collectionId}`);
                 }
+
+                console.debug(`   - ${backend}:${collectionId} (${collection.chunkCount} chunks)`);
 
                 const collectionData = {
                     chunkCount: collection.chunkCount,
@@ -457,12 +463,12 @@ async function discoverViaPlugin(settings) {
             const currentRegistry = getCollectionRegistry();
             const pluginKeySet = new Set(uniqueKeys);
 
-            if (skippedCorruption > 0 || skippedStFile > 0) {
-                console.log(`   🛡️ Discovery filter skipped ${skippedCorruption} corrupted + ${skippedStFile} ST-native file collection(s) — use Cleanup Corrupted to delete them from disk`);
+            if (skippedCorruption > 0 || skippedStFile > 0 || skippedInternal > 0) {
+                console.log(`   🛡️ Discovery filter excluded ${skippedCorruption} corrupted + ${skippedStFile} ST-native + ${skippedInternal} internal collection(s)`);
             }
-            if (skippedEmpty > 0) {
-                console.log(`   🗑️ Skipped ${skippedEmpty} empty collection(s) with 0 chunks (not added to registry):`);
-                skippedEmptyList.forEach(id => console.log(`      - ${id}`));
+            if (emptyCount > 0) {
+                console.log(`   ⚠️ ${emptyCount} empty collection(s) with 0 chunks (kept in registry — delete from DB Browser to clean up):`);
+                emptyList.forEach(id => console.log(`      - ${id}`));
             }
 
             console.debug(`\n📋 VectHare: Updating registry...`);
@@ -1016,6 +1022,18 @@ export async function loadAllCollections(settings, autoDiscover = true) {
 
 // Re-export from collection-metadata.js for backwards compatibility
 export { setCollectionEnabled, isCollectionEnabled } from './collection-metadata.js';
+
+/**
+ * Returns true if the collection has 0 chunks according to the plugin discovery cache.
+ * Used by retrieval to skip empty collections without querying them.
+ * @param {string} registryKey - e.g. "vectra:vecthare_lorebook_story1_..."
+ * @returns {boolean}
+ */
+export function isCollectionEmpty(registryKey) {
+    if (!pluginCollectionData) return false;
+    const cached = pluginCollectionData[registryKey];
+    return cached !== undefined && !cached.chunkCount;
+}
 
 /**
  * Loads chunks for a specific collection

@@ -32,7 +32,7 @@ import {
 } from './summarizer.js';
 import { applyDecayToResults, applySceneAwareDecay } from './temporal-decay.js';
 import { isChunkDisabledByScene } from './scenes.js';
-import { registerCollection, getCollectionRegistry } from './collection-loader.js';
+import { registerCollection, getCollectionRegistry, isCollectionEmpty } from './collection-loader.js';
 import { isCollectionEnabled, filterActiveCollections, setCollectionLock } from './collection-metadata.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { buildSearchContext, filterChunksByConditions, processChunkLinks } from './conditional-activation.js';
@@ -1938,6 +1938,14 @@ export async function rearrangeChat(chat, settings, type) {
                 currentCharacterId: getContext().characterId || null
             });
             activeCollections = await filterActiveCollections(collectionsToQuery, searchContext);
+        }
+
+        // Skip collections that have 0 chunks on disk — they're shown in DB Browser
+        // so the user can delete them, but there's nothing to query.
+        const preEmptyFilter = activeCollections.length;
+        activeCollections = activeCollections.filter(key => !isCollectionEmpty(key));
+        if (activeCollections.length < preEmptyFilter) {
+            console.log(`VectHare: Skipped ${preEmptyFilter - activeCollections.length} empty collection(s) from retrieval`);
         }
 
         // Allow WI-only mode even if no regular collections pass filters
