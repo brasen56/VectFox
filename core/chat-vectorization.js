@@ -555,7 +555,8 @@ export async function synchronizeChat(settings, batchSize = 5) {
         const context = getContext();
         if (getCurrentChatId() && Array.isArray(context.chat)) {
             const { runEventBaseIngestion } = await import('./eventbase-workflow.js');
-            const messages = context.chat.filter(m => !m.is_system);
+            // Include narrator/system messages — they contain story events EventBase should capture.
+            const messages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
             const result = await runEventBaseIngestion({
                 messages,
                 chatUUID: getChatUUID(),

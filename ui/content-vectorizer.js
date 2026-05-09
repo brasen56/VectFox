@@ -2660,7 +2660,9 @@ async function _runEventBaseBackfill() {
             return;
         }
 
-        const allMessages = context.chat.filter(m => !m.is_system);
+        // Include all messages that have text content — narrator/system messages carry
+        // story events just as much as regular user/AI turns and must not be excluded.
+        const allMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
 
         // Apply start-from slice (1-based, same logic as prepareChatContent)
         let messages = allMessages;
