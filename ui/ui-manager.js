@@ -2398,7 +2398,7 @@ function bindSettingsEvents(settings, callbacks) {
         });
     $('#vecthare_deduplication_depth_value').text(settings.deduplication_depth ?? 50);
 
-    // Keyword scoring method (bm25 = A1 fast re-rank; hybrid = A2 full corpus scan)
+    // Keyword scoring method (bm25 = A1 fast re-rank; hybrid = A2 client-side hybrid fusion, ANN-bound ≤100)
     $('#vecthare_keyword_scoring_method')
         .val(settings.keyword_scoring_method || 'bm25')
         .on('change', function() {
