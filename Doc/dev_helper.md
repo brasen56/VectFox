@@ -1,36 +1,36 @@
 # Dev Helper
 
-## 1) Pipeline Architecture — EventBase Always On
+## 1) Pipeline Architecture — Strict Path Separation
 
-EventBase is the **default and permanent** retrieval mode. There is no "EventBase OFF" path going forward.
+EventBase is the **exclusive** retrieval path for chat content. The legacy `eventbase_enabled` toggle has been removed — chat history (live and uploaded archive `.jsonl`) is hard-routed through EventBase ingestion + retrieval. Legacy chunking for chat is no longer supported.
 
 ### Two pipelines, strict ownership
 
-| Pipeline | Owned collections | Code entry point |
-|---|---|---|
-| **EventBase pipeline** | `vecthare_eventbase_*`, `vecthare_archiveevent_*` | `eventbase-workflow.js` → `eventbase-retrieval.js` |
-| **Standard pipeline** | `vecthare_lorebook_*`, `vecthare_document_*`, user collections | `chat-vectorization.js` → `queryAndMergeCollections` |
+| Pipeline | Content scope | Owned collections | Code entry point |
+|---|---|---|---|
+| **EventBase pipeline** | Chat history only (live chat + archive `.jsonl`) | `vecthare_eventbase_*`, `vecthare_archiveevent_*` | `eventbase-workflow.js` → `eventbase-retrieval.js` |
+| **Standard (Chunk) pipeline** | Non-chat content only — Lorebook / World Info, Character Cards, URLs / web pages, custom documents, wiki pages, YouTube transcripts | `vecthare_lorebook_*`, `vecthare_document_*`, user collections | `chat-vectorization.js` → `queryAndMergeCollections` |
 
-`vecthare_chat_*` collections (plain chunk-based chat history) are being phased out. When they still exist, they are excluded from the standard pipeline when EventBase is ON.
+The two paths never see each other's content. There is no overlap in collection prefixes or content types.
 
 ### Key isolation rule (`core/chat-vectorization.js` → `gatherCollectionsToQuery`)
 
 - `vecthare_eventbase_*` → **always** skipped by the standard pipeline (EventBase pipeline owns them exclusively)
 - `vecthare_archiveevent_*` → **always** skipped by the standard pipeline (EventBase pipeline owns them exclusively)
-- `vecthare_chat_*` → skipped by the standard pipeline when EventBase is ON
+- `vecthare_chat_*` → **always** skipped by the standard pipeline (legacy chunk-based chat collections; no longer created since the EventBase toggle was removed, but pre-existing ones are excluded unconditionally)
 
 ### Archive Chat History — Two content paths
 
 | Path | Content Type in UI | Collection prefix | Storage format | Retrieval |
 |---|---|---|---|---|
-| **A — EventBase** | `Chat → Upload` tab (EventBase ON) | `vecthare_archiveevent_*` | Event-shaped (same schema as live EventBase) | Phase A (EventBase re-ranker) |
+| **A — EventBase** | `Chat → Upload` tab | `vecthare_archiveevent_*` | Event-shaped (same schema as live EventBase) | Phase A (EventBase re-ranker) |
 | **B — Chunk** | `Document` content type | `vecthare_document_*` | Chunk-shaped | Phase B (standard pipeline) |
 
 Archive event collections are **not** auto-locked to any chat after ingestion. Users must manually check "Active for current chat" on the collection card to activate retrieval for a given chat.
 
 ### Why this matters
 
-Before this was fixed, `vecthare_eventbase_*` collections were included in the standard pipeline when EventBase was ON, causing them to be queried twice per generation: once by the EventBase pipeline (structured event retrieval with dedup-depth) and once by the standard pipeline (raw chunk retrieval). The standard pipeline query was always redundant and could inject duplicate content.
+Before the toggle removal, `vecthare_eventbase_*` collections could be included in the standard pipeline when EventBase was OFF, causing them to be queried twice per generation: once by the EventBase pipeline (structured event retrieval with dedup-depth) and once by the standard pipeline (raw chunk retrieval). The standard pipeline query was always redundant and could inject duplicate content. With the toggle gone, this class of bug is structurally impossible.
 
 ---
 
@@ -166,14 +166,16 @@ Windows extracted before this fix have no fingerprint in cache. First run after 
 
 ---
 
-## 7) GUI Settings — EventBase Relevance
+## 7) GUI Settings — Tab Placement & EventBase Relevance
 
-Two settings in the VectHare settings panel that look similar to EventBase internals:
+After the Phase 2 GUI reorg, settings are grouped by which path consumes them:
 
-| Setting | EventBase relevant? | What it actually does |
-|---|---|---|
-| **Insert Batch Size** (default 50) | **No** | Controls chunks-per-API-call during chunk vectorization. EventBase inserts tiny batches (2–10 events per window) so this has no meaningful effect on EventBase. |
-| **Dedup Depth** (default 50 messages) | **Yes** | Used in `eventbase-retrieval.js` as `settings.deduplication_depth`. Filters out retrieved events whose source window falls within the last N messages of the current chat — avoids injecting content already visible in context. 0 = disabled. |
+| Setting | UI tab | EventBase relevant? | What it actually does |
+|---|---|---|---|
+| **Insert Batch Size** (default 50) | ChunkBase → Ingestion | **No** | Controls chunks-per-API-call during chunk vectorization. EventBase inserts tiny batches (2–10 events per window) so this has no meaningful effect on EventBase. |
+| **Dedup Depth** (default 50 messages) | Core | **Yes** | Used in `eventbase-retrieval.js` as `settings.deduplication_depth`. Filters out retrieved events whose source window falls within the last N messages of the current chat — avoids injecting content already visible in context. 0 = disabled. Also used by chunk-path retrieval in `chat-vectorization.js`. |
+| **Hybrid Search & BM25 block** (Keyword Scoring Method, BM25 k1/b, Fusion Method, RRF K, Prefer Native Backend Hybrid) | Core → Hybrid Search & BM25 | **Yes** | Read inside `queryCollection()` regardless of caller. Both EventBase and chunk paths inherit the A1/A2/A3 routing and its scoring parameters. See §13 for the full visibility matrix. |
+| **Query Keyword Budget** (`hybrid_keyword_level`) | ChunkBase → Keyword Budget | Yes — but indirect | Read inside `queryCollection()`'s A1 BM25 re-rank step (`scoreResults` at `core-vector-api.js:961`) and inside `hybridSearch()` at `hybrid-search.js:419`. So EventBase's queryCollection call does pick it up when running A1/A2. The control lives in ChunkBase because the chunk re-ranker is the primary consumer — EventBase has its own re-ranker on top that dominates final ordering. |
 
 ---
 
@@ -319,3 +321,51 @@ console.log({ chatUUID, handleId, charName });
     chatFile: SillyTavern.getContext().chatId,
   };
 })()
+
+---
+
+## 13) Hybrid Search & BM25 — GUI Placement Matrix (Phase 2)
+
+Because content type and path are fully coupled (chat → EventBase, non-chat → ChunkBase) and both paths funnel through the same `queryCollection()` layer, the original 6-column matrix (ChunkBase × {A1, A2, A3} + EventBase × {A1, A2, A3}) collapses to **three behavioral cells**. Each cell applies identically regardless of which path invoked the query.
+
+### Path scope reminder
+
+- **ChunkBase** owns non-chat content only: Lorebook / World Info, Character Cards, URLs / web pages, custom documents, wiki pages, YouTube transcripts.
+- **EventBase** owns chat content only: Current Chat history and uploaded Archive Chat history (`.jsonl`).
+
+### Settings × routing case
+
+| Setting | Storage key | **A1** — Standard + BM25 | **A2** — Standard + Hybrid | **A3** — Qdrant native |
+|---|---|---|---|---|
+| Keyword Scoring Method | `keyword_scoring_method` | ✅ selects A1 path | ✅ selects A2 path | ❌ ignored (server decides) |
+| BM25 k1 | `bm25_k1` | ✅ used | ✅ used | ❌ server-internal |
+| BM25 b | `bm25_b` | ✅ used | ✅ used | ❌ server-internal |
+| Query Keyword Budget | `hybrid_keyword_level` | ✅ used (chunk re-rank dominant consumer) | ❌ not used | ❌ not used |
+| Fusion Method (RRF / Weighted) | `hybrid_fusion_method` | ❌ not used | ✅ used | ✅ passed to server |
+| RRF K | `hybrid_rrf_k` | ❌ not used | ✅ used | ✅ passed to server |
+| Prefer Native Backend Hybrid | `hybrid_native_prefer` | n/a | n/a | toggles A3 vs falls back to A2 client-side |
+
+### Key observations
+
+1. **Path doesn't change scoring math.** Both ChunkBase and EventBase funnel through `queryCollection()`, so the A1/A2/A3 switch produces identical scoring math regardless of caller. The collapse from 6 columns to 3 reflects this.
+2. **`hybrid_keyword_level` is the only setting placed in ChunkBase.** It is read by both paths via `queryCollection()` → `scoreResults()` (A1) or `hybridSearch()` (A2), but the chunk re-ranker is its primary consumer. EventBase has its own importance/persist/recency re-ranker on top, which dominates final ordering — so the control lives in ChunkBase as a chunk-path-tuning knob without misleading EventBase users.
+3. **All other rows live in Core.** They are consumed identically by both paths — placing them in either tab alone would lie to users of the other path.
+
+### GUI hide/show rules (consequence of the above)
+
+| Mode | Visible in Core | Visible in ChunkBase |
+|---|---|---|
+| **Qdrant native** (A3, `hybrid_native_prefer=true`) | Prefer Native toggle, Native-active notice, Fusion Method, RRF K | *(no hybrid controls)* |
+| **Standard + BM25** (A1) | Keyword Scoring Method, BM25 k1, BM25 b | Query Keyword Budget |
+| **Standard + Hybrid** (A2) | Keyword Scoring Method, BM25 k1, BM25 b, Fusion Method, RRF K | *(no hybrid controls)* |
+
+Notes:
+- `Prefer Native Backend Hybrid` is rendered only when `vector_backend === 'qdrant'`.
+- When toggled off on Qdrant, the UI falls back to A2 visibility (Standard + Hybrid), but the routing layer still talks to Qdrant as the backend.
+- Visibility is driven by the helper [`updateNativeHybridUI()` at ui-manager.js:~2097](ui/ui-manager.js#L2097), which fires on changes to `vector_backend`, `keyword_scoring_method`, and `hybrid_native_prefer`. The cross-tab toggle of `#vecthare_hybrid_keyword_budget_wrapper` (in ChunkBase) works because the helper is global, not tab-scoped.
+
+### Cross-reference
+
+- Implementation plan: [plans/GUI_reorganize.md](plans/GUI_reorganize.md) §13–§22 (Phase 2).
+- Routing code: `queryCollection()` at [core-vector-api.js:834](core/core-vector-api.js#L834).
+- EventBase invocation: `queryEvents()` at [eventbase-store.js:139](core/eventbase-store.js#L139) and direct `queryCollection` calls in [eventbase-retrieval.js:139](core/eventbase-retrieval.js#L139), [eventbase-workflow.js:413](core/eventbase-workflow.js#L413).

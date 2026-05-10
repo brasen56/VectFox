@@ -466,6 +466,85 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </div>
                             </div>
 
+                            <!-- Hybrid Search & BM25 (shared by both chat/EventBase and non-chat/ChunkBase paths) -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Hybrid Search &amp; BM25</p>
+
+                            <!-- Only shown when backend supports native hybrid (Qdrant) -->
+                            <div id="vecthare_native_prefer_section" class="vecthare-form-group" style="display: none; margin-top: 8px;">
+                                <label class="checkbox_label" for="vecthare_hybrid_native_prefer">
+                                    <input id="vecthare_hybrid_native_prefer" type="checkbox" checked />
+                                    <span>Prefer Native Backend Hybrid</span>
+                                </label>
+                                <small class="vecthare_hint">Use backend-native hybrid search (Qdrant). When active, keyword scoring method and budget are handled server-side.</small>
+                            </div>
+
+                            <!-- Keyword Scoring Method (hidden when native hybrid active) -->
+                            <div id="vecthare_keyword_method_section" style="margin-top: 8px;">
+                                <label>
+                                    <small>Keyword Scoring Method</small>
+                                </label>
+                                <select id="vecthare_keyword_scoring_method" class="vecthare-select">
+                                    <option value="bm25">BM25 (fast re-rank of top-K)</option>
+                                    <option value="hybrid">Hybrid (vector candidates + BM25 fusion)</option>
+                                </select>
+                                <small class="vecthare_hint">BM25 re-ranks the vector top-K candidates. Hybrid expands the vector candidate window, scores those candidates with BM25, then fuses both signals. It is broader than BM25 mode, but not a true full-corpus keyword scan.</small>
+                            </div>
+
+                            <!-- Shown instead of above when native hybrid (A3) is active -->
+                            <div id="vecthare_native_hybrid_info" style="display: none; margin-top: 16px;">
+                                <small class="vecthare_hint"><i class="fa-solid fa-bolt"></i> Native hybrid active: server uses 50 keywords (CJK priority + English overflow)</small>
+                            </div>
+
+                            <!-- BM25 Parameters (visible when client-side BM25 logic runs — A1 or A2) -->
+                            <div id="vecthare_bm25_params" style="margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.1); border-radius: 8px;">
+                                <label for="vecthare_bm25_k1">
+                                    <small>BM25 k1 (TF saturation): <span id="vecthare_bm25_k1_value">1.5</span></small>
+                                </label>
+                                <input type="range" id="vecthare_bm25_k1" class="vecthare-slider" min="0.5" max="3.0" step="0.1" />
+                                <small class="vecthare_hint">Controls term frequency saturation (1.2-2.0 typical)</small>
+
+                                <label for="vecthare_bm25_b" style="margin-top: 8px;">
+                                    <small>BM25 b (Length norm): <span id="vecthare_bm25_b_value">0.75</span></small>
+                                </label>
+                                <input type="range" id="vecthare_bm25_b" class="vecthare-slider" min="0" max="1" step="0.05" />
+                                <small class="vecthare_hint">Controls document length normalization (0.75 typical)</small>
+                            </div>
+
+                            <!-- Hybrid Search params (visible in A2 hybrid mode and A3 native) -->
+                            <div style="margin-top: 16px; padding: 12px; background: rgba(0,100,200,0.1); border-radius: 8px; border: 1px solid rgba(0,100,200,0.2);">
+                                <div id="vecthare_hybrid_params" style="margin-top: 4px;">
+                                    <label style="margin-top: 8px;">
+                                        <small>Fusion Method</small>
+                                    </label>
+                                    <select id="vecthare_hybrid_fusion_method" class="vecthare-select">
+                                        <option value="rrf">RRF (Reciprocal Rank Fusion)</option>
+                                        <option value="weighted">Weighted Linear Combination</option>
+                                    </select>
+                                    <small class="vecthare_hint">RRF is parameter-free and robust; Weighted allows fine-tuning</small>
+
+                                    <div id="vecthare_hybrid_weights" style="display: none; margin-top: 12px;">
+                                        <label for="vecthare_hybrid_vector_weight">
+                                            <small>Vector Weight: <span id="vecthare_hybrid_vector_weight_value">0.5</span></small>
+                                        </label>
+                                        <input type="range" id="vecthare_hybrid_vector_weight" class="vecthare-slider" min="0" max="1" step="0.1" />
+
+                                        <label for="vecthare_hybrid_text_weight" style="margin-top: 8px;">
+                                            <small>Text Weight: <span id="vecthare_hybrid_text_weight_value">0.5</span></small>
+                                        </label>
+                                        <input type="range" id="vecthare_hybrid_text_weight" class="vecthare-slider" min="0" max="1" step="0.1" />
+                                    </div>
+
+                                    <div id="vecthare_hybrid_rrf_settings" style="margin-top: 12px;">
+                                        <label for="vecthare_hybrid_rrf_k">
+                                            <small>RRF K Constant: <span id="vecthare_hybrid_rrf_k_value">60</span></small>
+                                        </label>
+                                        <input type="range" id="vecthare_hybrid_rrf_k" class="vecthare-slider" min="1" max="100" step="1" />
+                                        <small class="vecthare_hint">Higher K = more weight to top-ranked results (60 is typical)</small>
+                                    </div>
+
+                                </div>
+                            </div>
+
                         </div>
                     </div>
 
@@ -543,21 +622,13 @@ export function renderSettings(containerId, settings, callbacks) {
                             <input type="range" id="vecthare_score_threshold" class="vecthare-slider" min="0" max="1" step="0.05" />
                             <small class="vecthare_hint">Minimum relevance score for retrieval</small>
 
-                            <!-- Hybrid Search & BM25 -->
-                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Hybrid Search &amp; BM25</p>
-
-                            <!-- Keyword Scoring Method (hidden when native hybrid active) -->
-                            <div id="vecthare_keyword_method_section" style="margin-top: 8px;">
+                            <!-- Keyword Budget (chunk-only; visible only in A1 Standard+BM25 mode) -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Keyword Budget</p>
+                            <small class="vecthare_hint" style="display: block; margin-bottom: 8px;">
+                                Chunk-path-only setting. Other hybrid/BM25 knobs live under <b>Core → Hybrid Search &amp; BM25</b>.
+                            </small>
+                            <div id="vecthare_hybrid_keyword_budget_wrapper" style="margin-top: 8px;">
                                 <label>
-                                    <small>Keyword Scoring Method</small>
-                                </label>
-                                <select id="vecthare_keyword_scoring_method" class="vecthare-select">
-                                    <option value="bm25">BM25 (fast re-rank of top-K)</option>
-                                    <option value="hybrid">Hybrid (vector candidates + BM25 fusion)</option>
-                                </select>
-                                <small class="vecthare_hint">BM25 re-ranks the vector top-K candidates. Hybrid expands the vector candidate window, scores those candidates with BM25, then fuses both signals. It is broader than BM25 mode, but not a true full-corpus keyword scan.</small>
-
-                                <label style="margin-top: 8px;">
                                     <small>Query Keyword Budget</small>
                                 </label>
                                 <select id="vecthare_hybrid_keyword_level" class="vecthare-select">
@@ -565,61 +636,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <option value="balance">50</option>
                                     <option value="maximum">70</option>
                                 </select>
-                                <small class="vecthare_hint">Max keywords extracted from your query for BM25 scoring (CJK priority; +10 English overflow when CJK fills budget)</small>
-                            </div>
-                            <!-- Shown instead of above when native hybrid (A3) is active -->
-                            <div id="vecthare_native_hybrid_info" style="display: none; margin-top: 16px;">
-                                <small class="vecthare_hint"><i class="fa-solid fa-bolt"></i> Native hybrid active: server uses 50 keywords (CJK priority + English overflow)</small>
-                            </div>
-
-                            <!-- BM25 Parameters -->
-                            <div id="vecthare_bm25_params" style="margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.1); border-radius: 8px;">
-                                <label for="vecthare_bm25_k1">
-                                    <small>BM25 k1 (TF saturation): <span id="vecthare_bm25_k1_value">1.5</span></small>
-                                </label>
-                                <input type="range" id="vecthare_bm25_k1" class="vecthare-slider" min="0.5" max="3.0" step="0.1" />
-                                <small class="vecthare_hint">Controls term frequency saturation (1.2-2.0 typical)</small>
-
-                                <label for="vecthare_bm25_b" style="margin-top: 8px;">
-                                    <small>BM25 b (Length norm): <span id="vecthare_bm25_b_value">0.75</span></small>
-                                </label>
-                                <input type="range" id="vecthare_bm25_b" class="vecthare-slider" min="0" max="1" step="0.05" />
-                                <small class="vecthare_hint">Controls document length normalization (0.75 typical)</small>
-                            </div>
-
-                            <!-- Hybrid Search params (always visible, apply to A2/A3) -->
-                            <div style="margin-top: 16px; padding: 12px; background: rgba(0,100,200,0.1); border-radius: 8px; border: 1px solid rgba(0,100,200,0.2);">
-                                <div id="vecthare_hybrid_params" style="margin-top: 4px;">
-                                    <label style="margin-top: 8px;">
-                                        <small>Fusion Method</small>
-                                    </label>
-                                    <select id="vecthare_hybrid_fusion_method" class="vecthare-select">
-                                        <option value="rrf">RRF (Reciprocal Rank Fusion)</option>
-                                        <option value="weighted">Weighted Linear Combination</option>
-                                    </select>
-                                    <small class="vecthare_hint">RRF is parameter-free and robust; Weighted allows fine-tuning</small>
-
-                                    <div id="vecthare_hybrid_weights" style="display: none; margin-top: 12px;">
-                                        <label for="vecthare_hybrid_vector_weight">
-                                            <small>Vector Weight: <span id="vecthare_hybrid_vector_weight_value">0.5</span></small>
-                                        </label>
-                                        <input type="range" id="vecthare_hybrid_vector_weight" class="vecthare-slider" min="0" max="1" step="0.1" />
-
-                                        <label for="vecthare_hybrid_text_weight" style="margin-top: 8px;">
-                                            <small>Text Weight: <span id="vecthare_hybrid_text_weight_value">0.5</span></small>
-                                        </label>
-                                        <input type="range" id="vecthare_hybrid_text_weight" class="vecthare-slider" min="0" max="1" step="0.1" />
-                                    </div>
-
-                                    <div id="vecthare_hybrid_rrf_settings" style="margin-top: 12px;">
-                                        <label for="vecthare_hybrid_rrf_k">
-                                            <small>RRF K Constant: <span id="vecthare_hybrid_rrf_k_value">60</span></small>
-                                        </label>
-                                        <input type="range" id="vecthare_hybrid_rrf_k" class="vecthare-slider" min="1" max="100" step="1" />
-                                        <small class="vecthare_hint">Higher K = more weight to top-ranked results (60 is typical)</small>
-                                    </div>
-
-                                </div>
+                                <small class="vecthare_hint">Max keywords extracted from your query for BM25 scoring (CJK priority; +10 English overflow when CJK fills budget). Used only when Standard backend + BM25 mode is active.</small>
                             </div>
 
                         </div>
@@ -940,15 +957,6 @@ export function renderSettings(containerId, settings, callbacks) {
                             <div class="vecthare-form-group">
                                 <label class="vecthare-label">Min Importance for Retrieval <span id="vecthare_eventbase_retrieval_min_importance_val">1</span></label>
                                 <input type="range" id="vecthare_eventbase_retrieval_min_importance" min="1" max="10" step="1" class="vecthare-range" />
-                            </div>
-
-                            <!-- Only shown when backend supports native hybrid (Qdrant) -->
-                            <div id="vecthare_native_prefer_section" class="vecthare-form-group" style="display: none;">
-                                <label class="checkbox_label" for="vecthare_hybrid_native_prefer">
-                                    <input id="vecthare_hybrid_native_prefer" type="checkbox" checked />
-                                    <span>Prefer Native Backend Hybrid</span>
-                                </label>
-                                <small class="vecthare_hint">Use backend-native hybrid search (Qdrant). When active, keyword scoring method and budget are handled server-side.</small>
                             </div>
 
                             <div class="vecthare-form-group">
@@ -2087,20 +2095,29 @@ function bindSettingsEvents(settings, callbacks) {
 
     // Helper: update visibility of native-hybrid-dependent UI elements
     function updateNativeHybridUI() {
-        const backend = settings.vector_backend || 'standard';
+        const backend       = settings.vector_backend || 'standard';
+        const method        = settings.keyword_scoring_method || 'bm25';
         const supportsNative = backend === 'qdrant';
-        const preferNative = settings.hybrid_native_prefer !== false;
-        const nativeActive = supportsNative && preferNative;
+        const preferNative  = settings.hybrid_native_prefer !== false;
+        const nativeActive  = supportsNative && preferNative;        // A3
+        const isHybridMode  = !nativeActive && method === 'hybrid';  // A2 (or Qdrant+prefer=false fallback)
+        const isBM25Mode    = !nativeActive && method === 'bm25';    // A1
 
-        // native prefer checkbox only visible when backend supports it
+        // Native-prefer toggle: only when backend supports it (Qdrant)
         $('#vecthare_native_prefer_section').toggle(supportsNative);
 
-        // keyword method section vs static "native active" text
+        // Keyword scoring method dropdown vs static "native active" notice
         $('#vecthare_keyword_method_section').toggle(!nativeActive);
         $('#vecthare_native_hybrid_info').toggle(nativeActive);
 
-        // BM25 params: visible when A1 or A2 (not A3)
+        // BM25 k1/b: visible whenever client-side BM25 logic runs (A1 or A2)
         $('#vecthare_bm25_params').toggle(!nativeActive);
+
+        // Fusion Method + RRF K: visible in A2 (hybrid mode) and A3 (passed to server)
+        $('#vecthare_hybrid_params').toggle(isHybridMode || nativeActive);
+
+        // Query Keyword Budget (lives in ChunkBase tab): visible only in A1
+        $('#vecthare_hybrid_keyword_budget_wrapper').toggle(isBM25Mode);
     }
 
     // Apply backend-specific hybrid defaults when backend changes or on first load.
@@ -2279,6 +2296,7 @@ function bindSettingsEvents(settings, callbacks) {
             Object.assign(extension_settings.vecthareplus, settings);
             saveSettingsDebounced();
             console.log(`VectHare: Keyword scoring method changed to ${settings.keyword_scoring_method}`);
+            updateNativeHybridUI();
         });
 
     // Hybrid keyword level

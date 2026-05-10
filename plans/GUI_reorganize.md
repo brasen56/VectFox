@@ -4,6 +4,7 @@
 Make the **Core** tab contain only settings that genuinely affect both retrieval paths (EventBase + Chunk). Move chunk-specific settings to the renamed **ChunkBase** tab so users understand which path each setting controls.
 
 ---
+#### Phase 1
 
 ## 1. Rename "Weight" tab → "ChunkBase"
 
@@ -524,3 +525,262 @@ To minimize the chance of half-broken intermediate states:
 8. **§11.4** (add intros to remaining 5 tabs) — additive, can be batched after everything else lands.
 
 After each step run the §10.8 manual checklist. Do not continue if a step leaves the panel broken.
+
+---
+#### Phase 2
+
+> **Scope reminder — what each path actually owns.**
+> - **EventBase** (chat path) is the **exclusive** retrieval path for **Current Chat history** and **uploaded Archive Chat history (.jsonl)**. Legacy chunking for chat is no longer supported — the `eventbase_enabled` toggle was removed in the prior session and chat content is hard-routed through EventBase ingestion + retrieval.
+> - **ChunkBase** is used **only** for non-chat content: **Lorebook / World Info**, **Character Cards**, **URLs / web pages**, **custom documents**, **wiki pages**, and **YouTube transcripts**. ChunkBase never sees chat history of any kind.
+>
+> Therefore in the matrix below, "ChunkBase + Standard (A1)" means *non-chat content using Standard backend with BM25 mode*, and "EventBase + Standard (A1)" means *chat content using Standard backend with BM25 mode*. The settings under discussion apply at the `queryCollection()` layer, which is shared by both paths but invoked on different content classes.
+
+> **Goal of Phase 2.** Phase 1 placed the entire **"Hybrid Search & BM25"** block (Keyword Scoring Method, Query Keyword Budget, BM25 k1/b, Fusion Method, RRF K) inside the **ChunkBase** tab and the **Prefer Native Backend Hybrid** toggle inside the **EventBase** tab. That placement is wrong: when [`queryCollection()`](core/core-vector-api.js) routes through Standard backend it reads `keyword_scoring_method`, `bm25_k1`, `bm25_b`, `hybrid_fusion_method`, `hybrid_rrf_k`, and `hybrid_native_prefer` regardless of whether the caller is the chunk path or the EventBase path ([eventbase-retrieval.js:118](core/eventbase-retrieval.js#L118), [eventbase-retrieval.js:291](core/eventbase-retrieval.js#L291) read these directly). So most of these settings are **shared across both paths and belong in Core**. Only `hybrid_keyword_level` (the **Query Keyword Budget** dropdown) is genuinely chunk-only — it is read solely by [core-vector-api.js:961](core/core-vector-api.js#L961) and [hybrid-search.js:419](core/hybrid-search.js#L419), both on the chunk hot path. EventBase ignores it.
+>
+> Phase 2 also adds the missing **backend-and-method-conditional visibility** layer. Today the existing helper [`updateNativeHybridUI()` at ui-manager.js:2089](ui/ui-manager.js#L2089) hides BM25 params when native hybrid is active, but it does **not** hide Fusion Method / RRF K when the user picks "BM25 (fast re-rank)" mode, and it does not hide Query Keyword Budget when the user picks Hybrid mode. The result is the GUI lies about which knobs are live for the user's current backend × method combination.
+
+---
+
+## 13. Settings usage matrix (the source of truth for Phase 2)
+
+Because content type and path are fully coupled (chat → EventBase, non-chat → ChunkBase) and both paths funnel through the same `queryCollection()` layer, there are only **three behavioral cells** to reason about. The original 6-column table the user shared collapses to a single 3-column table:
+
+| Setting | Storage key | A1 — Standard backend, BM25 mode | A2 — Standard backend, Hybrid mode | A3 — Qdrant native hybrid |
+|---|---|---|---|---|
+| Keyword Scoring Method | `keyword_scoring_method` | selects A1 path | selects A2 path | ignored (server decides) |
+| BM25 k1 | `bm25_k1` | used | used | server-internal |
+| BM25 b | `bm25_b` | used | used | server-internal |
+| Query Keyword Budget | `hybrid_keyword_level` | **used (only here)** | not used | not used |
+| Fusion Method | `hybrid_fusion_method` | not used | used | passed to server |
+| RRF K | `hybrid_rrf_k` | not used | used | passed to server |
+| Prefer Native Backend Hybrid | `hybrid_native_prefer` | n/a | n/a | toggles A3 vs falls back to A2 client-side |
+
+**Path independence.** None of the rows above behave differently for chat (EventBase) vs non-chat (ChunkBase) — the path determines *which collections are queried*, not *how scoring runs inside* `queryCollection()`. So Phase 2 reasons in terms of A1/A2/A3 only and treats the EventBase/ChunkBase split as orthogonal.
+
+**Why `hybrid_keyword_level` is the lone tab-bound exception.** It is read inside the chunk-path post-processor at [core-vector-api.js:961](core/core-vector-api.js#L961) and inside [hybrid-search.js:419](core/hybrid-search.js#L419), neither of which the EventBase retrieval pipeline ever invokes. EventBase calls `queryCollection()` directly and re-ranks with its own importance/persist/recency formula in [eventbase-retrieval.js](core/eventbase-retrieval.js), bypassing the chunk re-rank entirely. So this single setting genuinely belongs to the chunk (non-chat) tab.
+
+**The "Qdrant + native off" edge case** (backend = qdrant, `hybrid_native_prefer = false`) is intentionally omitted from the visibility rules. When `nativeActive` is false the code already falls back through the Standard path, and the existing helper [updateNativeHybridUI at ui-manager.js:2103](ui/ui-manager.js#L2103) keys BM25 visibility off `nativeActive`, so the rules below preserve current behavior in that edge case.
+
+---
+
+## 14. Placement decisions — overriding Phase 1
+
+Phase 1's earlier sections placed the BM25/hybrid block in the wrong tabs. Phase 2 supersedes those placements:
+
+| Setting | Phase 1 placement | **Phase 2 final placement** | Reason |
+|---|---|---|---|
+| Keyword Scoring Method (`keyword_scoring_method`) | ChunkBase | **Core** | Read by both paths via `queryCollection()` |
+| BM25 k1 (`bm25_k1`) | ChunkBase | **Core** | Read by both paths |
+| BM25 b (`bm25_b`) | ChunkBase | **Core** | Read by both paths |
+| Fusion Method (`hybrid_fusion_method`) | ChunkBase | **Core** | Read by both paths |
+| Vector / Text weights (`hybrid_vector_weight`, `hybrid_text_weight`) | ChunkBase | **Core** | Same as Fusion Method (sub-controls) |
+| RRF K (`hybrid_rrf_k`) | ChunkBase | **Core** | Read by both paths |
+| Prefer Native Backend Hybrid (`hybrid_native_prefer`) | EventBase tab (Phase 1 last move) | **Core** | Backend-level routing toggle — applies to both paths |
+| **Query Keyword Budget (`hybrid_keyword_level`)** | ChunkBase | **ChunkBase** (stays) | Only chunk path reads it ([core-vector-api.js:961](core/core-vector-api.js#L961), [hybrid-search.js:419](core/hybrid-search.js#L419)) |
+
+Net effect after Phase 2:
+- The "Hybrid Search & BM25" block currently at [ui-manager.js:546-624](ui/ui-manager.js#L546-L624) (inside the ChunkBase Hybrid Search & BM25 sub-section) moves **back into the Core card**, except for the Query Keyword Budget control which stays in ChunkBase.
+- The "Prefer Native Backend Hybrid" `<div id="vecthare_native_prefer_section">` block at [ui-manager.js:945-952](ui/ui-manager.js#L945-L952) moves out of the EventBase card and into the Core card, alongside the rest of the hybrid block.
+
+---
+
+## 15. Visibility rules (replaces today's partial helper)
+
+The expanded `updateNativeHybridUI()` must derive four flags and apply them across both Core and ChunkBase tabs:
+
+```js
+const backend       = settings.vector_backend || 'standard';
+const method        = settings.keyword_scoring_method || 'bm25';
+const preferNative  = settings.hybrid_native_prefer !== false;
+const supportsNative = backend === 'qdrant';
+const nativeActive  = supportsNative && preferNative;        // A3
+const isHybridMode  = !nativeActive && method === 'hybrid';  // A2 (or Qdrant+prefer=false fallback)
+const isBM25Mode    = !nativeActive && method === 'bm25';    // A1
+```
+
+| DOM element | Visibility expression | Tab after Phase 2 |
+|---|---|---|
+| `#vecthare_native_prefer_section` | `supportsNative` | Core |
+| `#vecthare_keyword_method_section` (Keyword Scoring Method dropdown wrapper, **without** keyword budget — see §16.2) | `!nativeActive` | Core |
+| `#vecthare_native_hybrid_info` (the static "Native hybrid active" hint) | `nativeActive` | Core |
+| `#vecthare_bm25_params` | `!nativeActive` | Core |
+| `#vecthare_hybrid_params` (parent of Fusion Method / RRF K / weights) | `isHybridMode \|\| nativeActive` | Core |
+| `#vecthare_hybrid_keyword_budget_wrapper` (new — wraps Query Keyword Budget only) | `isBM25Mode` | **ChunkBase** |
+
+The last row is the one that crosses tabs: a control rendered in ChunkBase whose visibility is driven by Core-tab settings. This works because the helper is global (runs on every settings panel render and on every change to `vector_backend`, `keyword_scoring_method`, or `hybrid_native_prefer`).
+
+The existing inner toggle for `#vecthare_hybrid_weights` vs `#vecthare_hybrid_rrf_settings` based on `hybrid_fusion_method` ([ui-manager.js:2330-2338](ui/ui-manager.js#L2330-L2338)) is unaffected and stays inside `#vecthare_hybrid_params`.
+
+---
+
+## 16. HTML moves — exact line-level steps
+
+### 16.1. Move the shared block out of ChunkBase, back into Core
+
+**Source (cut):** [ui-manager.js:546-623](ui/ui-manager.js#L546-L623) — the entire `<!-- Hybrid Search & BM25 -->` section currently inside the ChunkBase card body. This block contains:
+- The `<p class="vecthare-section-label">Hybrid Search & BM25</p>` header
+- `<div id="vecthare_keyword_method_section">` (Keyword Scoring Method **plus** Query Keyword Budget — split below)
+- `<div id="vecthare_native_hybrid_info">`
+- `<div id="vecthare_bm25_params">`
+- The outer wrapper containing `<div id="vecthare_hybrid_params">`
+
+**Destination:** Insert the cut block as a sub-section near the bottom of the Core card body, after the API Rate Limiting block and before the Core card closes. Suggested anchor: between [ui-manager.js:365](ui/ui-manager.js#L365) (end of rate limiting) and the next existing setting.
+
+The DOM IDs and event-handler bindings at [ui-manager.js:2275-2390](ui/ui-manager.js#L2275-L2390) are preserved by ID — no JS changes needed for the move itself (rule §10.5: ID stability).
+
+### 16.2. Split out the Query Keyword Budget so only it stays in ChunkBase
+
+The current `<div id="vecthare_keyword_method_section">` ([ui-manager.js:550-569](ui/ui-manager.js#L550-L569)) bundles two controls inside one wrapper: the Keyword Scoring Method dropdown **and** the Query Keyword Budget dropdown. They need different homes after Phase 2 — the method dropdown goes to Core, the budget dropdown stays in ChunkBase.
+
+**Refactor:** Replace the single bundled wrapper with two siblings:
+
+```html
+<!-- Goes to Core (renamed for clarity, ID kept for backward compat with helper) -->
+<div id="vecthare_keyword_method_section" style="margin-top: 8px;">
+    <label><small>Keyword Scoring Method</small></label>
+    <select id="vecthare_keyword_scoring_method" class="vecthare-select"> ... </select>
+    <small class="vecthare_hint">BM25 re-ranks the vector top-K candidates. Hybrid expands the vector candidate window, scores those candidates with BM25, then fuses both signals.</small>
+</div>
+
+<!-- Goes to ChunkBase (new wrapper, new ID for the new visibility rule) -->
+<div id="vecthare_hybrid_keyword_budget_wrapper" style="margin-top: 8px;">
+    <label><small>Query Keyword Budget</small></label>
+    <select id="vecthare_hybrid_keyword_level" class="vecthare-select"> ... </select>
+    <small class="vecthare_hint">Max keywords extracted from your query for BM25 scoring (CJK priority; +10 English overflow when CJK fills budget). Used only when Standard backend + BM25 mode is active.</small>
+</div>
+```
+
+The select element IDs (`vecthare_keyword_scoring_method`, `vecthare_hybrid_keyword_level`) **must not change** — both have bind handlers that depend on those IDs ([ui-manager.js:2275](ui/ui-manager.js#L2275), [ui-manager.js:2285](ui/ui-manager.js#L2285)).
+
+### 16.3. Move the Prefer Native toggle out of EventBase, into Core
+
+**Source (cut):** [ui-manager.js:945-952](ui/ui-manager.js#L945-L952) — the entire `<div id="vecthare_native_prefer_section">` block plus the comment line above it. Currently sits inside the EventBase Retrieval section between Min Importance and Injection Format.
+
+**Destination:** Place it as the **first** element of the new Hybrid Search & BM25 block in Core, above `#vecthare_keyword_method_section`. Rationale: it's the highest-level control (gates whether the user is in A3 or falls back to A2), and `updateNativeHybridUI` keys other visibility off it.
+
+ID stays `vecthare_native_prefer_section` so [`$('#vecthare_native_prefer_section').toggle(...)` at ui-manager.js:2096](ui/ui-manager.js#L2096) keeps working.
+
+### 16.4. Add a "Hybrid Search & BM25" group to ChunkBase containing only the keyword budget
+
+After §16.1 cuts the bundled block out, ChunkBase loses its hybrid section header. Re-add a minimal wrapper inside the ChunkBase card body so the orphan keyword-budget control has a labeled home:
+
+```html
+<p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Keyword Budget</p>
+<small class="vecthare_hint" style="display: block; margin-bottom: 8px;">
+  Chunk-path-only setting. Other hybrid/BM25 knobs live under <b>Core → Hybrid Search & BM25</b>.
+</small>
+<!-- #vecthare_hybrid_keyword_budget_wrapper (from §16.2) is placed here -->
+```
+
+Place this just above the existing **Temporal Weighting Defaults** card — keep ChunkBase's section ordering: Keyword Extraction (CJK Tokenizer / Custom Stopwords from Phase 1 §4) → **Keyword Budget** → Temporal Weighting Defaults.
+
+If after the cut the ChunkBase card has no other sub-sections beyond Keyword Budget and Temporal Weighting, that is fine — it correctly reflects that ChunkBase has exactly one chunk-only hybrid setting.
+
+---
+
+## 17. JS changes — expand `updateNativeHybridUI()`
+
+**Location:** [ui-manager.js:2089-2104](ui/ui-manager.js#L2089-L2104).
+
+**Replacement body:**
+
+```js
+function updateNativeHybridUI() {
+    const backend       = settings.vector_backend || 'standard';
+    const method        = settings.keyword_scoring_method || 'bm25';
+    const supportsNative = backend === 'qdrant';
+    const preferNative  = settings.hybrid_native_prefer !== false;
+    const nativeActive  = supportsNative && preferNative;
+    const isHybridMode  = !nativeActive && method === 'hybrid';
+    const isBM25Mode    = !nativeActive && method === 'bm25';
+
+    // Native-prefer toggle: only when backend supports it
+    $('#vecthare_native_prefer_section').toggle(supportsNative);
+
+    // Keyword scoring method dropdown vs static "native active" notice
+    $('#vecthare_keyword_method_section').toggle(!nativeActive);
+    $('#vecthare_native_hybrid_info').toggle(nativeActive);
+
+    // BM25 k1/b: visible whenever client-side BM25 logic runs (A1 or A2)
+    $('#vecthare_bm25_params').toggle(!nativeActive);
+
+    // Fusion Method + RRF K: visible in A2 (hybrid mode) and A3 (passed to server)
+    $('#vecthare_hybrid_params').toggle(isHybridMode || nativeActive);
+
+    // Query Keyword Budget (ChunkBase): visible only in A1
+    $('#vecthare_hybrid_keyword_budget_wrapper').toggle(isBM25Mode);
+}
+```
+
+**Wiring:** the helper must run on three additional triggers beyond today's calls:
+
+1. ✅ Already called on backend change at [ui-manager.js:2143](ui/ui-manager.js#L2143).
+2. ✅ Already called on `hybrid_native_prefer` change at [ui-manager.js:2386](ui/ui-manager.js#L2386).
+3. ✅ Already called on initial load at [ui-manager.js:2390](ui/ui-manager.js#L2390).
+4. ➕ **New:** call at the end of the `keyword_scoring_method` change handler at [ui-manager.js:2275-2282](ui/ui-manager.js#L2275-L2282). Insert `updateNativeHybridUI();` immediately after the `console.log(...)` line.
+
+That single added call is what makes Fusion Method / RRF K / Query Keyword Budget react to method switches.
+
+**Cross-tab caveat (rule §10.1 reminder):** `#vecthare_hybrid_keyword_budget_wrapper` lives inside the ChunkBase tab's card. Calling `.toggle(false)` on it sets `display:none` directly on the element. The tab switcher at [ui-manager.js:1454-1455](ui/ui-manager.js#L1454-L1455) toggles `vecthare-tab-active` on the **parent card**, not on the inner element, so a `display:none` set by `updateNativeHybridUI()` survives a tab switch. This is the desired behavior — the wrapper stays hidden when not in BM25 mode regardless of which tab is currently visible.
+
+---
+
+## 18. Settings persistence — no migration needed
+
+All seven storage keys already exist in [index.js:102-127](index.js#L102-L127) defaults. Phase 2 is **purely a DOM and JS visibility refactor** — no key renames, no default changes, no migration. Existing user settings continue to apply.
+
+---
+
+## 19. Updated tab descriptions (Phase 1 §11 follow-up)
+
+The Phase 1 ChunkBase intro at §11.1 listed "chunk-based content: Lorebook / World Info, Character Cards, URLs / web pages, custom documents, wiki pages, and YouTube transcripts." That copy is still correct after Phase 2; **no edit needed**. The single setting remaining in ChunkBase that crosses scope (Query Keyword Budget) is hidden when not in A1 mode anyway.
+
+The Phase 1 Core intro at §11.4 should be updated to mention the new responsibility:
+
+> **Before (Phase 1 §11.4):** Embedding provider, summarization LLM, API rate limiting, and shared retrieval parameters. Settings here apply to **both** chunk-based content and EventBase chat history.
+>
+> **After (Phase 2):** Embedding provider, summarization LLM, API rate limiting, **hybrid search & BM25 parameters**, and shared retrieval parameters. Settings here apply to **both** chunk-based content and EventBase chat history.
+
+Edit target: the Core row in the Phase 1 §11.4 implementation table.
+
+---
+
+## 20. Verification — six-cell coverage matrix
+
+Run all six combinations after implementing Phase 2 and confirm the visible UI matches the spec. Use browser devtools' element inspector for hidden/`display:none` confirmation, not just visual scan.
+
+| # | Backend | Method | Prefer Native | Visible in Core | Visible in ChunkBase |
+|---|---|---|---|---|---|
+| 1 | Standard | BM25 | n/a (hidden) | Keyword Scoring Method, BM25 k1, BM25 b | Query Keyword Budget |
+| 2 | Standard | Hybrid | n/a (hidden) | Keyword Scoring Method, BM25 k1, BM25 b, Fusion Method, RRF K (or weights) | *(no hybrid controls)* |
+| 3 | Qdrant | (irrelevant) | ✓ on | Prefer Native toggle, "Native hybrid active" notice, Fusion Method, RRF K | *(no hybrid controls)* |
+| 4 | Qdrant | BM25 | ✗ off | Prefer Native toggle, Keyword Scoring Method, BM25 k1, BM25 b | Query Keyword Budget |
+| 5 | Qdrant | Hybrid | ✗ off | Prefer Native toggle, Keyword Scoring Method, BM25 k1, BM25 b, Fusion Method, RRF K | *(no hybrid controls)* |
+| 6 | (any) → switch backend live | (any) | (any) | All affected controls re-render correctly without page reload | Same |
+
+**Acceptance criterion:** flipping `vecthare_vector_backend`, `vecthare_keyword_scoring_method`, or `vecthare_hybrid_native_prefer` while the panel is open updates visibility on **both** Core and ChunkBase tabs without requiring a tab switch or panel close/reopen. Open both tabs in turn after each flip to confirm.
+
+---
+
+## 21. Phase 2 implementation order
+
+Recommended sequence to keep intermediate states sane:
+
+1. **§16.2 first** (split the bundled wrapper into two siblings) — this is purely structural; nothing visual changes if both still live in ChunkBase momentarily. Run §10.8 checklist after.
+2. **§16.1** (cut the shared block from ChunkBase, paste into Core). After this, the panel will look broken on the Core/ChunkBase tabs until §17 re-runs visibility logic — accept that briefly.
+3. **§16.3** (cut Prefer Native toggle from EventBase, paste into Core).
+4. **§16.4** (add the small Keyword Budget header back to ChunkBase wrapping the budget control).
+5. **§17** (replace `updateNativeHybridUI` body, add the missing call after the method-change handler). Now the panel should work.
+6. **§19** (update Core tab intro text).
+7. **§20** verification — walk all six matrix rows.
+
+Stop and revert if a step leaves the panel broken in a way the next step doesn't fix immediately.
+
+---
+
+## 22. Files touched in Phase 2
+
+| File | Changes |
+|---|---|
+| [ui/ui-manager.js](ui/ui-manager.js) | DOM: split keyword_method_section (§16.2); cut hybrid block from ChunkBase + paste into Core (§16.1); cut native-prefer toggle from EventBase + paste into Core (§16.3); add ChunkBase Keyword Budget header (§16.4). JS: expand `updateNativeHybridUI` (§17); wire it to method-change handler. Copy: update Core tab intro (§19). |
+| (no other files) | No backend code, no extractor, no defaults, no migrations. |
