@@ -1445,11 +1445,9 @@ function bindSourceEvents(type) {
         // Clear sourceData when switching tabs
         sourceData = null;
 
-        // Hide chunking section for archive uploads when EventBase is enabled
-        // (chunking settings are irrelevant — EventBase uses its own window/overlap settings)
+        // Always hide chunking for chat uploads — EventBase uses its own window/overlap settings
         if (currentContentType === 'chat') {
-            const globalSettings = extension_settings.vecthareplus || {};
-            const hideChunking = source === 'upload' && globalSettings.eventbase_enabled;
+            const hideChunking = source === 'upload';
             $('.vecthare-cv-chunking-section').toggle(!hideChunking);
         }
     });
@@ -2654,10 +2652,10 @@ async function startContinueVectorization() {
 
     // If no vectors exist yet, just run the normal vectorization
     if (currentContentType === 'chat' && (source.type === 'current' || source.type === 'file')) {
-        const globalSettings = extension_settings.vecthareplus || {};
-        if (globalSettings.eventbase_enabled) {
-            return _runEventBaseBackfill();
-        }
+        return _runEventBaseBackfill();
+    }
+    // (dead code guard — left in place so chunk path below still compiles)
+    if (false) {
         try {
             const { doesChatHaveVectors } = await import('../core/collection-loader.js');
             const existing = await doesChatHaveVectors(currentSettings);
@@ -2708,7 +2706,7 @@ async function startContinueVectorization() {
 
 /**
  * Runs EventBase ingestion for the current chat (live) or an uploaded archive file.
- * Called by startVectorization / continueVectorization when eventbase_enabled.
+ * Called by startVectorization / continueVectorization for all chat content types.
  */
 async function _runEventBaseBackfill() {
     if (isVectorizing) return;
@@ -2747,7 +2745,7 @@ async function _runEventBaseBackfill() {
             console.log(`[EventBase] Archive upload route — collection: ${collectionIdOverride}, messages: ${messages.length}`);
         } else {
             // Live chat route — unchanged behavior
-            console.log('[EventBase] Context chat length:', context.chat?.length, 'EventBase enabled:', settings.eventbase_enabled);
+            console.log('[EventBase] Context chat length:', context.chat?.length);
             if (!Array.isArray(context.chat) || context.chat.length === 0) {
                 toastr.warning('No chat messages to process', 'EventBase');
                 return;
@@ -2778,7 +2776,6 @@ async function _runEventBaseBackfill() {
 
         console.log('[EventBase] Filtered messages:', messages.length);
         console.log('[EventBase] Starting ingestion with settings:', {
-            eventbase_enabled: settings.eventbase_enabled,
             eventbase_window_size: settings.eventbase_window_size,
             eventbase_window_overlap: settings.eventbase_window_overlap,
             eventbase_debug_logging: settings.eventbase_debug_logging,
@@ -2853,12 +2850,9 @@ async function startVectorization() {
         return;
     }
 
-    // EventBase mode: redirect chat (live or archive upload) through EventBase ingestion pipeline
+    // EventBase is the exclusive path for chat — always redirect through EventBase ingestion pipeline
     if (currentContentType === 'chat' && (source.type === 'current' || source.type === 'file')) {
-        const globalSettings = extension_settings.vecthareplus || {};
-        if (globalSettings.eventbase_enabled) {
-            return _runEventBaseBackfill();
-        }
+        return _runEventBaseBackfill();
     }
 
     // Check if vectors already exist for this content (chat specifically)

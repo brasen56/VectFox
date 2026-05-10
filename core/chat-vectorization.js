@@ -551,7 +551,7 @@ export async function synchronizeChat(settings, batchSize = 5) {
     }
 
     // EventBase workflow: extract structured events instead of raw-chunk vectorization
-    if (settings.eventbase_enabled) {
+    {
         const context = getContext();
         if (getCurrentChatId() && Array.isArray(context.chat)) {
             const { runEventBaseIngestion } = await import('./eventbase-workflow.js');
@@ -745,10 +745,9 @@ function gatherCollectionsToQuery(settings) {
         }
     }
 
-    // Include chat collection if it's enabled AND we have a valid collection ID.
-    // When EventBase is ON, skip chunk chat collections — the eventbase workflow owns them.
+    // EventBase owns all chat collections — chunk chat collections are always skipped.
     // Uses per-collection enabled state, not global enabled_chats.
-    if (chatCollectionId && !settings?.eventbase_enabled) {
+    if (false) { // chat chunk collections disabled: EventBase is the exclusive chat path
         const candidates = [chatCollectionId, ...chatCollectionRegistryKeys];
         const firstEnabledKey = candidates.find((key) => isCollectionEnabled(key));
         if (firstEnabledKey) {
@@ -772,7 +771,8 @@ function gatherCollectionsToQuery(settings) {
             continue;
         }
 
-        if (settings?.eventbase_enabled && collectionId?.startsWith(COLLECTION_PREFIXES.VECTHARE_CHAT)) {
+        // EventBase owns all vecthare_chat_* collections — always skip them here.
+        if (collectionId?.startsWith(COLLECTION_PREFIXES.VECTHARE_CHAT)) {
             continue;
         }
 
@@ -1872,7 +1872,7 @@ export async function rearrangeChat(chat, settings, type) {
         // EventBase workflow: Phase A — structured event retrieval.
         // Does NOT return — falls through to Phase B below so chunk-based collections
         // (lorebooks, characters, URLs, etc.) are still queried on the same turn.
-        if (settings.eventbase_enabled) {
+        {
             const queryText = buildSearchQuery(chat, settings);
             if (queryText) {
                 const { runEventBaseRetrieval } = await import('./eventbase-workflow.js');

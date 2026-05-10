@@ -619,14 +619,6 @@ export function renderSettings(containerId, settings, callbacks) {
                                         <small class="vecthare_hint">Higher K = more weight to top-ranked results (60 is typical)</small>
                                     </div>
 
-                                    <!-- Only shown when backend supports native hybrid (qdrant) -->
-                                    <div id="vecthare_native_prefer_section" style="display: none; margin-top: 12px;">
-                                        <label class="checkbox_label" for="vecthare_hybrid_native_prefer">
-                                            <input id="vecthare_hybrid_native_prefer" type="checkbox" checked />
-                                            <span><small>Prefer Native Backend Hybrid</small></span>
-                                        </label>
-                                        <small class="vecthare_hint">Use backend-native hybrid search (Qdrant). When active, keyword scoring method and budget are handled server-side.</small>
-                                    </div>
                                 </div>
                             </div>
 
@@ -894,13 +886,6 @@ export function renderSettings(containerId, settings, callbacks) {
                         </div>
                         <div class="vecthare-card-body">
 
-                            <!-- Enable toggle -->
-                            <label class="checkbox_label" for="vecthare_eventbase_enabled">
-                                <input type="checkbox" id="vecthare_eventbase_enabled" />
-                                <span>Enable EventBase Workflow</span>
-                            </label>
-                            <small class="vecthare_hint" style="color: var(--warning, #e8a83b);">⚠ Enabling this switches both ingestion and retrieval to a separate experimental path. Legacy chunking is bypassed. Disable to recover the standard workflow.</small>
-
                             <!-- Extraction settings -->
                             <p class="vecthare-section-label"><strong>Extraction</strong></p>
 
@@ -955,6 +940,15 @@ export function renderSettings(containerId, settings, callbacks) {
                             <div class="vecthare-form-group">
                                 <label class="vecthare-label">Min Importance for Retrieval <span id="vecthare_eventbase_retrieval_min_importance_val">1</span></label>
                                 <input type="range" id="vecthare_eventbase_retrieval_min_importance" min="1" max="10" step="1" class="vecthare-range" />
+                            </div>
+
+                            <!-- Only shown when backend supports native hybrid (Qdrant) -->
+                            <div id="vecthare_native_prefer_section" class="vecthare-form-group" style="display: none;">
+                                <label class="checkbox_label" for="vecthare_hybrid_native_prefer">
+                                    <input id="vecthare_hybrid_native_prefer" type="checkbox" checked />
+                                    <span>Prefer Native Backend Hybrid</span>
+                                </label>
+                                <small class="vecthare_hint">Use backend-native hybrid search (Qdrant). When active, keyword scoring method and budget are handled server-side.</small>
                             </div>
 
                             <div class="vecthare-form-group">
@@ -2935,14 +2929,6 @@ function bindSettingsEvents(settings, callbacks) {
             $(`#vecthare_eventbase_${k}`).val(settings[`eventbase_${k}`]);
         });
     };
-
-    $('#vecthare_eventbase_enabled')
-        .prop('checked', settings.eventbase_enabled || false)
-        .on('change', function() {
-            settings.eventbase_enabled = $(this).prop('checked');
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
-        });
 
     // Range inputs with live label update
     const _bindEventBaseRange = (id, settingKey, labelId) => {

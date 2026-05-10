@@ -155,7 +155,6 @@ const defaultSettings = {
     cjk_tokenizer_mode: CJK_TOKENIZER_MODES.intl, // intl | jieba | jieba_tw | tiny_segmenter
 
     // EventBase workflow
-    eventbase_enabled: false,                     // Enable EventBase extraction + retrieval path
     eventbase_provider: 'openrouter',             // 'openrouter' | 'vllm'
     eventbase_model: '',                          // Model ID (e.g. 'google/gemini-flash-1.5-8b')
     eventbase_openrouter_api_key: '',             // API key (falls back to summarize key then ST secrets)
