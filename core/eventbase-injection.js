@@ -101,6 +101,22 @@ function _formatAsDenseText(events) {
     }).join('\n\n');
 }
 
+/**
+ * Format events as summary + DateTime only — minimal prompt footprint.
+ * @param {object[]} events
+ * @returns {string}
+ */
+function _formatAsSummaryOnly(events) {
+    return events.map((rawEvent, idx) => {
+        const event = _cleanEventForInjection(rawEvent);
+        return [
+            `# Event ${idx + 1}`,
+            `summary: ${event.summary || '-'}`,
+            `DateTime: ${event.DateTime || '-'}`,
+        ].join('\n');
+    }).join('\n\n');
+}
+
 // ---------------------------------------------------------------------------
 // Main formatter
 // ---------------------------------------------------------------------------
@@ -118,10 +134,12 @@ export function formatEventsForInjectionDetailed(events, _settings) {
         return { text: '', includedCount: 0, requestedCount: 0 };
     }
 
-    const format = String(_settings?.eventbase_injection_format || 'jsonarray').toLowerCase();
+    const format = String(_settings?.eventbase_injection_format || 'densetext').toLowerCase();
     const text = format === 'densetext'
         ? _formatAsDenseText(events)
-        : _formatAsJson(events);
+        : format === 'summaryonly'
+            ? _formatAsSummaryOnly(events)
+            : _formatAsJson(events);
 
     return {
         text,

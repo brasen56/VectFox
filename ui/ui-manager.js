@@ -960,8 +960,9 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <select id="vecthare_eventbase_injection_format" class="vecthare-select">
                                     <option value="jsonarray">JSONArray</option>
                                     <option value="densetext">DenseText</option>
+                                    <option value="summaryonly">Summary Only</option>
                                 </select>
-                                <small class="vecthare_hint">JSONArray keeps full structured JSON. DenseText uses compact key/value blocks to reduce prompt space.</small>
+                                <small class="vecthare_hint">JSONArray keeps full structured JSON. DenseText uses compact key/value blocks. Summary Only injects only summary + DateTime — minimum prompt footprint.</small>
                             </div>
 
                             <!-- Re-rank weights -->
