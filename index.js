@@ -349,6 +349,16 @@ jQuery(async () => {
         console.log(`VectHare: Migrated ${migrationResult.migrated} old collection enabled keys`);
     }
 
+    // Migrate legacy EventBase LLM overrides → unified Core summarize settings
+    const _ebs = extension_settings.vecthareplus;
+    if (!_ebs.summarize_model && _ebs.eventbase_model) _ebs.summarize_model = _ebs.eventbase_model;
+    if (!_ebs.summarize_provider && _ebs.eventbase_provider) _ebs.summarize_provider = _ebs.eventbase_provider;
+    if (!_ebs.summarize_openrouter_api_key && _ebs.eventbase_openrouter_api_key) {
+        _ebs.summarize_openrouter_api_key = _ebs.eventbase_openrouter_api_key;
+    }
+    if (!_ebs.summarize_vllm_url && _ebs.eventbase_vllm_url) _ebs.summarize_vllm_url = _ebs.eventbase_vllm_url;
+    if (!_ebs.summarize_vllm_api_key && _ebs.eventbase_vllm_api_key) _ebs.summarize_vllm_api_key = _ebs.eventbase_vllm_api_key;
+
     // Migrate empty rag_xml_tag to default value
     if (!settings.rag_xml_tag) {
         settings.rag_xml_tag = 'VectHareMemory';

@@ -54,21 +54,20 @@ export function renderSettings(containerId, settings, callbacks) {
                     <!-- Tab Navigation -->
                     <div class="vecthare-tabs">
                         <div class="vecthare-tab-nav-row">
-                            <button class="vecthare-tab-btn active" data-tab="core">Core</button>
-                            <button class="vecthare-tab-btn" data-tab="weight">Weight</button>
-                            <button class="vecthare-tab-btn" data-tab="rag">RAG</button>
-                            <button class="vecthare-tab-btn" data-tab="worldinfo">WorldInfo</button>
+                            <button class="vecthare-tab-btn active" data-tab="action">Action</button>
+                            <button class="vecthare-tab-btn" data-tab="core">Core</button>
+                            <button class="vecthare-tab-btn" data-tab="eventbase">EventBase</button>
+                            <button class="vecthare-tab-btn" data-tab="weight">ChunkBase</button>
                         </div>
                         <div class="vecthare-tab-nav-row">
                             <button class="vecthare-tab-btn" data-tab="autosync">AutoSync</button>
-                            <button class="vecthare-tab-btn" data-tab="summarize">Summarize</button>
-                            <button class="vecthare-tab-btn" data-tab="action">Action</button>
-                            <button class="vecthare-tab-btn" data-tab="eventbase">EventBase</button>
+                            <button class="vecthare-tab-btn" data-tab="worldinfo">WorldInfo</button>
+                            <button class="vecthare-tab-btn" data-tab="rag">RAG</button>
                         </div>
                     </div>
 
                     <!-- Core Settings Card -->
-                    <div class="vecthare-card vecthare-tab-active" data-vecthare-tab="core">
+                    <div class="vecthare-card" data-vecthare-tab="core">
                         <div class="vecthare-card-header">
                             <h3 class="vecthare-card-title">
                                 <span class="vecthare-icon">
@@ -76,7 +75,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </span>
                                 Core Settings
                             </h3>
-                            <p class="vecthare-card-subtitle">Configure embedding provider and vectorization parameters</p>
+                            <p class="vecthare-card-subtitle">Configure embedding provider, summarization LLM, and shared retrieval parameters. Settings here apply to <b>both</b> chunk-based content and EventBase chat history.</p>
                         </div>
                         <div class="vecthare-card-body">
 
@@ -364,26 +363,191 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <small class="vecthare_hint">Limit the number of API requests per time interval</small>
                             </div>
 
+                            <label for="vecthare_deduplication_depth" style="margin-top: 12px;">
+                                <small>Dedup Depth: <span id="vecthare_deduplication_depth_value">50</span> messages</small>
+                            </label>
+                            <input type="range" id="vecthare_deduplication_depth" class="vecthare-slider" min="0" max="500" step="10" />
+                            <small class="vecthare_hint">Recent messages to check for duplicates (0 = check all, lower = allow older content to resurface)</small>
+
+                            <div style="margin-top: 8px;">
+                                <label class="checkbox_label" for="vecthare_retrieval_popup_on_start">
+                                    <input id="vecthare_retrieval_popup_on_start" type="checkbox" />
+                                    <span>Popup: show when backend retrieval starts</span>
+                                </label>
+                                <label class="checkbox_label" for="vecthare_retrieval_popup_on_result" style="margin-top: 6px; display: flex;">
+                                    <input id="vecthare_retrieval_popup_on_result" type="checkbox" />
+                                    <span>Popup: show retrieved result count</span>
+                                </label>
+                            </div>
+
+                            <label style="margin-top: 16px;">
+                                <small>Injection Position</small>
+                            </label>
+                            <select id="vecthare_injection_position" class="vecthare-select">
+                                <option value="2">Before Main Prompt</option>
+                                <option value="0">After Main Prompt</option>
+                                <option value="1">In-Chat @ Depth</option>
+                            </select>
+                            <small class="vecthare_hint">Where retrieved chunks appear in the prompt</small>
+
+                            <div id="vecthare_injection_depth_row" style="margin-top: 12px; display: none;">
+                                <label for="vecthare_injection_depth">
+                                    <small>Injection Depth: <span id="vecthare_injection_depth_value">2</span></small>
+                                </label>
+                                <input type="range" id="vecthare_injection_depth" class="vecthare-slider" min="0" max="50" step="1" />
+                                <small class="vecthare_hint">Messages from end of chat to insert at</small>
+                            </div>
+
+                            <!-- LLM Summarization & EventBase Extraction -->
+                            <div class="vecthare-subsection" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--grey30);">
+                                <div class="vecthare-card-header" style="padding: 0 0 8px 0;">
+                                    <h3 class="vecthare-card-title" style="font-size: 0.95em;">
+                                        <span class="vecthare-icon">
+                                            <i class="fa-solid fa-file-lines"></i>
+                                        </span>
+                                        LLM Summarization &amp; EventBase Extraction
+                                    </h3>
+                                    <p class="vecthare-card-subtitle">Condense each message to a 2-8 dense sentence summary before embedding</p>
+                                </div>
+
+                                <label for="vecthare_summarize_provider">
+                                    <small>Summarization Provider</small>
+                                </label>
+                                <select id="vecthare_summarize_provider" class="vecthare-select">
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="vllm">vLLM</option>
+                                </select>
+                                <small class="vecthare_hint">Provider required for summarization / EventBase extraction LLM calls</small>
+
+                                <div id="vecthare_summarize_settings" style="display:none; margin-top:12px;">
+
+                                    <div id="vecthare_summarize_openrouter_row" style="display:none; margin-bottom:10px;">
+                                        <label for="vecthare_summarize_openrouter_apikey">
+                                            <small>OpenRouter API Key</small>
+                                        </label>
+                                        <input type="password" id="vecthare_summarize_openrouter_apikey" class="vecthare-input"
+                                            placeholder="Paste key here to save..." autocomplete="off" />
+                                        <small class="vecthare_hint">Stored in VectHare settings (separate from the embedding key)</small>
+                                    </div>
+
+                                    <div id="vecthare_summarize_vllm_url_row" style="display:none; margin-bottom:10px;">
+                                        <label for="vecthare_summarize_vllm_url">
+                                            <small>vLLM Base URL</small>
+                                        </label>
+                                        <input type="text" id="vecthare_summarize_vllm_url" class="vecthare-input"
+                                            placeholder="http://localhost:8000" />
+                                        <small class="vecthare_hint">Base URL of your vLLM server (OpenAI-compatible)</small>
+                                        <label for="vecthare_summarize_vllm_apikey" style="margin-top:8px;">
+                                            <small>vLLM API Key <span style="opacity:0.6;">(optional — leave blank if not required)</span></small>
+                                        </label>
+                                        <input type="password" id="vecthare_summarize_vllm_apikey" class="vecthare-input"
+                                            placeholder="Paste key here to save..." autocomplete="off" />
+                                    </div>
+
+                                    <label for="vecthare_summarize_model">
+                                        <small>Summarization Model</small>
+                                    </label>
+                                    <input type="text" id="vecthare_summarize_model" class="vecthare-input"
+                                        placeholder="e.g. google/gemini-flash-1.5-8b" />
+                                    <small class="vecthare_hint">Model ID for summarization (separate from embedding model)</small>
+
+                                    <label for="vecthare_summarize_prompt" style="margin-top:12px;">
+                                        <small>Summarization Prompt</small>
+                                    </label>
+                                    <textarea id="vecthare_summarize_prompt" class="vecthare-textarea" rows="8"
+                                        placeholder="Leave empty to use built-in default prompt"
+                                        style="margin-top:4px; font-size:11px;"></textarea>
+                                    <small class="vecthare_hint">Use <code>{{text}}</code> as placeholder for the story text. Leave empty for built-in default.</small>
+
+                                    <div style="margin-top:10px; padding:8px; background:rgba(255,200,0,0.08); border-left:3px solid rgba(255,200,0,0.4); border-radius:4px;">
+                                        <small>⚠ Each new message stored will make one additional LLM call. Use a fast, cheap model.</small>
+                                    </div>
+
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- ChunkBase Settings Card -->
+                    <div class="vecthare-card" data-vecthare-tab="weight">
+                        <div class="vecthare-card-header">
+                            <h3 class="vecthare-card-title">
+                                <span class="vecthare-icon">
+                                    <i class="fa-solid fa-layer-group"></i>
+                                </span>
+                                ChunkBase Settings
+                            </h3>
+                            <p class="vecthare-card-subtitle">Settings on this tab apply to chunk-based content: <b>Lorebook / World Info</b>, <b>Character Cards</b>, <b>URLs / web pages</b>, <b>custom documents</b>, <b>wiki pages</b>, and <b>YouTube transcripts</b>. Chat history is handled separately under EventBase.</p>
+                        </div>
+                        <div class="vecthare-card-body">
+
+                            <!-- Ingestion -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-bottom:8px;">Ingestion</p>
                             <label for="vecthare_insert_batch_size">
                                 <small>Insert Batch Size: <span id="vecthare_insert_batch_size_value">50</span></small>
                             </label>
                             <input type="range" id="vecthare_insert_batch_size" class="vecthare-slider" min="10" max="100" step="10" />
                             <small class="vecthare_hint">Chunks per insert batch (50-100 recommended for faster bulk operations)</small>
 
-                            <label for="vecthare_min_chat_length" style="margin-top: 16px;">
+                            <!-- Keyword Extraction -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Keyword Extraction</p>
+                            <div style="padding: 12px; background: rgba(100,100,100,0.1); border-radius: 8px;">
+                                <label for="vecthare_cjk_tokenizer_mode">
+                                    <small><b>CJK Tokenizer Mode</b></small>
+                                </label>
+                                <select id="vecthare_cjk_tokenizer_mode" class="vecthare-select" style="margin-top: 4px;">
+                                    <option value="intl">Intl.Segmenter (English / Korean / Latin)</option>
+                                    <option value="jieba">Simplified Chinese (Jieba WASM)</option>
+                                    <option value="jieba_tw">Traditional Chinese (Jieba WASM)</option>
+                                    <option value="tiny_segmenter">Japanese (TinySegmenter)</option>
+                                </select>
+                                <small class="vecthare_hint">Default mode uses Intl.Segmenter — supports Korean, Chinese, and any Latin-script language (English, French, etc.) with no extra downloads. Jieba WASM loads only when selected. Traditional Chinese also downloads a TW dictionary (~2–5 MB, one-time). TinySegmenter is used for kana-containing Japanese text.</small>
+                            </div>
+
+                            <div style="margin-top: 12px; padding: 12px; background: rgba(100,100,100,0.1); border-radius: 8px;">
+                                <label for="vecthare_custom_stopwords">
+                                    <small><b>Custom Stopwords</b></small>
+                                </label>
+                                <textarea id="vecthare_custom_stopwords" class="vecthare-textarea" rows="2"
+                                    placeholder="{{char}}, {{user}}, character, scene, location..."
+                                    style="margin-top: 4px;"></textarea>
+                                <small class="vecthare_hint">Words to exclude from keyword extraction. Supports ST macros: {{char}}, {{user}}, {{charIfNotGroup}}, etc.</small>
+                            </div>
+
+                            <!-- Query -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Query</p>
+                            <label for="vecthare_query_depth" style="margin-top: 4px;">
+                                <small>Query Depth: <span id="vecthare_query_depth_value">2</span> messages</small>
+                            </label>
+                            <input type="range" id="vecthare_query_depth" class="vecthare-slider" min="1" max="20" step="1" />
+                            <small class="vecthare_hint">How many recent messages to include in search query</small>
+
+                            <div style="margin-top:12px; display:flex; gap:8px; align-items:center;">
+                                <label for="vecthare_topk" style="margin:0; white-space:nowrap;"><small>Top K</small></label>
+                                <input id="vecthare_topk" type="number" class="vecthare-input" min="1" style="width:90px;" />
+                                <small class="vecthare_hint" style="margin-left:8px;">Up to this many results per collection (may be fewer after filtering/dedup)</small>
+                            </div>
+
+                            <!-- Retrieval Gating -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Retrieval Gating</p>
+                            <label for="vecthare_min_chat_length">
                                 <small>Minimum Messages Before Injection</small>
                             </label>
                             <input type="number" id="vecthare_min_chat_length" class="vecthare-input" min="0" max="100" step="1" placeholder="0" />
                             <small class="vecthare_hint">Minimum number of messages in chat before RAG injection starts (0 = inject immediately)</small>
 
-                            <label for="vecthare_score_threshold">
+                            <label for="vecthare_score_threshold" style="margin-top:12px;">
                                 <small>Similarity Threshold: <span id="vecthare_threshold_value">0.25</span></small>
                             </label>
                             <input type="range" id="vecthare_score_threshold" class="vecthare-slider" min="0" max="1" step="0.05" />
                             <small class="vecthare_hint">Minimum relevance score for retrieval</small>
 
+                            <!-- Hybrid Search & BM25 -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Hybrid Search &amp; BM25</p>
+
                             <!-- Keyword Scoring Method (hidden when native hybrid active) -->
-                            <div id="vecthare_keyword_method_section" style="margin-top: 16px;">
+                            <div id="vecthare_keyword_method_section" style="margin-top: 8px;">
                                 <label>
                                     <small>Keyword Scoring Method</small>
                                 </label>
@@ -466,78 +630,6 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </div>
                             </div>
 
-                            <!-- Custom Stopwords -->
-                            <div style="margin-top: 16px; padding: 12px; background: rgba(100,100,100,0.1); border-radius: 8px;">
-                                <label for="vecthare_cjk_tokenizer_mode">
-                                    <small><b>CJK Tokenizer Mode</b></small>
-                                </label>
-                                <select id="vecthare_cjk_tokenizer_mode" class="vecthare-select" style="margin-top: 4px;">
-                                    <option value="intl">Intl.Segmenter (English / Korean / Latin)</option>
-                                    <option value="jieba">Simplified Chinese (Jieba WASM)</option>
-                                    <option value="jieba_tw">Traditional Chinese (Jieba WASM)</option>
-                                    <option value="tiny_segmenter">Japanese (TinySegmenter)</option>
-                                </select>
-                                <small class="vecthare_hint">Default mode uses Intl.Segmenter — supports Korean, Chinese, and any Latin-script language (English, French, etc.) with no extra downloads. Jieba WASM loads only when selected. Traditional Chinese also downloads a TW dictionary (~2–5 MB, one-time). TinySegmenter is used for kana-containing Japanese text.</small>
-                            </div>
-
-                            <!-- Custom Stopwords -->
-                            <div style="margin-top: 16px; padding: 12px; background: rgba(100,100,100,0.1); border-radius: 8px;">
-                                <label for="vecthare_custom_stopwords">
-                                    <small><b>Custom Stopwords</b></small>
-                                </label>
-                                <textarea id="vecthare_custom_stopwords" class="vecthare-textarea" rows="2"
-                                    placeholder="{{char}}, {{user}}, character, scene, location..."
-                                    style="margin-top: 4px;"></textarea>
-                                <small class="vecthare_hint">Words to exclude from keyword extraction. Supports ST macros: {{char}}, {{user}}, {{charIfNotGroup}}, etc.</small>
-                            </div>
-
-                            <label for="vecthare_query_depth" style="margin-top: 12px;">
-                                <small>Query Depth: <span id="vecthare_query_depth_value">2</span> messages</small>
-                            </label>
-                            <input type="range" id="vecthare_query_depth" class="vecthare-slider" min="1" max="20" step="1" />
-                            <small class="vecthare_hint">How many recent messages to include in search query</small>
-
-                            <label for="vecthare_deduplication_depth" style="margin-top: 12px;">
-                                <small>Dedup Depth: <span id="vecthare_deduplication_depth_value">50</span> messages</small>
-                            </label>
-                            <input type="range" id="vecthare_deduplication_depth" class="vecthare-slider" min="0" max="500" step="10" />
-                            <small class="vecthare_hint">Recent messages to check for duplicates (0 = check all, lower = allow older content to resurface)</small>
-
-                            <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-                                <label for="vecthare_topk" style="margin:0; white-space:nowrap;"><small>Top K</small></label>
-                                <input id="vecthare_topk" type="number" class="vecthare-input" min="1" style="width:90px;" />
-                                <small class="vecthare_hint" style="margin-left:8px;">Up to this many results per collection (may be fewer after filtering/dedup)</small>
-                            </div>
-
-                            <div style="margin-top: 8px;">
-                                <label class="checkbox_label" for="vecthare_retrieval_popup_on_start">
-                                    <input id="vecthare_retrieval_popup_on_start" type="checkbox" />
-                                    <span>Popup: show when backend retrieval starts</span>
-                                </label>
-                                <label class="checkbox_label" for="vecthare_retrieval_popup_on_result" style="margin-top: 6px; display: flex;">
-                                    <input id="vecthare_retrieval_popup_on_result" type="checkbox" />
-                                    <span>Popup: show retrieved result count</span>
-                                </label>
-                            </div>
-
-                            <label style="margin-top: 16px;">
-                                <small>Injection Position</small>
-                            </label>
-                            <select id="vecthare_injection_position" class="vecthare-select">
-                                <option value="2">Before Main Prompt</option>
-                                <option value="0">After Main Prompt</option>
-                                <option value="1">In-Chat @ Depth</option>
-                            </select>
-                            <small class="vecthare_hint">Where retrieved chunks appear in the prompt</small>
-
-                            <div id="vecthare_injection_depth_row" style="margin-top: 12px; display: none;">
-                                <label for="vecthare_injection_depth">
-                                    <small>Injection Depth: <span id="vecthare_injection_depth_value">2</span></small>
-                                </label>
-                                <input type="range" id="vecthare_injection_depth" class="vecthare-slider" min="0" max="50" step="1" />
-                                <small class="vecthare_hint">Messages from end of chat to insert at</small>
-                            </div>
-
                         </div>
                     </div>
 
@@ -591,7 +683,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </span>
                                 RAG Context
                             </h3>
-                            <p class="vecthare-card-subtitle">Add context prompts to help the AI understand retrieved content</p>
+                            <p class="vecthare-card-subtitle">Retrieval-Augmented Generation injection settings — XML tag wrapping, prompt template, injection depth and position. Applies to retrieved results from any path.</p>
                         </div>
                         <div class="vecthare-card-body">
 
@@ -624,7 +716,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                     </span>
                                     World Info settings
                                 </h3>
-                                <p class="vecthare-card-subtitle">Semantic activation of World Info entries from vectorized lorebooks</p>
+                                <p class="vecthare-card-subtitle">Semantic World Info / Lorebook activation — uses vector similarity instead of keyword matching to decide which entries to inject. Operates on chunk-based lorebook collections.</p>
                             </div>
                             <div class="vecthare-card-body">
                                 <label class="checkbox_label" for="vecthare_enabled_world_info">
@@ -688,7 +780,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </span>
                                 Chat Auto-Sync
                             </h3>
-                            <p class="vecthare-card-subtitle">Configure how chat messages are vectorized</p>
+                            <p class="vecthare-card-subtitle">Configure automatic synchronization between the active chat and its vector collection. Per-chat toggle, behavior on new messages, and conflict resolution.</p>
                         </div>
                         <div class="vecthare-card-body">
 
@@ -717,79 +809,8 @@ export function renderSettings(containerId, settings, callbacks) {
                         </div>
                     </div>
 
-                    <!-- Summarization Card -->
-                    <div class="vecthare-card" data-vecthare-tab="summarize">
-                        <div class="vecthare-card-header">
-                            <h3 class="vecthare-card-title">
-                                <span class="vecthare-icon">
-                                    <i class="fa-solid fa-file-lines"></i>
-                                </span>
-                                Summarize Before Store
-                            </h3>
-                            <p class="vecthare-card-subtitle">Condense each message to a 3-5 sentence summary before embedding</p>
-                        </div>
-                        <div class="vecthare-card-body">
-
-                            <label for="vecthare_summarize_provider">
-                                <small>Summarization Provider</small>
-                            </label>
-                            <select id="vecthare_summarize_provider" class="vecthare-select">
-                                <option value="openrouter">OpenRouter</option>
-                                <option value="vllm">vLLM</option>
-                            </select>
-                            <small class="vecthare_hint">Provider required for summarization / EventBase extraction LLM calls</small>
-
-                            <div id="vecthare_summarize_settings" style="display:none; margin-top:12px;">
-
-                                <div id="vecthare_summarize_openrouter_row" style="display:none; margin-bottom:10px;">
-                                    <label for="vecthare_summarize_openrouter_apikey">
-                                        <small>OpenRouter API Key</small>
-                                    </label>
-                                    <input type="password" id="vecthare_summarize_openrouter_apikey" class="vecthare-input"
-                                        placeholder="Paste key here to save..." autocomplete="off" />
-                                    <small class="vecthare_hint">Stored in VectHare settings (separate from the embedding key)</small>
-                                </div>
-
-                                <div id="vecthare_summarize_vllm_url_row" style="display:none; margin-bottom:10px;">
-                                    <label for="vecthare_summarize_vllm_url">
-                                        <small>vLLM Base URL</small>
-                                    </label>
-                                    <input type="text" id="vecthare_summarize_vllm_url" class="vecthare-input"
-                                        placeholder="http://localhost:8000" />
-                                    <small class="vecthare_hint">Base URL of your vLLM server (OpenAI-compatible)</small>
-                                    <label for="vecthare_summarize_vllm_apikey" style="margin-top:8px;">
-                                        <small>vLLM API Key <span style="opacity:0.6;">(optional — leave blank if not required)</span></small>
-                                    </label>
-                                    <input type="password" id="vecthare_summarize_vllm_apikey" class="vecthare-input"
-                                        placeholder="Paste key here to save..." autocomplete="off" />
-                                </div>
-
-                                <label for="vecthare_summarize_model">
-                                    <small>Summarization Model</small>
-                                </label>
-                                <input type="text" id="vecthare_summarize_model" class="vecthare-input"
-                                    placeholder="e.g. google/gemini-flash-1.5-8b" />
-                                <small class="vecthare_hint">Model ID for summarization (separate from embedding model)</small>
-
-                                <label for="vecthare_summarize_prompt" style="margin-top:12px;">
-                                    <small>Summarization Prompt</small>
-                                </label>
-                                <textarea id="vecthare_summarize_prompt" class="vecthare-textarea" rows="8"
-                                    placeholder="Leave empty to use built-in default prompt"
-                                    style="margin-top:4px; font-size:11px;"></textarea>
-                                <small class="vecthare_hint">Use <code>{{text}}</code> as placeholder for the story text. Leave empty for built-in default.</small>
-
-                                <div style="margin-top:10px; padding:8px; background:rgba(255,200,0,0.08); border-left:3px solid rgba(255,200,0,0.4); border-radius:4px;">
-                                    <small>⚠ Each new message stored will make one additional LLM call. Use a fast, cheap model.</small>
-                                </div>
-
-                            </div>
-
-                        </div>
-                    </div>
-
                     <!-- Actions Card -->
-                    <div class="vecthare-card" data-vecthare-tab="action">
+                    <div class="vecthare-card vecthare-tab-active" data-vecthare-tab="action">
                         <div class="vecthare-card-header">
                             <h3 class="vecthare-card-title">
                                 <span class="vecthare-icon">
@@ -797,7 +818,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </span>
                                 Actions
                             </h3>
-                            <p class="vecthare-card-subtitle">Manage your vector database</p>
+                            <p class="vecthare-card-subtitle">Run vectorization, sync chat with collections, browse the database, and run diagnostics. Operates on whatever path is currently active (Chunk or EventBase).</p>
                         </div>
                         <div class="vecthare-card-body">
 
@@ -869,7 +890,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <span class="vecthare-icon"><i class="fa-solid fa-database"></i></span>
                                 EventBase
                             </h3>
-                            <p class="vecthare-card-subtitle">AI-extracted structured story events — stored in Qdrant for semantic retrieval</p>
+                            <p class="vecthare-card-subtitle">Settings on this tab apply to chat content: <b>Current Chat history</b> and <b>uploaded Archive Chat history (.jsonl)</b>. AI-extracted structured events are stored for semantic retrieval.</p>
                         </div>
                         <div class="vecthare-card-body">
 
@@ -879,35 +900,6 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <span>Enable EventBase Workflow</span>
                             </label>
                             <small class="vecthare_hint" style="color: var(--warning, #e8a83b);">⚠ Enabling this switches both ingestion and retrieval to a separate experimental path. Legacy chunking is bypassed. Disable to recover the standard workflow.</small>
-
-                            <!-- Provider -->
-                            <div class="vecthare-form-group" style="margin-top:16px;">
-                                <label class="vecthare-label">Extraction Provider</label>
-                                <select id="vecthare_eventbase_provider" class="vecthare-select">
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="vllm">vLLM (local)</option>
-                                </select>
-                            </div>
-
-                            <div class="vecthare-form-group">
-                                <label class="vecthare-label">Model ID</label>
-                                <input type="text" id="vecthare_eventbase_model" class="vecthare-input" placeholder="e.g. google/gemini-flash-1.5-8b" />
-                                <small class="vecthare_hint">The model used to extract structured events. Uses OpenRouter API key from Summarize settings if not overridden below.</small>
-                            </div>
-
-                            <div id="vecthare_eventbase_openrouter_key_row" class="vecthare-form-group">
-                                <label class="vecthare-label">OpenRouter API Key (override)</label>
-                                <input type="password" id="vecthare_eventbase_openrouter_api_key" class="vecthare-input" placeholder="Leave empty to reuse Summarize key" />
-                            </div>
-
-                            <div id="vecthare_eventbase_vllm_row" class="vecthare-form-group" style="display:none;">
-                                <label class="vecthare-label">vLLM Base URL</label>
-                                <input type="text" id="vecthare_eventbase_vllm_url" class="vecthare-input" placeholder="http://localhost:8000" />
-                                <label class="vecthare-label" style="margin-top:8px;">vLLM API Key</label>
-                                <input type="password" id="vecthare_eventbase_vllm_api_key" class="vecthare-input" placeholder="Optional" />
-                            </div>
-
-                            <hr style="margin: 16px 0; opacity:0.2;" />
 
                             <!-- Extraction settings -->
                             <p class="vecthare-section-label"><strong>Extraction</strong></p>
@@ -932,7 +924,7 @@ export function renderSettings(containerId, settings, callbacks) {
                             <div class="vecthare-form-group">
                                 <label class="vecthare-label">Max Events per Window <span id="vecthare_eventbase_max_events_per_window_val">5</span></label>
                                 <input type="range" id="vecthare_eventbase_max_events_per_window" min="1" max="10" step="1" class="vecthare-range" />
-                                <small class="vecthare_hint">Hard cap per LLM call. AI is instructed to return fewer (or zero) for filler / 日常生活 / non-narrative scenes.</small>
+                                <small class="vecthare_hint">Hard cap per LLM call. AI is instructed to return fewer (or zero) for filler / 日常 nichijou / non-narrative scenes.</small>
                             </div>
 
                             <div class="vecthare-form-group">
@@ -2944,61 +2936,10 @@ function bindSettingsEvents(settings, callbacks) {
         });
     };
 
-    const _showHideEventBaseProviderRows = (provider) => {
-        if (provider === 'vllm') {
-            $('#vecthare_eventbase_vllm_row').show();
-            $('#vecthare_eventbase_openrouter_key_row').hide();
-        } else {
-            $('#vecthare_eventbase_vllm_row').hide();
-            $('#vecthare_eventbase_openrouter_key_row').show();
-        }
-    };
-
     $('#vecthare_eventbase_enabled')
         .prop('checked', settings.eventbase_enabled || false)
         .on('change', function() {
             settings.eventbase_enabled = $(this).prop('checked');
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_eventbase_provider')
-        .val(settings.eventbase_provider || 'openrouter')
-        .on('change', function() {
-            const val = String($(this).val());
-            settings.eventbase_provider = val;
-            _showHideEventBaseProviderRows(val);
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
-        });
-    _showHideEventBaseProviderRows(settings.eventbase_provider || 'openrouter');
-
-    $('#vecthare_eventbase_model')
-        .val(settings.eventbase_model || '')
-        .on('input', function() {
-            settings.eventbase_model = String($(this).val()).trim();
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_eventbase_openrouter_api_key')
-        .on('change', function() {
-            settings.eventbase_openrouter_api_key = String($(this).val()).trim();
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_eventbase_vllm_url')
-        .val(settings.eventbase_vllm_url || '')
-        .on('input', function() {
-            settings.eventbase_vllm_url = String($(this).val()).trim();
-            Object.assign(extension_settings.vecthareplus, settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_eventbase_vllm_api_key')
-        .on('change', function() {
-            settings.eventbase_vllm_api_key = String($(this).val()).trim();
             Object.assign(extension_settings.vecthareplus, settings);
             saveSettingsDebounced();
         });

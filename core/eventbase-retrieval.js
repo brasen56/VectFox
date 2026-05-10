@@ -58,8 +58,11 @@ function _recencyBonus(event, chatLength) {
     if (!chatLength || chatLength === 0) return 0.5;
     const endIdx = event.source_window_end ?? 0;
     const age = chatLength - endIdx;
-    // Half-life = 40 messages (configurable in future)
-    return Math.pow(0.5, Math.max(0, age) / 40);
+    // Half-life scales with chat length: 20% of total messages (floor 40).
+    // In a 2000-msg chat the half-life is 400 msgs so old foundational events
+    // still contribute; in a short 100-msg chat it stays at a minimum of 40.
+    const halfLife = Math.max(40, chatLength * 0.20);
+    return Math.pow(0.5, Math.max(0, age) / halfLife);
 }
 
 /**
@@ -194,6 +197,12 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     const weights = _normalizeWeights(rawWeights);
 
     // 4. Re-rank
+    // Pre-build anchor keyword lookup from the user's last message so that events
+    // whose keywords explicitly match what the user just asked about get a boost.
+    // Matching is substring-based (event keyword appears verbatim in anchor text)
+    // which handles CJK multi-char terms (e.g. 贖身) and Latin names alike.
+    const anchorText = (keywordQuery || '').toLowerCase();
+
     const scored = importanceFiltered.map(meta => {
         // When hybrid is active, metadata carries vectorScore (raw cosine) separately from
         // the fusion score stored in .score. Prefer vectorScore so the re-ranker's cosine
@@ -205,11 +214,19 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         const persistBonus = meta.should_persist === true ? 1 : 0;
         const recencyBonus = _recencyBonus(meta, chatLength);
 
+        // Anchor boost: +0.25 when any of the event's stored keywords appear
+        // verbatim in the user's last message (min 2 chars to skip noise).
+        // This rescues historically-distant events that the user explicitly asked about.
+        const anchorBoost = anchorText && (meta.keywords || []).some(
+            k => k.length >= 2 && anchorText.includes(k.toLowerCase())
+        ) ? 0.25 : 0;
+
         const finalScore =
             weights.cosine * cosineScore +
             weights.importance * importanceNorm +
             weights.persist * persistBonus +
-            weights.recency * recencyBonus;
+            weights.recency * recencyBonus +
+            anchorBoost;
 
         return { ...meta, _finalScore: finalScore };
     });

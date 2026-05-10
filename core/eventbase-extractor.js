@@ -36,16 +36,11 @@ const DEFAULT_TIMEOUT_MS = 60000;
 // ---------------------------------------------------------------------------
 
 /**
- * Get the OpenRouter API key from EventBase settings or ST secrets.
+ * Get the OpenRouter API key from Core summarization settings or ST secrets.
  * @param {object} settings
  * @returns {string}
  */
 function _getOpenRouterApiKey(settings) {
-    if (settings?.eventbase_openrouter_api_key) {
-        return settings.eventbase_openrouter_api_key.trim();
-    }
-
-    // Fall back to summarizer key (same account often)
     if (settings?.summarize_openrouter_api_key) {
         return settings.summarize_openrouter_api_key.trim();
     }
@@ -311,10 +306,10 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
         );
     }
 
-    const model = (settings.eventbase_model || '').trim();
+    const model = (settings.summarize_model || '').trim();
     if (!model) {
         throw new EventBaseFatalError(
-            'EventBase: No model configured. Set eventbase_model in EventBase settings.',
+            'EventBase: No model configured. Set the Summarization Model in Core → LLM Summarization settings.',
             'missing_model',
         );
     }
@@ -356,18 +351,18 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
 }
 
 async function _callVLLM(prompt, settings, windowIndex) {
-    const baseUrl = (settings.eventbase_vllm_url || '').replace(/\/$/, '');
+    const baseUrl = (settings.summarize_vllm_url || '').replace(/\/$/, '');
     if (!baseUrl) {
         throw new EventBaseFatalError(
-            'EventBase: vLLM URL not configured. Set eventbase_vllm_url in EventBase settings.',
+            'EventBase: vLLM URL not configured. Set the vLLM URL in Core → LLM Summarization settings.',
             'missing_url',
         );
     }
 
-    const model = (settings.eventbase_model || '').trim();
+    const model = (settings.summarize_model || '').trim();
     if (!model) {
         throw new EventBaseFatalError(
-            'EventBase: No model configured. Set eventbase_model in EventBase settings.',
+            'EventBase: No model configured. Set the Summarization Model in Core → LLM Summarization settings.',
             'missing_model',
         );
     }
@@ -377,7 +372,7 @@ async function _callVLLM(prompt, settings, windowIndex) {
     const timeoutMs = settings.eventbase_timeout_ms || DEFAULT_TIMEOUT_MS;
 
     const headers = { 'Content-Type': 'application/json' };
-    const apiKey = settings.eventbase_vllm_api_key;
+    const apiKey = settings.summarize_vllm_api_key;
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -443,7 +438,7 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
 
     const maxCount = settings.eventbase_max_events_per_window || 5;
     const prompt = buildExtractionPrompt(excerptText, maxCount, settings.eventbase_custom_prompt || '');
-    const provider = (settings.eventbase_provider || 'openrouter').toLowerCase();
+    const provider = (settings.summarize_provider || 'openrouter').toLowerCase();
 
     if (debugLog) {
         console.log(`[EventBase] Extracting events — window=${windowIndex}, provider=${provider}, messages=${messages.length}`);
