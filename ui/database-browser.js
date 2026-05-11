@@ -920,12 +920,19 @@ function renderCollectionCard(collection) {
     decayBadge = `<span class="vecthare-badge vecthare-badge-decay ${decaySummary.isCustom ? "vecthare-badge-decay-custom" : ""}" title="${decayTitle}">${decayIcon}</span>`;
   }
 
-  // Lock badge - shows if collection is locked and to how many chats
+  // Lock badge — show only when locked to the CURRENT chat. Locks to other chats
+  // still exist (visible in the Settings modal as "X lock (other chat)"), but the
+  // listing badge would be misleading there since the collection isn't active here.
   const lockCount = getCollectionLockCount(collection.id);
+  const currentChatId = getCurrentChatId();
+  const lockedToCurrent = currentChatId && isCollectionLockedToChat(collection.id, currentChatId);
   let lockBadge = "";
-  if (lockCount > 0) {
-    const lockTitle = `Locked to ${lockCount} chat${lockCount !== 1 ? "s" : ""}`;
-    lockBadge = `<span class="vecthare-badge vecthare-badge-lock" title="${lockTitle}">🔒 ${lockCount}</span>`;
+  if (lockedToCurrent) {
+    const otherCount = lockCount - 1;
+    const lockTitle = otherCount > 0
+      ? `Active for current chat (also locked to ${otherCount} other chat${otherCount !== 1 ? "s" : ""})`
+      : "Active for current chat";
+    lockBadge = `<span class="vecthare-badge vecthare-badge-lock" title="${lockTitle}">🔒</span>`;
   }
 
   // Use registryKey for unique identification (source:id format)
