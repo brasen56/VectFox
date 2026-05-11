@@ -174,8 +174,8 @@ After the Phase 2 GUI reorg, settings are grouped by which path consumes them:
 |---|---|---|---|
 | **Insert Batch Size** (default 50) | ChunkBase → Ingestion | **No** | Controls chunks-per-API-call during chunk vectorization. EventBase inserts tiny batches (2–10 events per window) so this has no meaningful effect on EventBase. |
 | **Dedup Depth** (default 50 messages) | Core | **Yes** | Used in `eventbase-retrieval.js` as `settings.deduplication_depth`. Filters out retrieved events whose source window falls within the last N messages of the current chat — avoids injecting content already visible in context. 0 = disabled. Also used by chunk-path retrieval in `chat-vectorization.js`. |
-| **Hybrid Search & BM25 block** (Keyword Scoring Method, BM25 k1/b, Fusion Method, RRF K, Prefer Native Backend Hybrid) | Core → Hybrid Search & BM25 | **Partial** | `keyword_scoring_method` (A1 vs A2 path selector) does **not** affect EventBase — EventBase callers inject `ebSettings` with `keyword_scoring_method` overridden from `eventbase_keyword_scoring_method` (internal, defaults `'bm25'`, not in UI). All other BM25 params (k1, b, fusion method, RRF K) are still shared via `ebSettings` spread. See §13 for the full matrix. |
-| **Query Keyword Budget** (`hybrid_keyword_level`) | ChunkBase → Keyword Budget | **No** | Read only by `scoreResults()` (A1) and `hybridSearch()` (A2) inside `queryCollection()`. EventBase's `ebSettings` forces `keyword_scoring_method='bm25'`, so it always takes A1 on Standard — but `hybrid_keyword_level` is still read in that A1 path. In practice the chunk re-ranker is its primary consumer; EventBase has its own importance/persist/recency re-ranker that dominates, so the effect is negligible. |
+| **Hybrid Search & BM25 block** (Keyword Scoring Method, BM25 k1/b, Fusion Method, RRF K) | Core → Hybrid Search & BM25 | **A1/A2 only** | These are Vectra (Standard backend) controls. On Qdrant, hybrid is always A3 server-side native — k1/b/RRF K are managed by Qdrant's `modifier: idf` and the `fusion: rrf` API, and these UI knobs have no effect. EventBase callers inject `ebSettings` with `keyword_scoring_method` overridden from `eventbase_keyword_scoring_method` (internal, defaults `'bm25'`, not in UI). See §13 for the full matrix. |
+| **Query Keyword Budget** (`hybrid_keyword_level`) | ChunkBase → Keyword Budget | **No** | Read only by `scoreResults()` (A1) and `hybridSearch()` (A2). A3 doesn't use it — the sparse-vector encoder tokenizes the full query and Qdrant handles IDF weighting. EventBase has its own importance/persist/recency re-ranker that dominates the final order anyway. |
 
 ---
 
@@ -225,7 +225,7 @@ Additionally, EventBase already has its own `_recencyBonus` — an exponential d
 **Module:** [`core/hybrid-search.js`](core/hybrid-search.js)
 **Decision:** ✅ EventBase benefits from it — but through `queryCollection()`, not by direct call.
 
-EventBase calls `queryEvents()` → `queryCollection()` (via an `ebSettings` shim that pins `keyword_scoring_method` to `eventbase_keyword_scoring_method || 'bm25'`). Inside `queryCollection()`, the A1/A2/A3 routing decides whether to invoke `clientSideHybridSearch()` (A2) or the backend's native hybrid (A3) from `hybrid-search.js`. On Standard backend, EventBase is always A1 unless `eventbase_keyword_scoring_method` is explicitly set to `'hybrid'`. On Qdrant with `hybrid_native_prefer=true`, A3 takes over regardless.
+EventBase calls `queryEvents()` → `queryCollection()` (via an `ebSettings` shim that pins `keyword_scoring_method` to `eventbase_keyword_scoring_method || 'bm25'`). Inside `queryCollection()`, the A1/A2/A3 routing decides whether to invoke `clientSideHybridSearch()` (A2) or the backend's native hybrid (A3, `backend.hybridQuery()`). On Standard backend, EventBase is always A1 unless `eventbase_keyword_scoring_method` is explicitly set to `'hybrid'`. On Qdrant, A3 (native sparse + server-side RRF) is the **only** hybrid path — the previous user-toggle was removed after the A/B/C testing picked native_rrf as the winner. `hybrid_native_prefer` remains as a hidden settings.json escape hatch (default `true`) for testing A2 without UI.
 
 Do **not** call `hybridSearch()` directly from `eventbase-retrieval.js` or `eventbase-workflow.js`. It operates at the backend/collection layer — returns raw `{ hashes, metadata }` and bypasses `queryEvents()`, the store schema hydration, and EventBase-specific field population (`score`, `importance`, etc.).
 
@@ -242,37 +242,40 @@ Do **not** call `hybridSearch()` directly from `eventbase-retrieval.js` or `even
 
 Three retrieval paths exist after the keyword-level simplification. All paths are chosen inside `queryCollection()` — EventBase inherits whichever applies to the active backend.
 
-| Path | When | Loads all chunks? | Keyword scoring | Fusion |
+| Path | When | Where it runs | Keyword scoring | Fusion |
 |---|---|---|---|---|
-| A1 — BM25 re-rank | Default for standard backend; or Qdrant with `hybrid_native_prefer=false` and `keyword_scoring_method=bm25` | No | Okapi BM25 over ANN top-K only | Weighted linear: `α·vectorScore + β·bm25Score` (no RRF, no dual-signal bonus) |
-| A2 — client-side hybrid (ANN-bound) | `keyword_scoring_method=hybrid` (non-native) | No | Okapi BM25 over the ANN candidate set only — vector top-K × 3, capped at 100 (`hybrid-search.js` line 100) | **RRF** (default) or weighted; **min-max normalization** per batch; **dual-signal bonus** (up to +8% for docs matching both signals); single-signal penalty (×0.55 vector-only, ×0.60 text-only) |
-| A3 — server-side hybrid | Qdrant with `hybrid_native_prefer=true` (default) | No | Okapi BM25 (k1/b configurable) over the full corpus of keyword-matching candidates via Qdrant scroll (no candidate cap; scroll continues until exhausted; IDF, avgdl, and N computed over every doc matching ≥1 query keyword) | **RRF** (default) or weighted; **saturation normalization** (`score/(score+3.0)`); **dual-signal bonus** (up to +8% for docs matching both signals); single-signal penalty (×0.55 vector-only, ×0.60 keyword-only) |
+| A1 — BM25 re-rank | Standard backend default; or Qdrant with `keyword_scoring_method=bm25` and `hybrid_native_prefer=false` (hidden settings-only) | Browser | Okapi BM25 over ANN top-K only | Weighted linear: `α·vectorScore + β·bm25Score` (no RRF, no bonuses) |
+| A2 — client-side hybrid (ANN-bound) | Standard backend with `keyword_scoring_method=hybrid`; or Qdrant with `hybrid_native_prefer=false` (hidden settings-only) | Browser | Okapi BM25 over the ANN candidate set only — vector top-K × 3, capped at 100 (`hybrid-search.js` line 100) | **RRF** (default) or weighted; **min-max normalization** per batch; **dual-signal bonus** (up to +8%); single-signal penalty (×0.55 vector-only, ×0.60 text-only) |
+| **A3 — Qdrant native sparse + native RRF** | **Qdrant default. The only hybrid path on Qdrant.** | **Qdrant server** | **BM25 via Qdrant's native sparse vector with `modifier: "idf"`. IDF computed globally over the true full corpus** (every indexed document, not just keyword-matching subset). Sparse vectors stored on each point as `{indices, values}` at upsert via FNV-1a-hashed CJK-tokenized tokens. | **Qdrant-native RRF** (`fusion: "rrf"`) — single `/points/query` call with `prefetch: [dense, sparse]`. No bonuses, no penalties, no JS post-processing. |
 
 **Fusion method detail:**
 
 | Feature | A1 | A2 | A3 |
 |---|---|---|---|
-| RRF | ✗ | ✓ | ✓ |
-| Weighted linear | ✓ (always) | ✓ (opt-in) | ✓ (opt-in) |
-| Min-max normalization (batch-relative) | ✗ | ✓ | ✗ |
-| Saturation normalization `score/(score+k)` | ✗ | ✓ (BM25 side) | ✓ (BM25 side, k=3.0) |
-| Dual-signal bonus (explicit ×1.0–1.08) | ✗ | ✓ | ✓ |
-| Single-signal penalty | ✗ | ✓ | ✓ (×0.55 vector-only, ×0.60 keyword-only) |
-| BM25 corpus scope | ANN top-K (≤100, `topK*2`) | ANN top-K × 3 (≤100) | All keyword-matching candidates (full corpus, no cap) |
-| BM25 IDF accuracy | Biased (ANN subset) | Biased (ANN subset, same scope as A1) | Full set of docs matching ≥1 query keyword (broader than A1/A2; narrower than true full-corpus only because non-matching docs are excluded by definition) |
+| RRF | ✗ | ✓ (client-side) | ✓ (server-side, Qdrant) |
+| Weighted linear | ✓ (always) | ✓ (opt-in) | ✗ (Qdrant only ships `rrf` / `dbsf`) |
+| Min-max normalization (batch-relative) | ✗ | ✓ | n/a (server-internal) |
+| Saturation normalization `score/(score+k)` | ✗ | ✓ (BM25 side) | n/a (server-internal) |
+| Dual-signal bonus (explicit ×1.0–1.08) | ✗ | ✓ | ✗ (Qdrant RRF handles dual-presence implicitly) |
+| Single-signal penalty | ✗ | ✓ | ✗ |
+| BM25 corpus scope | ANN top-K (≤100, `topK*2`) | ANN top-K × 3 (≤100) | **Full corpus** — global IDF via Qdrant `modifier: idf` |
+| BM25 IDF accuracy | Biased (ANN subset) | Biased (ANN subset, same scope as A1) | **Globally accurate** (full corpus) |
+| Network round-trips per query | 1 (vector search only) | 1 + corpus load (full chunk fetch on first query per session) | **1** (single `/points/query` call) |
+| Tokenizer mode lock | n/a | n/a | ✓ — sentinel point stores `cjk_tokenizer_mode`; mismatch shows modal and refuses query |
 
 | Setting | Affects EventBase? | Notes |
 |---|---|---|
-| `keyword_scoring_method` (`bm25` \| `hybrid`) | **No** | ChunkBase path only. EventBase callers override this to `eventbase_keyword_scoring_method \|\| 'bm25'` before passing settings to `queryCollection()`, so the ChunkBase setting never reaches EventBase queries. |
-| `eventbase_keyword_scoring_method` | **Yes** | EventBase-only internal key. Defaults to `'bm25'`; not exposed in UI. Override in browser console if needed. `bm25` = A1 fast re-rank; `hybrid` = A2 (but A3 still takes precedence when `hybrid_native_prefer=true`). |
-| `hybrid_keyword_level` (`minimal` / `balance` / `maximum`) | Negligible | Controls keywords extracted for BM25 (30/50/70). EventBase is pinned to A1 on Standard — `scoreResults()` reads this — but EventBase's own 4-weight re-ranker dominates final ordering so the effect is minimal. Ignored under A3. |
-| `hybrid_native_prefer` | Yes | `true` (default for Qdrant) → A3 server-side path. `false` → falls back to A1/A2 by `keyword_scoring_method`. |
-| `hybrid_fusion_method` (`rrf` / `weighted`) | Yes (A2 and A3) | Fusion strategy. Both A2 and A3 apply explicit dual-signal bonus and single-signal penalty after the raw fusion score. A2 uses min-max normalization; A3 uses saturation normalization on the BM25 side. Not used in A1. |
-| `hybrid_vector_weight`, `hybrid_text_weight` | Yes (A2/A3 weighted mode) | Used only when `hybrid_fusion_method = weighted`. |
-| `hybrid_rrf_k` | Yes (A2/A3 RRF mode) | RRF constant k (default 60). Higher k flattens rank differences; lower k amplifies top-rank advantage. Used only when `hybrid_fusion_method = rrf`. |
-| `bm25_k1`, `bm25_b` | Yes (A1 and A2) | BM25 TF saturation (k1, default 1.5) and length normalization (b, default 0.75) for A1 and A2. A3 also accepts these via `options.bm25k1` / `options.bm25b` passed through `hybridQuery`. |
+| `keyword_scoring_method` (`bm25` \| `hybrid`) | **No** | ChunkBase path only, and only for Standard backend. On Qdrant, A3 is the only hybrid path and this setting is ignored. EventBase callers override this to `eventbase_keyword_scoring_method \|\| 'bm25'` before passing settings to `queryCollection()`. |
+| `eventbase_keyword_scoring_method` | **Yes (Standard only)** | EventBase-only internal key. Defaults to `'bm25'`; not exposed in UI. Override in browser console if needed. Has effect **only on Standard backend** (chooses A1 vs A2). On Qdrant, A3 takes over regardless. |
+| `hybrid_keyword_level` (`minimal` / `balance` / `maximum`) | Negligible | Controls keywords extracted for A1 BM25 (30/50/70). Ignored under A2 (full query tokenized) and A3 (sparse encoder tokenizes everything; Qdrant handles IDF). |
+| `hybrid_native_prefer` | Hidden setting | No longer in the UI. Default `true` keeps Qdrant on A3 (native sparse + RRF). Flip to `false` via JSON only to test A2 client-side hybrid against Qdrant. |
+| `hybrid_fusion_method` (`rrf` / `weighted`) | A2 only | A1 always uses weighted linear. A3 always uses Qdrant-native RRF (this setting has no effect on Qdrant). |
+| `hybrid_vector_weight`, `hybrid_text_weight` | A2 weighted mode only | Used only when `hybrid_fusion_method = weighted` on the Standard backend. |
+| `hybrid_rrf_k` | A2 RRF mode only | Qdrant uses its own internal default for A3; this knob doesn't reach the server. |
+| `bm25_k1`, `bm25_b` | A1 and A2 only | BM25 TF saturation (k1, default 1.5) and length normalization (b, default 0.75). A3 uses Qdrant's `modifier: idf` internals — these knobs are not exposed to the server. |
 | `keyword_extraction_level`, `keyword_boost_base_weight` | No | Ingestion-only settings. No longer used in any retrieval path. |
-| `hybrid_search_enabled` | Removed | Setting deleted. Hybrid is now always available; path chosen by `keyword_scoring_method` + `hybrid_native_prefer`. |
+| `cjk_tokenizer_mode` (`intl` / `jieba` / `jieba_tw` / `tiny_segmenter`) | **Yes (locked per Qdrant collection)** | Used by the sparse-vector encoder at upsert and query. Locked into each Qdrant collection via a sentinel point on first upsert. Changing this setting after migration triggers a mismatch modal on the next query (revert / open settings / cancel). |
+| `hybrid_search_enabled` | Removed | Setting deleted. Hybrid is now always available; path chosen by backend and `keyword_scoring_method`. |
 | `deduplication_depth` | Yes | EventBase context deduplication — suppress events already visible in recent chat window. |
 | `eventbase_retrieval_top_k`, `eventbase_retrieval_min_importance`, EventBase rerank weights | Yes | Active for all three retrieval paths. |
 
@@ -325,9 +328,9 @@ console.log({ chatUUID, handleId, charName });
 
 ---
 
-## 13) Hybrid Search & BM25 — GUI Placement Matrix (Phase 2)
+## 13) Hybrid Search & BM25 — GUI Placement Matrix
 
-Content type determines path; path determines which setting key controls A1/A2 routing:
+Backend determines path; on Qdrant there is only one hybrid path (A3). On Standard, the user picks A1 vs A2.
 
 - **ChunkBase** owns non-chat content only: Lorebook / World Info, Character Cards, URLs / web pages, custom documents, wiki pages, YouTube transcripts. Uses `keyword_scoring_method`.
 - **EventBase** owns chat content only: Current Chat history and uploaded Archive Chat history (`.jsonl`). Uses `eventbase_keyword_scoring_method` (internal, not in UI, defaults `'bm25'`).
@@ -340,39 +343,59 @@ This ensures ChunkBase's `keyword_scoring_method` never leaks into EventBase que
 
 ### Settings × routing case
 
-| Setting | Storage key | Applies to | **A1** — Standard + BM25 | **A2** — Standard + Hybrid | **A3** — Qdrant native |
+| Setting | Storage key | Applies to | **A1** — Standard + BM25 | **A2** — Standard + Hybrid | **A3** — Qdrant native sparse + RRF |
 |---|---|---|---|---|---|
-| Keyword Scoring Method | `keyword_scoring_method` | **ChunkBase only** | ✅ selects A1 path | ✅ selects A2 path | ❌ ignored (server decides) |
-| EventBase Scoring Method | `eventbase_keyword_scoring_method` | **EventBase only** | ✅ selects A1 path | ✅ selects A2 path | ❌ ignored (A3 takes precedence) |
-| BM25 k1 | `bm25_k1` | Both | ✅ used | ✅ used | ❌ server-internal |
-| BM25 b | `bm25_b` | Both | ✅ used | ✅ used | ❌ server-internal |
-| Query Keyword Budget | `hybrid_keyword_level` | ChunkBase (dominant); EventBase negligible | ✅ used | ❌ not used | ❌ not used |
-| Fusion Method (RRF / Weighted) | `hybrid_fusion_method` | Both | ❌ not used | ✅ used | ✅ passed to server |
-| RRF K | `hybrid_rrf_k` | Both | ❌ not used | ✅ used | ✅ passed to server |
-| Prefer Native Backend Hybrid | `hybrid_native_prefer` | Both | n/a | n/a | toggles A3 vs falls back to A1/A2 |
+| Keyword Scoring Method | `keyword_scoring_method` | **ChunkBase only** | ✅ selects A1 path | ✅ selects A2 path | ❌ ignored — A3 is the only Qdrant path |
+| EventBase Scoring Method | `eventbase_keyword_scoring_method` | **EventBase only** | ✅ selects A1 path (Standard) | ✅ selects A2 path (Standard) | ❌ ignored on Qdrant |
+| BM25 k1 | `bm25_k1` | Standard only | ✅ used | ✅ used | ❌ Qdrant `modifier: idf` internal |
+| BM25 b | `bm25_b` | Standard only | ✅ used | ✅ used | ❌ Qdrant `modifier: idf` internal |
+| Query Keyword Budget | `hybrid_keyword_level` | A1 only | ✅ used | ❌ full query tokenized | ❌ sparse encoder tokenizes everything |
+| Fusion Method (RRF / Weighted) | `hybrid_fusion_method` | A2 only | ❌ not used (A1 always weighted) | ✅ used | ❌ Qdrant always RRF (server-side) |
+| RRF K | `hybrid_rrf_k` | A2 RRF mode only | ❌ not used | ✅ used | ❌ Qdrant uses its own default |
+| CJK Tokenizer Mode | `cjk_tokenizer_mode` | A3 (locked per Qdrant collection) | n/a | n/a | ✅ locked into collection at upsert via sentinel point |
+| Prefer Native Backend Hybrid | `hybrid_native_prefer` | Hidden settings escape hatch | n/a | n/a | Default `true`. Flip to `false` via settings.json to force Qdrant onto A2 for testing. No UI. |
 
 ### Key observations
 
-1. **Path routing is now content-type-scoped.** ChunkBase's `keyword_scoring_method` no longer affects EventBase. Changing to "Hybrid" in ChunkBase tab will not switch lorebook queries AND event queries to A2 — only lorebook queries switch.
-2. **`eventbase_keyword_scoring_method` is internal.** It defaults to `'bm25'` and is not exposed in the GUI. There is no need for a dropdown in the EventBase tab — the routing is determined by content type (chat vs non-chat), not a user choice.
-3. **BM25 tuning params (k1, b, fusion, RRF K) remain shared** via the `ebSettings` spread. Only the path-selector key (`keyword_scoring_method`) is isolated.
-4. **`hybrid_keyword_level` is the only ChunkBase-tab setting.** EventBase is pinned to A1 on Standard — `scoreResults()` reads `hybrid_keyword_level` — but EventBase's own 4-weight re-ranker dominates final ordering so the practical effect is negligible.
+1. **Qdrant has exactly one hybrid path — A3.** The A/B/C testing in [plans/qdrant-native-sparse-hybrid-rrf.md](../plans/qdrant-native-sparse-hybrid-rrf.md) picked native sparse + native RRF as the winner; the dropdown and the "Prefer Native Backend Hybrid" checkbox were both removed. A3 runs entirely server-side via Qdrant's `/points/query` endpoint with `prefetch: [dense, sparse]` and `fusion: "rrf"`.
+2. **A3 uses globally-accurate IDF.** Qdrant's `modifier: "idf"` computes IDF over the true full corpus (every indexed document), not the ANN-bounded subset. This eliminates the BM25 IDF bias that A1 and A2 carry.
+3. **Path routing is content-type-scoped.** ChunkBase's `keyword_scoring_method` no longer affects EventBase. Changing to "Hybrid" in ChunkBase tab only switches lorebook queries.
+4. **Sparse vectors are tokenizer-locked.** The CJK tokenizer mode at upsert is baked into a sentinel metadata point on each Qdrant collection. Querying after a mode change shows a modal asking the user to revert or re-vectorize.
+5. **Migration tool (dev-only).** Existing dense-only Qdrant collections must be migrated to add sparse vectors — Action tab → Dev Tools → "Upgrade Collection to Native Sparse Vectors". The button is tagged `// MIGRATE-DELETE` in code for easy removal before release.
 
-### GUI hide/show rules (consequence of the above)
+### GUI hide/show rules
 
-| Mode | Visible in Core | Visible in ChunkBase |
+| Backend | Visible in Core | Visible in ChunkBase |
 |---|---|---|
-| **Qdrant native** (A3, `hybrid_native_prefer=true`) | Prefer Native toggle, Native-active notice, Fusion Method, RRF K | *(no hybrid controls)* |
+| **Qdrant** (A3 — only option) | Native-active notice + CJK Tokenizer Mode dropdown (Keyword Extraction subsection). **Fusion Method and RRF K are hidden** — Qdrant ignores them. | *(no hybrid controls)* |
 | **Standard + BM25** (A1) | Keyword Scoring Method, BM25 k1, BM25 b | Query Keyword Budget |
 | **Standard + Hybrid** (A2) | Keyword Scoring Method, BM25 k1, BM25 b, Fusion Method, RRF K | *(no hybrid controls)* |
 
 Notes:
-- `Prefer Native Backend Hybrid` is rendered only when `vector_backend === 'qdrant'`.
-- When toggled off on Qdrant, the UI falls back to A2 visibility (Standard + Hybrid), but the routing layer still talks to Qdrant as the backend.
-- Visibility is driven by the helper [`updateNativeHybridUI()` at ui-manager.js:~2097](ui/ui-manager.js#L2097), which fires on changes to `vector_backend`, `keyword_scoring_method`, and `hybrid_native_prefer`. The cross-tab toggle of `#vecthare_hybrid_keyword_budget_wrapper` (in ChunkBase) works because the helper is global, not tab-scoped.
+- "Prefer Native Backend Hybrid" checkbox was removed. The setting `hybrid_native_prefer` still exists in defaults (`true`) as an escape hatch for testing A2 against Qdrant without UI.
+- Fusion Method and RRF K Constant are hidden on Qdrant because Qdrant runs `fusion: "rrf"` server-side with its own internal k constant; exposing the controls would be misleading. They reappear when the user switches `vector_backend` to Standard (where A2 actually uses them).
+- The CJK Tokenizer Mode dropdown lives in the Keyword Extraction subsection (always visible). It's the **only** Hybrid Search & BM25 control that affects A3 — it drives the sparse-vector encoder.
+- Visibility is driven by [`updateNativeHybridUI()`](../ui/ui-manager.js) which fires on changes to `vector_backend` and `keyword_scoring_method`. On Qdrant it always shows the Native-active notice (no toggle).
+
+### Server-side hybrid fusion — yes, fully supported
+
+A3 leverages **all four** of Qdrant's relevant server-side features:
+
+| Qdrant feature | A3 uses it? | How |
+|---|---|---|
+| Dense vector ANN | ✅ | Default unnamed vector slot |
+| **Sparse vectors** (`modifier: "idf"`) | ✅ | Named slot `text_sparse`, FNV-1a-hashed token indices, raw TF values; Qdrant computes IDF globally |
+| **Hybrid fusion** (`/points/query` with `prefetch`) | ✅ | Single call with `prefetch: [dense, sparse]` |
+| **Native RRF** (`fusion: "rrf"`) | ✅ | Server-side fusion; alternative `"dbsf"` available but unused |
+| Reranking pipelines | ❌ | EventBase's own importance/persist/recency re-ranker runs in JS after retrieval; Qdrant's experimental reranker not used |
 
 ### Cross-reference
 
-- Implementation plan: [plans/GUI_reorganize.md](plans/GUI_reorganize.md) §13–§22 (Phase 2).
-- Routing code: `queryCollection()` at [core-vector-api.js:834](core/core-vector-api.js#L834).
-- EventBase invocation: `queryEvents()` at [eventbase-store.js:139](core/eventbase-store.js#L139) and direct `queryCollection` calls in [eventbase-retrieval.js:139](core/eventbase-retrieval.js#L139), [eventbase-workflow.js:413](core/eventbase-workflow.js#L413).
+- Architecture/cleanup plan: [plans/qdrant-native-sparse-hybrid-rrf.md](../plans/qdrant-native-sparse-hybrid-rrf.md).
+- GUI reorg plan: [plans/GUI_reorganize.md](../plans/GUI_reorganize.md) §13–§22 (Phase 2).
+- Routing code: `queryCollection()` at [core/core-vector-api.js](../core/core-vector-api.js).
+- A3 client entrypoint: `hybridQuery()` at [backends/qdrant.js](../backends/qdrant.js).
+- A3 server entrypoint: `hybridQueryNative()` at [similharity/qdrant-backend.js](../../similharity/qdrant-backend.js).
+- Sparse encoder: [core/sparse-vector-encoder.js](../core/sparse-vector-encoder.js).
+- Tokenizer lock + mismatch modal: [core/tokenizer-lock.js](../core/tokenizer-lock.js).
+- EventBase invocation: `queryEvents()` at [core/eventbase-store.js](../core/eventbase-store.js) and direct `queryCollection` calls in [core/eventbase-retrieval.js](../core/eventbase-retrieval.js), [core/eventbase-workflow.js](../core/eventbase-workflow.js).

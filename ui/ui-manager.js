@@ -545,7 +545,7 @@ export function renderSettings(containerId, settings, callbacks) {
 
                                 <!-- Shown instead of above when native hybrid (A3) is active -->
                                 <div id="vecthare_native_hybrid_info" style="display: none; margin-top: 16px;">
-                                    <small class="vecthare_hint"><i class="fa-solid fa-bolt"></i> Native hybrid active: server uses 50 keywords (CJK priority + English overflow)</small>
+                                    <small class="vecthare_hint"><i class="fa-solid fa-bolt"></i> Native Qdrant hybrid active: dense ANN + sparse BM25 (global IDF) fused server-side via RRF. The CJK Tokenizer Mode below is locked into each collection at upsert.</small>
                                 </div>
 
                                 <!-- BM25 Parameters (visible when client-side BM25 logic runs — A1 or A2) -->
@@ -2178,8 +2178,10 @@ function bindSettingsEvents(settings, callbacks) {
         // BM25 k1/b: visible whenever client-side BM25 logic runs (A1 or A2)
         $('#vecthare_bm25_params').toggle(!nativeActive);
 
-        // Fusion Method + RRF K: visible in A2 (hybrid mode) and A3 (passed to server)
-        $('#vecthare_hybrid_params').toggle(isHybridMode || nativeActive);
+        // Fusion Method + RRF K: visible only for A2 (Standard + Hybrid). A3 (Qdrant) ignores
+        // these — Qdrant always runs server-side RRF with its own internal k constant — so the
+        // controls would just confuse Qdrant users.
+        $('#vecthare_hybrid_params').toggle(isHybridMode);
 
         // Query Keyword Budget (lives in ChunkBase tab): visible only in A1
         $('#vecthare_hybrid_keyword_budget_wrapper').toggle(isBM25Mode);
