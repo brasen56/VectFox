@@ -2651,7 +2651,16 @@ async function startContinueVectorization() {
         return;
     }
 
-    const llmCheck = validateLLMConfig(currentSettings);
+    // currentSettings only carries content-type defaults — merge global VectHare settings
+    // so the user's summarize_model / API key (set in Core → LLM Summarization) is visible.
+    const mergedSettings = { ...(extension_settings.vecthareplus || {}), ...currentSettings };
+    console.log('[VectHare] LLM config check (vectorize-content):', {
+        provider: mergedSettings.summarize_provider,
+        model: mergedSettings.summarize_model,
+        hasOpenRouterKey: !!mergedSettings.summarize_openrouter_api_key,
+        hasVllmUrl: !!mergedSettings.summarize_vllm_url,
+    });
+    const llmCheck = validateLLMConfig(mergedSettings);
     if (!llmCheck.ok) {
         toastr.error(
             `${llmCheck.reason} Open VectHare → Core → LLM Summarization & EventBase Extraction and fill in the required fields.`,
@@ -2863,8 +2872,16 @@ async function startVectorization() {
 
     // All vectorization paths (EventBase for chat, chunk pipeline for non-chat) eventually
     // make LLM calls that share the summarize_* settings. Fail fast with a clear message
-    // rather than letting it blow up mid-ingest.
-    const llmCheck = validateLLMConfig(currentSettings);
+    // rather than letting it blow up mid-ingest. Merge global settings so the user's
+    // summarize_model / API key set in Core → LLM Summarization is visible here.
+    const mergedSettings = { ...(extension_settings.vecthareplus || {}), ...currentSettings };
+    console.log('[VectHare] LLM config check (start-vectorization):', {
+        provider: mergedSettings.summarize_provider,
+        model: mergedSettings.summarize_model,
+        hasOpenRouterKey: !!mergedSettings.summarize_openrouter_api_key,
+        hasVllmUrl: !!mergedSettings.summarize_vllm_url,
+    });
+    const llmCheck = validateLLMConfig(mergedSettings);
     if (!llmCheck.ok) {
         toastr.error(
             `${llmCheck.reason} Open VectHare → Core → LLM Summarization & EventBase Extraction and fill in the required fields.`,
