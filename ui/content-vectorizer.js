@@ -2694,10 +2694,14 @@ async function startContinueVectorization() {
 
     try {
         const { vectorizeContent } = await import('../core/content-vectorization.js');
+        // Merge global VectHare settings (vector_backend, source, model, etc.) into currentSettings,
+        // which by itself is only the content-type defaults. Without this, the collection-ID builder
+        // sees `settings.vector_backend` as undefined and drops the backend segment from the name.
+        const mergedSettings = { ...(extension_settings.vecthareplus || {}), ...currentSettings };
         const result = await vectorizeContent({
             contentType: currentContentType,
             source: source,
-            settings: currentSettings,
+            settings: mergedSettings,
             abortSignal: activeVectorizeAbortController.signal,
             continueMode: true,
             startFromMessage,
@@ -2948,10 +2952,12 @@ async function startVectorization() {
         // Import the appropriate handler
         const { vectorizeContent } = await import('../core/content-vectorization.js');
 
+        // Merge global VectHare settings (vector_backend, source, model, etc.) into currentSettings.
+        const mergedSettings = { ...(extension_settings.vecthareplus || {}), ...currentSettings };
         const result = await vectorizeContent({
             contentType: currentContentType,
             source: source,
-            settings: currentSettings,
+            settings: mergedSettings,
             abortSignal: activeVectorizeAbortController.signal,
             startFromMessage,
         });
