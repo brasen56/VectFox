@@ -532,31 +532,23 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </div>
                             </div>
 
-                        </div>
-                    </div>
-
-                    <!-- ChunkBase Settings Card -->
-                    <div class="vecthare-card" data-vecthare-tab="weight">
-                        <div class="vecthare-card-header">
-                            <h3 class="vecthare-card-title">
-                                <span class="vecthare-icon">
-                                    <i class="fa-solid fa-layer-group"></i>
-                                </span>
-                                ChunkBase Settings
-                            </h3>
-                            <p class="vecthare-card-subtitle">Settings on this tab apply to chunk-based content: <b>Lorebook / World Info</b>, <b>Character Cards</b>, <b>URLs / web pages</b>, <b>custom documents</b>, <b>wiki pages</b>, and <b>YouTube transcripts</b>. Chat history is handled separately under EventBase.</p>
-                        </div>
-                        <div class="vecthare-card-body">
-
-                            <!-- Ingestion -->
-                            <p class="vecthare-section-label" style="font-weight:600; margin-bottom:8px;">Ingestion</p>
-                            <label for="vecthare_insert_batch_size">
-                                <small>Insert Batch Size: <span id="vecthare_insert_batch_size_value">50</span></small>
+                            <!-- Query (shared by EventBase and ChunkBase) -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Query</p>
+                            <label for="vecthare_query_depth" style="margin-top: 4px;">
+                                <small>Query Depth: <span id="vecthare_query_depth_value">2</span> messages</small>
                             </label>
-                            <input type="range" id="vecthare_insert_batch_size" class="vecthare-slider" min="10" max="100" step="10" />
-                            <small class="vecthare_hint">Chunks per insert batch (50-100 recommended for faster bulk operations)</small>
+                            <input type="range" id="vecthare_query_depth" class="vecthare-slider" min="1" max="20" step="1" />
+                            <small class="vecthare_hint">How many recent messages to include in search query. Applies to both EventBase and ChunkBase retrieval.</small>
 
-                            <!-- Keyword Extraction -->
+                            <!-- Retrieval Gating (shared by EventBase and ChunkBase) -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Retrieval Gating</p>
+                            <label for="vecthare_min_chat_length">
+                                <small>Minimum Messages Before Injection</small>
+                            </label>
+                            <input type="number" id="vecthare_min_chat_length" class="vecthare-input" min="0" max="100" step="1" placeholder="0" />
+                            <small class="vecthare_hint">Minimum number of messages in chat before RAG injection starts (0 = inject immediately). Applies to both EventBase and ChunkBase.</small>
+
+                            <!-- Keyword Extraction (shared by EventBase and ChunkBase) -->
                             <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Keyword Extraction</p>
                             <div style="padding: 12px; background: rgba(100,100,100,0.1); border-radius: 8px;">
                                 <label for="vecthare_cjk_tokenizer_mode">
@@ -581,28 +573,40 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <small class="vecthare_hint">Words to exclude from keyword extraction. Supports ST macros: {{char}}, {{user}}, {{charIfNotGroup}}, etc.</small>
                             </div>
 
-                            <!-- Query -->
-                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Query</p>
-                            <label for="vecthare_query_depth" style="margin-top: 4px;">
-                                <small>Query Depth: <span id="vecthare_query_depth_value">2</span> messages</small>
-                            </label>
-                            <input type="range" id="vecthare_query_depth" class="vecthare-slider" min="1" max="20" step="1" />
-                            <small class="vecthare_hint">How many recent messages to include in search query</small>
+                        </div>
+                    </div>
 
-                            <div style="margin-top:12px; display:flex; gap:8px; align-items:center;">
+                    <!-- ChunkBase Settings Card -->
+                    <div class="vecthare-card" data-vecthare-tab="weight">
+                        <div class="vecthare-card-header">
+                            <h3 class="vecthare-card-title">
+                                <span class="vecthare-icon">
+                                    <i class="fa-solid fa-layer-group"></i>
+                                </span>
+                                ChunkBase Settings
+                            </h3>
+                            <p class="vecthare-card-subtitle">Settings on this tab apply to chunk-based content: <b>Lorebook / World Info</b>, <b>Character Cards</b>, <b>URLs / web pages</b>, <b>custom documents</b>, <b>wiki pages</b>, and <b>YouTube transcripts</b>. Chat history is handled separately under EventBase.</p>
+                        </div>
+                        <div class="vecthare-card-body">
+
+                            <!-- Ingestion -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-bottom:8px;">Ingestion</p>
+                            <label for="vecthare_insert_batch_size">
+                                <small>Insert Batch Size: <span id="vecthare_insert_batch_size_value">50</span></small>
+                            </label>
+                            <input type="range" id="vecthare_insert_batch_size" class="vecthare-slider" min="10" max="100" step="10" />
+                            <small class="vecthare_hint">Chunks per insert batch (50-100 recommended for faster bulk operations)</small>
+
+                            <!-- Query (ChunkBase-only) -->
+                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Query</p>
+                            <div style="margin-top:4px; display:flex; gap:8px; align-items:center;">
                                 <label for="vecthare_topk" style="margin:0; white-space:nowrap;"><small>Top K</small></label>
                                 <input id="vecthare_topk" type="number" class="vecthare-input" min="1" style="width:90px;" />
                                 <small class="vecthare_hint" style="margin-left:8px;">Up to this many results per collection (may be fewer after filtering/dedup)</small>
                             </div>
 
-                            <!-- Retrieval Gating -->
+                            <!-- Retrieval Gating (ChunkBase-only) -->
                             <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Retrieval Gating</p>
-                            <label for="vecthare_min_chat_length">
-                                <small>Minimum Messages Before Injection</small>
-                            </label>
-                            <input type="number" id="vecthare_min_chat_length" class="vecthare-input" min="0" max="100" step="1" placeholder="0" />
-                            <small class="vecthare_hint">Minimum number of messages in chat before RAG injection starts (0 = inject immediately)</small>
-
                             <label for="vecthare_score_threshold" style="margin-top:12px;">
                                 <small>Similarity Threshold: <span id="vecthare_threshold_value">0.25</span></small>
                             </label>
