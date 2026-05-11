@@ -88,7 +88,7 @@ const defaultSettings = {
     insert: 5,
     min_chat_length: 0, // Minimum number of messages in chat before injection starts (0 = no minimum)
     // Number of top results to retrieve from vector DB (top-K)
-    top_k: 7,
+    top_k: 10,
     retrieval_popup_on_start: true,    // Show popup when retrieval starts
     retrieval_popup_on_result: false,  // Show popup with number of retrieved results
     query: 2,

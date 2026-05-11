@@ -74,330 +74,323 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </span>
                                 Core Settings
                             </h3>
-                            <p class="vecthare-card-subtitle">Configure embedding provider, summarization LLM, and shared retrieval parameters. Settings here apply to <b>both</b> chunk-based content and EventBase chat history.</p>
+                            <p class="vecthare-card-subtitle">Shared settings for embedding, retrieval, and EventBase extraction.</p>
                         </div>
                         <div class="vecthare-card-body">
 
-                            <label for="vecthare_vector_backend">
-                                <small>Vector Backend</small>
-                            </label>
-                            <select id="vecthare_vector_backend" class="vecthare-select">
-                                <option value="standard">Standard (ST's Vectra - file-based)</option>
-                                <option value="qdrant">Qdrant (production vector search)</option>
-                            </select>
-                            <small class="vecthare-help-text" style="display: block; margin-top: -8px; margin-bottom: 16px; opacity: 0.7; font-size: 0.85em; line-height: 1.5;">
-                                • Standard: ST's built-in Vectra (best for <100k vectors)<br>
-                                • Qdrant: Production-grade with HNSW, filtering, cloud support
-                            </small>
-
-                            <!-- Qdrant Settings (shown only when Qdrant backend is selected) -->
-                            <div id="vecthare_qdrant_settings" style="display: none;">
-                                <label class="checkbox_label">
-                                    <input type="checkbox" id="vecthare_qdrant_use_cloud" />
-                                    <span>Use Qdrant Cloud</span>
-                                </label>
-
-                                <!-- Local Qdrant Settings -->
-                                <div id="vecthare_qdrant_local_settings">
-                                    <label for="vecthare_qdrant_host">
-                                        <small>Qdrant Host:</small>
-                                    </label>
-                                    <input type="text" id="vecthare_qdrant_host" class="vecthare-input" placeholder="localhost" />
-
-                                    <label for="vecthare_qdrant_port">
-                                        <small>Qdrant Port:</small>
-                                    </label>
-                                    <input type="number" id="vecthare_qdrant_port" class="vecthare-input" placeholder="6333" />
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <!-- GROUP 1: Vector Storage                                -->
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <div class="vecthare-subsection">
+                                <div class="vecthare-card-header" style="padding: 0 0 8px 0;">
+                                    <h3 class="vecthare-card-title" style="font-size: 0.95em;">
+                                        <span class="vecthare-icon"><i class="fa-solid fa-database"></i></span>
+                                        Vector Storage
+                                    </h3>
+                                    <p class="vecthare-card-subtitle">Vector database backend</p>
                                 </div>
 
-                                <!-- Cloud Qdrant Settings -->
-                                <div id="vecthare_qdrant_cloud_settings" style="display: none;">
-                                    <label for="vecthare_qdrant_url">
-                                        <small>Qdrant Cloud URL:</small>
+                                <label for="vecthare_vector_backend">
+                                    <small>Vector Backend</small>
+                                </label>
+                                <select id="vecthare_vector_backend" class="vecthare-select">
+                                    <option value="standard">Standard (ST's Vectra - file-based)</option>
+                                    <option value="qdrant">Qdrant (production vector search)</option>
+                                </select>
+                                <small class="vecthare-help-text" style="display: block; margin-top: -8px; margin-bottom: 16px; opacity: 0.7; font-size: 0.85em; line-height: 1.5;">
+                                    • Standard: ST's built-in Vectra (best for &lt;100k vectors)<br>
+                                    • Qdrant: Production-grade with HNSW, filtering, cloud support
+                                </small>
+
+                                <!-- Qdrant Settings (shown only when Qdrant backend is selected) -->
+                                <div id="vecthare_qdrant_settings" style="display: none;">
+                                    <label class="checkbox_label">
+                                        <input type="checkbox" id="vecthare_qdrant_use_cloud" />
+                                        <span>Use Qdrant Cloud</span>
                                     </label>
-                                    <input type="text" id="vecthare_qdrant_url" class="vecthare-input" placeholder="https://xxx.cloud.qdrant.io" />
 
-                                    <label for="vecthare_qdrant_api_key">
-                                        <small>API Key:</small>
-                                    </label>
-                                    <input type="password" id="vecthare_qdrant_api_key" class="vecthare-input" placeholder="Your Qdrant Cloud API key" />
-                                </div>
-
-                                <!-- Qdrant Multitenancy Setting -->
-                                <div style="margin-top: 10px; padding: 8px; background: rgba(0,0,0,0.1); border-radius: 4px;">
-                                    <label class="checkbox_label" title="When enabled, uses a single Qdrant collection with content_type filtering (multitenancy). When disabled, creates separate collections for each content type (better isolation).">
-                                        <input type="checkbox" id="vecthare_qdrant_multitenancy" />
-                                        <span>Use Multitenancy (Single Collection)</span>
-                                    </label>
-                                    <small class="vecthare_hint" style="display: block; margin-top: 4px;">
-                                        <strong>Multitenancy ON:</strong> Single collection with filtering (saves resources)<br>
-                                        <strong>Multitenancy OFF:</strong> Separate collections per content type (better isolation)
-                                    </small>
-                                </div>
-                            </div>
-
-                            <label for="vecthare_source">
-                                <small>Embedding Provider</small>
-                            </label>
-                            <select id="vecthare_source" class="vecthare-select">
-                            <option value="transformers">Transformers (Local)</option>
-                            <option value="bananabread">BananaBread</option>
-                            <option value="openai">OpenAI</option>
-                            <option value="ollama">Ollama</option>
-                            <option value="cohere">Cohere</option>
-                            <option value="togetherai">Together AI</option>
-                            <option value="extras">Extras API</option>
-                            <option value="electronhub">ElectronHub</option>
-                            <option value="openrouter">OpenRouter</option>
-                            <option value="llamacpp">LlamaCPP</option>
-                            <option value="vllm">vLLM</option>
-                            <option value="koboldcpp">KoboldCPP</option>
-                            <option value="webllm">WebLLM</option>
-                            <option value="palm">Google PaLM</option>
-                            <option value="vertexai">Google VertexAI</option>
-                            <option value="mistral">Mistral AI</option>
-                            <option value="nomicai">Nomic AI</option>
-                        </select>
-
-                        <!-- Provider-Specific Settings -->
-                        <div id="vecthare_provider_settings">
-
-                            <!-- ElectronHub Model -->
-                            <div class="vecthare_provider_setting" data-provider="electronhub">
-                                <label for="vecthare_electronhub_model">
-                                    <small>ElectronHub Model:</small>
-                                </label>
-                                <input type="text" id="vecthare_electronhub_model" class="vecthare-input" placeholder="text-embedding-3-small" />
-                                <small class="vecthare_hint">Enter ElectronHub-compatible model ID (e.g., text-embedding-3-small, text-embedding-3-large)</small>
-                            </div>
-
-                            <!-- Alternative Endpoint (for local providers) -->
-                            <div class="vecthare_provider_setting" data-provider="ollama,vllm,llamacpp,koboldcpp,bananabread">
-                                <label class="checkbox_label">
-                                    <input type="checkbox" id="vecthare_use_alt_endpoint" />
-                                    <span>Use Alternative Endpoint</span>
-                                </label>
-                                <input type="text" id="vecthare_alt_endpoint_url" class="vecthare-input" placeholder="http://localhost:11434" />
-                                <small class="vecthare_hint">Override default API URL for this provider</small>
-                            </div>
-
-                            <!-- BananaBread Info & Reranking -->
-                            <div class="vecthare_provider_setting" data-provider="bananabread">
-                                <small class="vecthare_info">
-                                    <i class="fa-solid fa-info-circle"></i>
-                                    BananaBread default: http://localhost:8008. Supports MixedBread AI and Qwen3 embedding models.
-                                </small>
-                                <label class="checkbox_label" style="margin-top: 8px;">
-                                    <input type="checkbox" id="vecthare_bananabread_rerank" />
-                                    <span>Enable Reranking</span>
-                                </label>
-                                <small class="vecthare_hint">Re-score results using BananaBread's reranker for better relevance</small>
-                                <label for="vecthare_bananabread_apikey" style="margin-top: 8px;">
-                                    <small>BananaBread API Key:</small>
-                                </label>
-                                <input type="password" id="vecthare_bananabread_apikey" class="vecthare-input" placeholder="Paste key here to save..." autocomplete="off" />
-                            </div>
-
-                            <!-- WebLLM Model -->
-                            <div class="vecthare_provider_setting" data-provider="webllm">
-                                <small class="vecthare_info" id="vecthare_webllm_status">
-                                    <i class="fa-solid fa-spinner fa-spin"></i>
-                                    Checking WebLLM availability...
-                                </small>
-                                <label for="vecthare_webllm_model">
-                                    <small>WebLLM Model:</small>
-                                </label>
-                                <select id="vecthare_webllm_model" class="vecthare-select"></select>
-                                <div style="display: flex; gap: 8px; margin-top: 8px;">
-                                    <button id="vecthare_webllm_load" class="menu_button">
-                                        <i class="fa-solid fa-download"></i> Load Model
-                                    </button>
-                                    <button id="vecthare_webllm_install" class="menu_button menu_button_icon">
-                                        <i class="fa-solid fa-puzzle-piece"></i> Install Extension
-                                    </button>
-                                </div>
-                                <small class="vecthare_hint">WebLLM requires the WebLLM extension and a WebGPU-compatible browser (Chrome 113+, Edge 113+)</small>
-                            </div>
-
-                            <!-- Ollama Model -->
-                            <div class="vecthare_provider_setting" data-provider="ollama">
-                                <label for="vecthare_ollama_model">
-                                    <small>Ollama Model:</small>
-                                </label>
-                                <input type="text" id="vecthare_ollama_model" class="vecthare-input" placeholder="mxbai-embed-large" />
-                                <label class="checkbox_label">
-                                    <input type="checkbox" id="vecthare_ollama_keep" />
-                                    <span>Keep Model in Memory</span>
-                                </label>
-                                <small class="vecthare_hint">Enter the model name from your local Ollama installation</small>
-                            </div>
-
-                            <!-- KoboldCPP Info -->
-                            <div class="vecthare_provider_setting" data-provider="koboldcpp">
-                                <small class="vecthare_info">
-                                    <i class="fa-solid fa-info-circle"></i>
-                                    KoboldCPP uses the currently loaded model for embeddings. Ensure your model supports embeddings.
-                                </small>
-                            </div>
-
-                            <!-- LlamaCPP Info -->
-                            <div class="vecthare_provider_setting" data-provider="llamacpp">
-                                <small class="vecthare_info">
-                                    <i class="fa-solid fa-info-circle"></i>
-                                    LlamaCPP requires the --embedding flag to be enabled. Restart your server with this flag if not already set.
-                                </small>
-                            </div>
-
-                            <!-- OpenAI Model -->
-                            <div class="vecthare_provider_setting" data-provider="openai">
-                                <label for="vecthare_openai_model">
-                                    <small>OpenAI Model:</small>
-                                </label>
-                                <select id="vecthare_openai_model" class="vecthare-select">
-                                    <option value="text-embedding-ada-002">text-embedding-ada-002</option>
-                                    <option value="text-embedding-3-small">text-embedding-3-small</option>
-                                    <option value="text-embedding-3-large">text-embedding-3-large</option>
-                                </select>
-                            </div>
-
-                            <!-- Cohere Model -->
-                            <div class="vecthare_provider_setting" data-provider="cohere">
-                                <label for="vecthare_cohere_model">
-                                    <small>Cohere Model:</small>
-                                </label>
-                                <select id="vecthare_cohere_model" class="vecthare-select">
-                                    <option value="embed-english-v3.0">embed-english-v3.0</option>
-                                    <option value="embed-multilingual-v3.0">embed-multilingual-v3.0</option>
-                                    <option value="embed-english-light-v3.0">embed-english-light-v3.0</option>
-                                    <option value="embed-multilingual-light-v3.0">embed-multilingual-light-v3.0</option>
-                                    <option value="embed-english-v2.0">embed-english-v2.0</option>
-                                    <option value="embed-english-light-v2.0">embed-english-light-v2.0</option>
-                                    <option value="embed-multilingual-v2.0">embed-multilingual-v2.0</option>
-                                    <option value="embed-multilingual-light-v2.0">embed-multilingual-light-v2.0</option>
-                                </select>
-                            </div>
-
-                            <!-- TogetherAI Model -->
-                            <div class="vecthare_provider_setting" data-provider="togetherai">
-                                <label for="vecthare_togetherai_model">
-                                    <small>Together AI Model:</small>
-                                </label>
-                                <select id="vecthare_togetherai_model" class="vecthare-select">
-                                    <option value="togethercomputer/m2-bert-80M-32k-retrieval">togethercomputer/m2-bert-80M-32k-retrieval</option>
-                                    <option value="togethercomputer/m2-bert-80M-8k-retrieval">togethercomputer/m2-bert-80M-8k-retrieval</option>
-                                    <option value="togethercomputer/m2-bert-80M-2k-retrieval">togethercomputer/m2-bert-80M-2k-retrieval</option>
-                                    <option value="WhereIsAI/UAE-Large-V1">WhereIsAI/UAE-Large-V1</option>
-                                    <option value="BAAI/bge-large-en-v1.5">BAAI/bge-large-en-v1.5</option>
-                                    <option value="BAAI/bge-base-en-v1.5">BAAI/bge-base-en-v1.5</option>
-                                    <option value="sentence-transformers/msmarco-bert-base-dot-v5">sentence-transformers/msmarco-bert-base-dot-v5</option>
-                                    <option value="bert-base-uncased">bert-base-uncased</option>
-                                </select>
-                            </div>
-
-                            <!-- vLLM Model -->
-                            <div class="vecthare_provider_setting" data-provider="vllm">
-                                <label for="vecthare_vllm_model">
-                                    <small>vLLM Model:</small>
-                                </label>
-                                <input type="text" id="vecthare_vllm_model" class="vecthare-input" placeholder="Model name" />
-                                <small class="vecthare_hint">Enter the model name from your vLLM deployment</small>
-                            </div>
-
-                            <!-- Google Model (PaLM/VertexAI) -->
-                            <div class="vecthare_provider_setting" data-provider="palm,vertexai">
-                                <label for="vecthare_google_model">
-                                    <small>Google Model:</small>
-                                </label>
-                                <select id="vecthare_google_model" class="vecthare-select">
-                                    <option value="text-embedding-005">text-embedding-005</option>
-                                    <option value="text-embedding-004">text-embedding-004</option>
-                                    <option value="text-multilingual-embedding-002">text-multilingual-embedding-002</option>
-                                    <option value="textembedding-gecko">textembedding-gecko</option>
-                                    <option value="textembedding-gecko-multilingual">textembedding-gecko-multilingual</option>
-                                </select>
-                            </div>
-
-                            <!-- NomicAI API Key -->
-                            <div class="vecthare_provider_setting" data-provider="nomicai">
-                                <button id="vecthare_nomicai_api_key" class="menu_button">
-                                    <i class="fa-solid fa-key"></i> Set Nomic API Key
-                                </button>
-                                <small class="vecthare_hint">Configure your Nomic API key in SillyTavern settings</small>
-                            </div>
-
-                            <!-- OpenRouter Model -->
-                            <div class="vecthare_provider_setting" data-provider="openrouter">
-                                <label for="vecthare_openrouter_model">
-                                    <small>OpenRouter Model:</small>
-                                </label>
-                                <input type="text" id="vecthare_openrouter_model" class="vecthare-input" placeholder="openai/text-embedding-3-large" />
-                                <small class="vecthare_hint">Enter OpenRouter-compatible model ID</small>
-                                <label for="vecthare_openrouter_apikey" style="margin-top: 8px;">
-                                    <small>OpenRouter API Key:</small>
-                                </label>
-                                <input type="password" id="vecthare_openrouter_apikey" class="vecthare-input" placeholder="Paste key here to save..." autocomplete="off" />
-                            </div>
-
-                        </div>
-
-                            <!-- API Rate Limiting -->
-                            <div class="vecthare-setting-group" style="margin-top: 16px; margin-bottom: 16px; padding-top: 16px; border-top: 1px solid var(--grey30);">
-                                <label>
-                                    <small>API Rate Limiting (0 to disable)</small>
-                                </label>
-                                <div style="display: flex; gap: 10px;">
-                                    <div style="flex: 1;">
-                                        <label for="vecthare_rate_limit_calls" style="display: block; margin-bottom: 4px;">
-                                            <small>Max Calls</small>
+                                    <!-- Local Qdrant Settings -->
+                                    <div id="vecthare_qdrant_local_settings">
+                                        <label for="vecthare_qdrant_host">
+                                            <small>Qdrant Host:</small>
                                         </label>
-                                        <input type="number" id="vecthare_rate_limit_calls" class="vecthare-input" min="0" placeholder="5" />
+                                        <input type="text" id="vecthare_qdrant_host" class="vecthare-input" placeholder="localhost" />
+
+                                        <label for="vecthare_qdrant_port">
+                                            <small>Qdrant Port:</small>
+                                        </label>
+                                        <input type="number" id="vecthare_qdrant_port" class="vecthare-input" placeholder="6333" />
                                     </div>
-                                    <div style="flex: 1;">
-                                        <label for="vecthare_rate_limit_interval" style="display: block; margin-bottom: 4px;">
-                                            <small>Interval (sec)</small>
+
+                                    <!-- Cloud Qdrant Settings -->
+                                    <div id="vecthare_qdrant_cloud_settings" style="display: none;">
+                                        <label for="vecthare_qdrant_url">
+                                            <small>Qdrant Cloud URL:</small>
                                         </label>
-                                        <input type="number" id="vecthare_rate_limit_interval" class="vecthare-input" min="1" placeholder="60" />
+                                        <input type="text" id="vecthare_qdrant_url" class="vecthare-input" placeholder="https://xxx.cloud.qdrant.io" />
+
+                                        <label for="vecthare_qdrant_api_key">
+                                            <small>API Key:</small>
+                                        </label>
+                                        <input type="password" id="vecthare_qdrant_api_key" class="vecthare-input" placeholder="Your Qdrant Cloud API key" />
+                                    </div>
+
+                                    <!-- Qdrant Multitenancy Setting -->
+                                    <div style="margin-top: 10px; padding: 8px; background: rgba(0,0,0,0.1); border-radius: 4px;">
+                                        <label class="checkbox_label" title="When enabled, uses a single Qdrant collection with content_type filtering (multitenancy). When disabled, creates separate collections for each content type (better isolation).">
+                                            <input type="checkbox" id="vecthare_qdrant_multitenancy" />
+                                            <span>Use Multitenancy (Single Collection)</span>
+                                        </label>
+                                        <small class="vecthare_hint" style="display: block; margin-top: 4px;">
+                                            <strong>Multitenancy ON:</strong> Single collection with filtering (saves resources)<br>
+                                            <strong>Multitenancy OFF:</strong> Separate collections per content type (better isolation)
+                                        </small>
                                     </div>
                                 </div>
-                                <small class="vecthare_hint">Limit the number of API requests per time interval</small>
                             </div>
 
-                            <label for="vecthare_deduplication_depth" style="margin-top: 12px;">
-                                <small>Dedup Depth: <span id="vecthare_deduplication_depth_value">50</span> messages</small>
-                            </label>
-                            <input type="range" id="vecthare_deduplication_depth" class="vecthare-slider" min="0" max="500" step="10" />
-                            <small class="vecthare_hint">Recent messages to check for duplicates (0 = check all, lower = allow older content to resurface)</small>
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <!-- GROUP 2: Embedding                                     -->
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <div class="vecthare-subsection" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--grey30);">
+                                <div class="vecthare-card-header" style="padding: 0 0 8px 0;">
+                                    <h3 class="vecthare-card-title" style="font-size: 0.95em;">
+                                        <span class="vecthare-icon"><i class="fa-solid fa-microchip"></i></span>
+                                        Embedding
+                                    </h3>
+                                    <p class="vecthare-card-subtitle">Embedding provider and model</p>
+                                </div>
 
-                            <div style="margin-top: 8px;">
-                                <label class="checkbox_label" for="vecthare_retrieval_popup_on_start">
-                                    <input id="vecthare_retrieval_popup_on_start" type="checkbox" />
-                                    <span>Popup: show when backend retrieval starts</span>
+                                <label for="vecthare_source">
+                                    <small>Embedding Provider</small>
                                 </label>
-                                <label class="checkbox_label" for="vecthare_retrieval_popup_on_result" style="margin-top: 6px; display: flex;">
-                                    <input id="vecthare_retrieval_popup_on_result" type="checkbox" />
-                                    <span>Popup: show retrieved result count</span>
-                                </label>
+                                <select id="vecthare_source" class="vecthare-select">
+                                    <option value="transformers">Transformers (Local)</option>
+                                    <option value="bananabread">BananaBread</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="ollama">Ollama</option>
+                                    <option value="cohere">Cohere</option>
+                                    <option value="togetherai">Together AI</option>
+                                    <option value="extras">Extras API</option>
+                                    <option value="electronhub">ElectronHub</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="llamacpp">LlamaCPP</option>
+                                    <option value="vllm">vLLM</option>
+                                    <option value="koboldcpp">KoboldCPP</option>
+                                    <option value="webllm">WebLLM</option>
+                                    <option value="palm">Google PaLM</option>
+                                    <option value="vertexai">Google VertexAI</option>
+                                    <option value="mistral">Mistral AI</option>
+                                    <option value="nomicai">Nomic AI</option>
+                                </select>
+
+                                <!-- Provider-Specific Settings -->
+                                <div id="vecthare_provider_settings">
+
+                                    <!-- ElectronHub Model -->
+                                    <div class="vecthare_provider_setting" data-provider="electronhub">
+                                        <label for="vecthare_electronhub_model">
+                                            <small>ElectronHub Model:</small>
+                                        </label>
+                                        <input type="text" id="vecthare_electronhub_model" class="vecthare-input" placeholder="text-embedding-3-small" />
+                                        <small class="vecthare_hint">Enter ElectronHub-compatible model ID (e.g., text-embedding-3-small, text-embedding-3-large)</small>
+                                    </div>
+
+                                    <!-- Alternative Endpoint (for local providers) -->
+                                    <div class="vecthare_provider_setting" data-provider="ollama,vllm,llamacpp,koboldcpp,bananabread">
+                                        <label class="checkbox_label">
+                                            <input type="checkbox" id="vecthare_use_alt_endpoint" />
+                                            <span>Use Alternative Endpoint</span>
+                                        </label>
+                                        <input type="text" id="vecthare_alt_endpoint_url" class="vecthare-input" placeholder="http://localhost:11434" />
+                                        <small class="vecthare_hint">Override default API URL for this provider</small>
+                                    </div>
+
+                                    <!-- BananaBread Info & Reranking -->
+                                    <div class="vecthare_provider_setting" data-provider="bananabread">
+                                        <small class="vecthare_info">
+                                            <i class="fa-solid fa-info-circle"></i>
+                                            BananaBread default: http://localhost:8008. Supports MixedBread AI and Qwen3 embedding models.
+                                        </small>
+                                        <label class="checkbox_label" style="margin-top: 8px;">
+                                            <input type="checkbox" id="vecthare_bananabread_rerank" />
+                                            <span>Enable Reranking</span>
+                                        </label>
+                                        <small class="vecthare_hint">Re-score results using BananaBread's reranker for better relevance</small>
+                                        <label for="vecthare_bananabread_apikey" style="margin-top: 8px;">
+                                            <small>BananaBread API Key:</small>
+                                        </label>
+                                        <input type="password" id="vecthare_bananabread_apikey" class="vecthare-input" placeholder="Paste key here to save..." autocomplete="off" />
+                                    </div>
+
+                                    <!-- WebLLM Model -->
+                                    <div class="vecthare_provider_setting" data-provider="webllm">
+                                        <small class="vecthare_info" id="vecthare_webllm_status">
+                                            <i class="fa-solid fa-spinner fa-spin"></i>
+                                            Checking WebLLM availability...
+                                        </small>
+                                        <label for="vecthare_webllm_model">
+                                            <small>WebLLM Model:</small>
+                                        </label>
+                                        <select id="vecthare_webllm_model" class="vecthare-select"></select>
+                                        <div style="display: flex; gap: 8px; margin-top: 8px;">
+                                            <button id="vecthare_webllm_load" class="menu_button">
+                                                <i class="fa-solid fa-download"></i> Load Model
+                                            </button>
+                                            <button id="vecthare_webllm_install" class="menu_button menu_button_icon">
+                                                <i class="fa-solid fa-puzzle-piece"></i> Install Extension
+                                            </button>
+                                        </div>
+                                        <small class="vecthare_hint">WebLLM requires the WebLLM extension and a WebGPU-compatible browser (Chrome 113+, Edge 113+)</small>
+                                    </div>
+
+                                    <!-- Ollama Model -->
+                                    <div class="vecthare_provider_setting" data-provider="ollama">
+                                        <label for="vecthare_ollama_model">
+                                            <small>Ollama Model:</small>
+                                        </label>
+                                        <input type="text" id="vecthare_ollama_model" class="vecthare-input" placeholder="mxbai-embed-large" />
+                                        <label class="checkbox_label">
+                                            <input type="checkbox" id="vecthare_ollama_keep" />
+                                            <span>Keep Model in Memory</span>
+                                        </label>
+                                        <small class="vecthare_hint">Enter the model name from your local Ollama installation</small>
+                                    </div>
+
+                                    <!-- KoboldCPP Info -->
+                                    <div class="vecthare_provider_setting" data-provider="koboldcpp">
+                                        <small class="vecthare_info">
+                                            <i class="fa-solid fa-info-circle"></i>
+                                            KoboldCPP uses the currently loaded model for embeddings. Ensure your model supports embeddings.
+                                        </small>
+                                    </div>
+
+                                    <!-- LlamaCPP Info -->
+                                    <div class="vecthare_provider_setting" data-provider="llamacpp">
+                                        <small class="vecthare_info">
+                                            <i class="fa-solid fa-info-circle"></i>
+                                            LlamaCPP requires the --embedding flag to be enabled. Restart your server with this flag if not already set.
+                                        </small>
+                                    </div>
+
+                                    <!-- OpenAI Model -->
+                                    <div class="vecthare_provider_setting" data-provider="openai">
+                                        <label for="vecthare_openai_model">
+                                            <small>OpenAI Model:</small>
+                                        </label>
+                                        <select id="vecthare_openai_model" class="vecthare-select">
+                                            <option value="text-embedding-ada-002">text-embedding-ada-002</option>
+                                            <option value="text-embedding-3-small">text-embedding-3-small</option>
+                                            <option value="text-embedding-3-large">text-embedding-3-large</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- Cohere Model -->
+                                    <div class="vecthare_provider_setting" data-provider="cohere">
+                                        <label for="vecthare_cohere_model">
+                                            <small>Cohere Model:</small>
+                                        </label>
+                                        <select id="vecthare_cohere_model" class="vecthare-select">
+                                            <option value="embed-english-v3.0">embed-english-v3.0</option>
+                                            <option value="embed-multilingual-v3.0">embed-multilingual-v3.0</option>
+                                            <option value="embed-english-light-v3.0">embed-english-light-v3.0</option>
+                                            <option value="embed-multilingual-light-v3.0">embed-multilingual-light-v3.0</option>
+                                            <option value="embed-english-v2.0">embed-english-v2.0</option>
+                                            <option value="embed-english-light-v2.0">embed-english-light-v2.0</option>
+                                            <option value="embed-multilingual-v2.0">embed-multilingual-v2.0</option>
+                                            <option value="embed-multilingual-light-v2.0">embed-multilingual-light-v2.0</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- TogetherAI Model -->
+                                    <div class="vecthare_provider_setting" data-provider="togetherai">
+                                        <label for="vecthare_togetherai_model">
+                                            <small>Together AI Model:</small>
+                                        </label>
+                                        <select id="vecthare_togetherai_model" class="vecthare-select">
+                                            <option value="togethercomputer/m2-bert-80M-32k-retrieval">togethercomputer/m2-bert-80M-32k-retrieval</option>
+                                            <option value="togethercomputer/m2-bert-80M-8k-retrieval">togethercomputer/m2-bert-80M-8k-retrieval</option>
+                                            <option value="togethercomputer/m2-bert-80M-2k-retrieval">togethercomputer/m2-bert-80M-2k-retrieval</option>
+                                            <option value="WhereIsAI/UAE-Large-V1">WhereIsAI/UAE-Large-V1</option>
+                                            <option value="BAAI/bge-large-en-v1.5">BAAI/bge-large-en-v1.5</option>
+                                            <option value="BAAI/bge-base-en-v1.5">BAAI/bge-base-en-v1.5</option>
+                                            <option value="sentence-transformers/msmarco-bert-base-dot-v5">sentence-transformers/msmarco-bert-base-dot-v5</option>
+                                            <option value="bert-base-uncased">bert-base-uncased</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- vLLM Model -->
+                                    <div class="vecthare_provider_setting" data-provider="vllm">
+                                        <label for="vecthare_vllm_model">
+                                            <small>vLLM Model:</small>
+                                        </label>
+                                        <input type="text" id="vecthare_vllm_model" class="vecthare-input" placeholder="Model name" />
+                                        <small class="vecthare_hint">Enter the model name from your vLLM deployment</small>
+                                    </div>
+
+                                    <!-- Google Model (PaLM/VertexAI) -->
+                                    <div class="vecthare_provider_setting" data-provider="palm,vertexai">
+                                        <label for="vecthare_google_model">
+                                            <small>Google Model:</small>
+                                        </label>
+                                        <select id="vecthare_google_model" class="vecthare-select">
+                                            <option value="text-embedding-005">text-embedding-005</option>
+                                            <option value="text-embedding-004">text-embedding-004</option>
+                                            <option value="text-multilingual-embedding-002">text-multilingual-embedding-002</option>
+                                            <option value="textembedding-gecko">textembedding-gecko</option>
+                                            <option value="textembedding-gecko-multilingual">textembedding-gecko-multilingual</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- NomicAI API Key -->
+                                    <div class="vecthare_provider_setting" data-provider="nomicai">
+                                        <button id="vecthare_nomicai_api_key" class="menu_button">
+                                            <i class="fa-solid fa-key"></i> Set Nomic API Key
+                                        </button>
+                                        <small class="vecthare_hint">Configure your Nomic API key in SillyTavern settings</small>
+                                    </div>
+
+                                    <!-- OpenRouter Model -->
+                                    <div class="vecthare_provider_setting" data-provider="openrouter">
+                                        <label for="vecthare_openrouter_model">
+                                            <small>OpenRouter Model:</small>
+                                        </label>
+                                        <input type="text" id="vecthare_openrouter_model" class="vecthare-input" placeholder="openai/text-embedding-3-large" />
+                                        <small class="vecthare_hint">Enter OpenRouter-compatible model ID</small>
+                                        <label for="vecthare_openrouter_apikey" style="margin-top: 8px;">
+                                            <small>OpenRouter API Key:</small>
+                                        </label>
+                                        <input type="password" id="vecthare_openrouter_apikey" class="vecthare-input" placeholder="Paste key here to save..." autocomplete="off" />
+                                    </div>
+
+                                </div>
+
+                                <!-- API Rate Limiting -->
+                                <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--grey30);">
+                                    <label>
+                                        <small>API Rate Limiting (0 to disable)</small>
+                                    </label>
+                                    <div style="display: flex; gap: 10px;">
+                                        <div style="flex: 1;">
+                                            <label for="vecthare_rate_limit_calls" style="display: block; margin-bottom: 4px;">
+                                                <small>Max Calls</small>
+                                            </label>
+                                            <input type="number" id="vecthare_rate_limit_calls" class="vecthare-input" min="0" placeholder="5" />
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="vecthare_rate_limit_interval" style="display: block; margin-bottom: 4px;">
+                                                <small>Interval (sec)</small>
+                                            </label>
+                                            <input type="number" id="vecthare_rate_limit_interval" class="vecthare-input" min="1" placeholder="60" />
+                                        </div>
+                                    </div>
+                                    <small class="vecthare_hint">Limit the number of API requests per time interval</small>
+                                </div>
                             </div>
 
-                            <label style="margin-top: 16px;">
-                                <small>Injection Position</small>
-                            </label>
-                            <select id="vecthare_injection_position" class="vecthare-select">
-                                <option value="2">Before Main Prompt</option>
-                                <option value="0">After Main Prompt</option>
-                                <option value="1">In-Chat @ Depth</option>
-                            </select>
-                            <small class="vecthare_hint">Where retrieved chunks appear in the prompt</small>
-
-                            <div id="vecthare_injection_depth_row" style="margin-top: 12px; display: none;">
-                                <label for="vecthare_injection_depth">
-                                    <small>Injection Depth: <span id="vecthare_injection_depth_value">2</span></small>
-                                </label>
-                                <input type="range" id="vecthare_injection_depth" class="vecthare-slider" min="0" max="50" step="1" />
-                                <small class="vecthare_hint">Messages from end of chat to insert at</small>
-                            </div>
-
-                            <!-- LLM Summarization & EventBase Extraction -->
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <!-- GROUP 3: LLM / EventBase Extraction                   -->
+                            <!-- ═══════════════════════════════════════════════════════ -->
                             <div class="vecthare-subsection" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--grey30);">
                                 <div class="vecthare-card-header" style="padding: 0 0 8px 0;">
                                     <h3 class="vecthare-card-title" style="font-size: 0.95em;">
@@ -406,7 +399,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                         </span>
                                         LLM Summarization &amp; EventBase Extraction
                                     </h3>
-                                    <p class="vecthare-card-subtitle">Condense each message to a 2-8 dense sentence summary before embedding</p>
+                                    <p class="vecthare-card-subtitle">LLM for EventBase event extraction</p>
                                 </div>
 
                                 <label for="vecthare_summarize_provider">
@@ -453,104 +446,179 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </div>
                             </div>
 
-                            <!-- Hybrid Search & BM25 (shared by both chat/EventBase and non-chat/ChunkBase paths) -->
-                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Hybrid Search &amp; BM25</p>
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <!-- GROUP 4: Retrieval                                     -->
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <div class="vecthare-subsection" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--grey30);">
+                                <div class="vecthare-card-header" style="padding: 0 0 8px 0;">
+                                    <h3 class="vecthare-card-title" style="font-size: 0.95em;">
+                                        <span class="vecthare-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
+                                        Retrieval
+                                    </h3>
+                                    <p class="vecthare-card-subtitle">Shared retrieval settings (EventBase + ChunkBase)</p>
+                                </div>
 
-                            <!-- Only shown when backend supports native hybrid (Qdrant) -->
-                            <div id="vecthare_native_prefer_section" class="vecthare-form-group" style="display: none; margin-top: 8px;">
-                                <label class="checkbox_label" for="vecthare_hybrid_native_prefer">
-                                    <input id="vecthare_hybrid_native_prefer" type="checkbox" checked />
-                                    <span>Prefer Native Backend Hybrid</span>
+                                <label for="vecthare_query_depth" style="margin-top: 4px;">
+                                    <small>Query Depth: <span id="vecthare_query_depth_value">2</span> messages</small>
                                 </label>
-                                <small class="vecthare_hint">Use backend-native hybrid search (Qdrant). When active, keyword scoring method and budget are handled server-side.</small>
-                            </div>
+                                <input type="range" id="vecthare_query_depth" class="vecthare-slider" min="1" max="20" step="1" />
+                                <small class="vecthare_hint">How many recent messages to include in the search query</small>
 
-                            <!-- Keyword Scoring Method (hidden when native hybrid active) -->
-                            <div id="vecthare_keyword_method_section" style="margin-top: 8px;">
-                                <label>
-                                    <small>Keyword Scoring Method</small>
+                                <label for="vecthare_min_chat_length" style="margin-top: 12px;">
+                                    <small>Minimum Messages Before Injection</small>
                                 </label>
-                                <select id="vecthare_keyword_scoring_method" class="vecthare-select">
-                                    <option value="bm25">BM25 (fast re-rank of top-K)</option>
-                                    <option value="hybrid">Hybrid (vector candidates + BM25 fusion)</option>
-                                </select>
-                                <small class="vecthare_hint">BM25 re-ranks the vector top-K candidates. Hybrid expands the vector candidate window, scores those candidates with BM25, then fuses both signals. It is broader than BM25 mode, but not a true full-corpus keyword scan.</small>
-                            </div>
+                                <input type="number" id="vecthare_min_chat_length" class="vecthare-input" min="0" max="100" step="1" placeholder="0" />
+                                <small class="vecthare_hint">Minimum number of messages in chat before RAG injection starts (0 = inject immediately)</small>
 
-                            <!-- Shown instead of above when native hybrid (A3) is active -->
-                            <div id="vecthare_native_hybrid_info" style="display: none; margin-top: 16px;">
-                                <small class="vecthare_hint"><i class="fa-solid fa-bolt"></i> Native hybrid active: server uses 50 keywords (CJK priority + English overflow)</small>
-                            </div>
-
-                            <!-- BM25 Parameters (visible when client-side BM25 logic runs — A1 or A2) -->
-                            <div id="vecthare_bm25_params" style="margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.1); border-radius: 8px;">
-                                <label for="vecthare_bm25_k1">
-                                    <small>BM25 k1 (TF saturation): <span id="vecthare_bm25_k1_value">1.5</span></small>
+                                <label for="vecthare_deduplication_depth" style="margin-top: 12px;">
+                                    <small>Dedup Depth: <span id="vecthare_deduplication_depth_value">50</span> messages</small>
                                 </label>
-                                <input type="range" id="vecthare_bm25_k1" class="vecthare-slider" min="0.5" max="3.0" step="0.1" />
-                                <small class="vecthare_hint">Controls term frequency saturation (1.2-2.0 typical)</small>
+                                <input type="range" id="vecthare_deduplication_depth" class="vecthare-slider" min="0" max="500" step="10" />
+                                <small class="vecthare_hint">Recent messages to check for duplicates (0 = check all, lower = allow older content to resurface)</small>
 
-                                <label for="vecthare_bm25_b" style="margin-top: 8px;">
-                                    <small>BM25 b (Length norm): <span id="vecthare_bm25_b_value">0.75</span></small>
-                                </label>
-                                <input type="range" id="vecthare_bm25_b" class="vecthare-slider" min="0" max="1" step="0.05" />
-                                <small class="vecthare_hint">Controls document length normalization (0.75 typical)</small>
-                            </div>
-
-                            <!-- Hybrid Search params (visible in A2 hybrid mode and A3 native) -->
-                            <div style="margin-top: 16px; padding: 12px; background: rgba(0,100,200,0.1); border-radius: 8px; border: 1px solid rgba(0,100,200,0.2);">
-                                <div id="vecthare_hybrid_params" style="margin-top: 4px;">
-                                    <label style="margin-top: 8px;">
-                                        <small>Fusion Method</small>
+                                <div style="margin-top: 12px;">
+                                    <label class="checkbox_label" for="vecthare_retrieval_popup_on_start">
+                                        <input id="vecthare_retrieval_popup_on_start" type="checkbox" />
+                                        <span>Popup: show when backend retrieval starts</span>
                                     </label>
-                                    <select id="vecthare_hybrid_fusion_method" class="vecthare-select">
-                                        <option value="rrf">RRF (Reciprocal Rank Fusion)</option>
-                                        <option value="weighted">Weighted Linear Combination</option>
-                                    </select>
-                                    <small class="vecthare_hint">RRF is parameter-free and robust; Weighted allows fine-tuning</small>
-
-                                    <div id="vecthare_hybrid_weights" style="display: none; margin-top: 12px;">
-                                        <label for="vecthare_hybrid_vector_weight">
-                                            <small>Vector Weight: <span id="vecthare_hybrid_vector_weight_value">0.5</span></small>
-                                        </label>
-                                        <input type="range" id="vecthare_hybrid_vector_weight" class="vecthare-slider" min="0" max="1" step="0.1" />
-
-                                        <label for="vecthare_hybrid_text_weight" style="margin-top: 8px;">
-                                            <small>Text Weight: <span id="vecthare_hybrid_text_weight_value">0.5</span></small>
-                                        </label>
-                                        <input type="range" id="vecthare_hybrid_text_weight" class="vecthare-slider" min="0" max="1" step="0.1" />
-                                    </div>
-
-                                    <div id="vecthare_hybrid_rrf_settings" style="margin-top: 12px;">
-                                        <label for="vecthare_hybrid_rrf_k">
-                                            <small>RRF K Constant: <span id="vecthare_hybrid_rrf_k_value">60</span></small>
-                                        </label>
-                                        <input type="range" id="vecthare_hybrid_rrf_k" class="vecthare-slider" min="1" max="100" step="1" />
-                                        <small class="vecthare_hint">Higher K = more weight to top-ranked results (60 is typical)</small>
-                                    </div>
-
+                                    <label class="checkbox_label" for="vecthare_retrieval_popup_on_result" style="margin-top: 6px; display: flex;">
+                                        <input id="vecthare_retrieval_popup_on_result" type="checkbox" />
+                                        <span>Popup: show retrieved result count</span>
+                                    </label>
                                 </div>
                             </div>
 
-                            <!-- Query (shared by EventBase and ChunkBase) -->
-                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Query</p>
-                            <label for="vecthare_query_depth" style="margin-top: 4px;">
-                                <small>Query Depth: <span id="vecthare_query_depth_value">2</span> messages</small>
-                            </label>
-                            <input type="range" id="vecthare_query_depth" class="vecthare-slider" min="1" max="20" step="1" />
-                            <small class="vecthare_hint">How many recent messages to include in search query. Applies to both EventBase and ChunkBase retrieval.</small>
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <!-- GROUP 5: Injection                                     -->
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <div class="vecthare-subsection" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--grey30);">
+                                <div class="vecthare-card-header" style="padding: 0 0 8px 0;">
+                                    <h3 class="vecthare-card-title" style="font-size: 0.95em;">
+                                        <span class="vecthare-icon"><i class="fa-solid fa-arrow-right-to-bracket"></i></span>
+                                        Injection
+                                    </h3>
+                                    <p class="vecthare-card-subtitle">Prompt injection position</p>
+                                </div>
 
-                            <!-- Retrieval Gating (shared by EventBase and ChunkBase) -->
-                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Retrieval Gating</p>
-                            <label for="vecthare_min_chat_length">
-                                <small>Minimum Messages Before Injection</small>
-                            </label>
-                            <input type="number" id="vecthare_min_chat_length" class="vecthare-input" min="0" max="100" step="1" placeholder="0" />
-                            <small class="vecthare_hint">Minimum number of messages in chat before RAG injection starts (0 = inject immediately). Applies to both EventBase and ChunkBase.</small>
+                                <label style="margin-top: 4px;">
+                                    <small>Injection Position</small>
+                                </label>
+                                <select id="vecthare_injection_position" class="vecthare-select">
+                                    <option value="2">Before Main Prompt</option>
+                                    <option value="0">After Main Prompt</option>
+                                    <option value="1">In-Chat @ Depth</option>
+                                </select>
+                                <small class="vecthare_hint">Where retrieved chunks appear in the prompt</small>
 
-                            <!-- Keyword Extraction (shared by EventBase and ChunkBase) -->
-                            <p class="vecthare-section-label" style="font-weight:600; margin-top:16px; margin-bottom:8px;">Keyword Extraction</p>
-                            <div style="padding: 12px; background: rgba(100,100,100,0.1); border-radius: 8px;">
+                                <div id="vecthare_injection_depth_row" style="margin-top: 12px; display: none;">
+                                    <label for="vecthare_injection_depth">
+                                        <small>Injection Depth: <span id="vecthare_injection_depth_value">2</span></small>
+                                    </label>
+                                    <input type="range" id="vecthare_injection_depth" class="vecthare-slider" min="0" max="50" step="1" />
+                                    <small class="vecthare_hint">Messages from end of chat to insert at</small>
+                                </div>
+                            </div>
+
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <!-- GROUP 6: Hybrid Search & BM25                          -->
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <div class="vecthare-subsection" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--grey30);">
+                                <div class="vecthare-card-header" style="padding: 0 0 8px 0;">
+                                    <h3 class="vecthare-card-title" style="font-size: 0.95em;">
+                                        <span class="vecthare-icon"><i class="fa-solid fa-bolt"></i></span>
+                                        Hybrid Search &amp; BM25
+                                    </h3>
+                                    <p class="vecthare-card-subtitle">Keyword scoring and result fusion</p>
+                                </div>
+
+                                <!-- Only shown when backend supports native hybrid (Qdrant) -->
+                                <div id="vecthare_native_prefer_section" class="vecthare-form-group" style="display: none; margin-top: 8px;">
+                                    <label class="checkbox_label" for="vecthare_hybrid_native_prefer">
+                                        <input id="vecthare_hybrid_native_prefer" type="checkbox" checked />
+                                        <span>Prefer Native Backend Hybrid</span>
+                                    </label>
+                                    <small class="vecthare_hint">Use backend-native hybrid search (Qdrant). When active, keyword scoring method and budget are handled server-side.</small>
+                                </div>
+
+                                <!-- Keyword Scoring Method (hidden when native hybrid active) -->
+                                <div id="vecthare_keyword_method_section" style="margin-top: 8px;">
+                                    <label>
+                                        <small>Keyword Scoring Method</small>
+                                    </label>
+                                    <select id="vecthare_keyword_scoring_method" class="vecthare-select">
+                                        <option value="bm25">BM25 (fast re-rank of top-K)</option>
+                                        <option value="hybrid">Hybrid (vector candidates + BM25 fusion)</option>
+                                    </select>
+                                    <small class="vecthare_hint">BM25 re-ranks the vector top-K candidates. Hybrid expands the vector candidate window, scores those candidates with BM25, then fuses both signals. It is broader than BM25 mode, but not a true full-corpus keyword scan.</small>
+                                </div>
+
+                                <!-- Shown instead of above when native hybrid (A3) is active -->
+                                <div id="vecthare_native_hybrid_info" style="display: none; margin-top: 16px;">
+                                    <small class="vecthare_hint"><i class="fa-solid fa-bolt"></i> Native hybrid active: server uses 50 keywords (CJK priority + English overflow)</small>
+                                </div>
+
+                                <!-- BM25 Parameters (visible when client-side BM25 logic runs — A1 or A2) -->
+                                <div id="vecthare_bm25_params" style="margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.1); border-radius: 8px;">
+                                    <label for="vecthare_bm25_k1">
+                                        <small>BM25 k1 (TF saturation): <span id="vecthare_bm25_k1_value">1.5</span></small>
+                                    </label>
+                                    <input type="range" id="vecthare_bm25_k1" class="vecthare-slider" min="0.5" max="3.0" step="0.1" />
+                                    <small class="vecthare_hint">Controls term frequency saturation (1.2-2.0 typical)</small>
+
+                                    <label for="vecthare_bm25_b" style="margin-top: 8px;">
+                                        <small>BM25 b (Length norm): <span id="vecthare_bm25_b_value">0.75</span></small>
+                                    </label>
+                                    <input type="range" id="vecthare_bm25_b" class="vecthare-slider" min="0" max="1" step="0.05" />
+                                    <small class="vecthare_hint">Controls document length normalization (0.75 typical)</small>
+                                </div>
+
+                                <!-- Hybrid Search params (visible in A2 hybrid mode and A3 native) -->
+                                <div style="margin-top: 16px; padding: 12px; background: rgba(0,100,200,0.1); border-radius: 8px; border: 1px solid rgba(0,100,200,0.2);">
+                                    <div id="vecthare_hybrid_params" style="margin-top: 4px;">
+                                        <label style="margin-top: 8px;">
+                                            <small>Fusion Method</small>
+                                        </label>
+                                        <select id="vecthare_hybrid_fusion_method" class="vecthare-select">
+                                            <option value="rrf">RRF (Reciprocal Rank Fusion)</option>
+                                            <option value="weighted">Weighted Linear Combination</option>
+                                        </select>
+                                        <small class="vecthare_hint">RRF is parameter-free and robust; Weighted allows fine-tuning</small>
+
+                                        <div id="vecthare_hybrid_weights" style="display: none; margin-top: 12px;">
+                                            <label for="vecthare_hybrid_vector_weight">
+                                                <small>Vector Weight: <span id="vecthare_hybrid_vector_weight_value">0.5</span></small>
+                                            </label>
+                                            <input type="range" id="vecthare_hybrid_vector_weight" class="vecthare-slider" min="0" max="1" step="0.1" />
+
+                                            <label for="vecthare_hybrid_text_weight" style="margin-top: 8px;">
+                                                <small>Text Weight: <span id="vecthare_hybrid_text_weight_value">0.5</span></small>
+                                            </label>
+                                            <input type="range" id="vecthare_hybrid_text_weight" class="vecthare-slider" min="0" max="1" step="0.1" />
+                                        </div>
+
+                                        <div id="vecthare_hybrid_rrf_settings" style="margin-top: 12px;">
+                                            <label for="vecthare_hybrid_rrf_k">
+                                                <small>RRF K Constant: <span id="vecthare_hybrid_rrf_k_value">60</span></small>
+                                            </label>
+                                            <input type="range" id="vecthare_hybrid_rrf_k" class="vecthare-slider" min="1" max="100" step="1" />
+                                            <small class="vecthare_hint">Higher K = more weight to top-ranked results (60 is typical)</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <!-- GROUP 7: Keyword Extraction                            -->
+                            <!-- ═══════════════════════════════════════════════════════ -->
+                            <div class="vecthare-subsection" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--grey30);">
+                                <div class="vecthare-card-header" style="padding: 0 0 8px 0;">
+                                    <h3 class="vecthare-card-title" style="font-size: 0.95em;">
+                                        <span class="vecthare-icon"><i class="fa-solid fa-tags"></i></span>
+                                        Keyword Extraction
+                                    </h3>
+                                    <p class="vecthare-card-subtitle">CJK tokenizer and stopwords for BM25</p>
+                                </div>
+
                                 <label for="vecthare_cjk_tokenizer_mode">
                                     <small><b>CJK Tokenizer Mode</b></small>
                                 </label>
