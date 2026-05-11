@@ -18,7 +18,7 @@ import {
   clearCollectionRegistry,
   deleteCollection,
 } from "../core/collection-loader.js";
-import { parseCollectionId, COLLECTION_SCOPES } from "../core/collection-ids.js";
+import { parseCollectionId, COLLECTION_SCOPES, COLLECTION_PREFIXES } from "../core/collection-ids.js";
 import {
   purgeVectorIndex,
   queryMultipleCollections,
@@ -670,6 +670,19 @@ function _sanitizeHandleForFilter(name) {
 }
 
 /**
+ * Collection prefixes whose IDs encode `_<handleId>_` (from collection-ids.js builders).
+ * These are the only ones we filter by persona; lorebooks/documents/characters stay global.
+ *
+ * NOTE: `parseCollectionId(...).scope` is NOT reliable here — it returns 'global' for
+ * eventbase/archiveevent and 'unknown' for some legacy IDs. We match by prefix instead.
+ */
+const _PERSONA_SCOPED_PREFIXES = [
+  COLLECTION_PREFIXES.VECTHARE_CHAT,           // vecthare_chat_<handle>_<char>_<uuid>
+  COLLECTION_PREFIXES.VECTHARE_EVENTBASE,      // vecthare_eventbase_<backend>_<handle>_<char>_<uuid>
+  COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT,  // vecthare_archiveevent_<backend>_<handle>_<char>_<archiveUUID>
+];
+
+/**
  * Filter collections to only the current persona's chat-scoped collections.
  * Global-scope collections (lorebook, document, character) are always kept.
  *
@@ -694,12 +707,18 @@ function _filterCollectionsByCurrentPersona(collections) {
   const needle = `_${ownHandle}_`;
 
   return collections.filter((c) => {
-    const parsed = parseCollectionId(c.id);
-    // Keep global collections (lorebooks, documents, characters) unconditionally.
-    if (parsed.scope !== COLLECTION_SCOPES.CHAT) return true;
+    const idLower = String(c.id || "").toLowerCase();
 
-    // Chat-scoped collection: keep only if its name carries the current persona's handle.
-    return String(c.id).toLowerCase().includes(needle);
+    // Is this a persona-scoped collection (chat / eventbase / archiveevent)?
+    const isPersonaScoped = _PERSONA_SCOPED_PREFIXES.some((prefix) =>
+      idLower.startsWith(prefix.toLowerCase())
+    );
+
+    // Keep global collections (lorebooks, documents, characters) unconditionally.
+    if (!isPersonaScoped) return true;
+
+    // Persona-scoped: keep only if its name carries the current persona's handle.
+    return idLower.includes(needle);
   });
 }
 
