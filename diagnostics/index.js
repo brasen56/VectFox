@@ -218,8 +218,6 @@ export async function runDiagnostics(settings, includeProductionTests = false) {
 
     // ========== PRODUCTION TESTS (Optional) ==========
     if (includeProductionTests) {
-        // Drop any leftover `vh:test:*` collections from previous runs before creating new ones.
-        categories.production.push(await sweepLeftoverTestCollections(settings));
         categories.production.push(await testEmbeddingGeneration(settings));
         categories.production.push(await testVectorStorage(settings));
         categories.production.push(await testVectorRetrieval(settings));
@@ -244,6 +242,12 @@ export async function runDiagnostics(settings, includeProductionTests = false) {
         const activationResults = await testConditionalActivation();
         categories.production.push(...activationResults);
     }
+
+    // Always run last: drop any diagnostic probe collections (`vh:test:*`,
+    // `vecthare_diag*`, `test`) created during this run by the infrastructure
+    // checks or by tests that bailed without cleanup. Listed under infrastructure
+    // so users see it whether or not production tests were enabled.
+    categories.infrastructure.push(await sweepLeftoverTestCollections(settings));
 
     // Flatten all checks
     const allChecks = [

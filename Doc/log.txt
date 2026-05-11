@@ -1,55 +1,57 @@
-VectHare Scenes: Chat observer started
-index.js:495 VectHare: Chat changed, refreshing UI state
-collection-ids.js:137 VectHare: buildChatCollectionId() called but chunk-based chat is disabled (use EventBase). Returning null. Stack: Error
-    at buildChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/collection-ids.js:137:135)
-    at getChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/chat-vectorization.js:85:12)
-    at refreshAutoSyncCheckbox (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/ui/ui-manager.js:1704:26)
-    at EventEmitter.<anonymous> (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/index.js:496:9)
-    at EventEmitter.emit (https://st.sduteam.com/lib/eventemitter.js:146:36)
-    at async getChatResult (https://st.sduteam.com/script.js:7641:5)
-    at async getChat (https://st.sduteam.com/script.js:7609:9)
-    at async selectCharacterById (https://st.sduteam.com/script.js:899:13)
-    at async openRecentCharacterChat (https://st.sduteam.com/scripts/welcome-screen.js:486:9)
-buildChatCollectionId @ collection-ids.js:137
-getChatCollectionId @ chat-vectorization.js:85
-refreshAutoSyncCheckbox @ ui-manager.js:1704
-(anonymous) @ index.js:496
-EventEmitter.emit @ eventemitter.js:146
-await in EventEmitter.emit
-getChatResult @ script.js:7641
-await in getChatResult
-getChat @ script.js:7609
-await in getChat
-selectCharacterById @ script.js:899
-await in selectCharacterById
-openRecentCharacterChat @ welcome-screen.js:486
-(anonymous) @ welcome-screen.js:362
-collection-ids.js:137 VectHare: buildChatCollectionId() called but chunk-based chat is disabled (use EventBase). Returning null. Stack: Error
-    at buildChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/collection-ids.js:137:135)
-    at getChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/chat-vectorization.js:85:12)
-    at getCurrentCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/scenes.js:63:25)
-    at refreshSceneCache (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/ui/scene-markers.js:54:26)
-    at https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/ui/scene-markers.js:493:19
-buildChatCollectionId @ collection-ids.js:137
-getChatCollectionId @ chat-vectorization.js:85
-getCurrentCollectionId @ scenes.js:63
-refreshSceneCache @ scene-markers.js:54
-(anonymous) @ scene-markers.js:493
-setTimeout
-(anonymous) @ scene-markers.js:492
-EventEmitter.emit @ eventemitter.js:146
-await in EventEmitter.emit
-getChatResult @ script.js:7641
-await in getChatResult
-getChat @ script.js:7609
-await in getChat
-selectCharacterById @ script.js:899
-await in selectCharacterById
-openRecentCharacterChat @ welcome-screen.js:486
-(anonymous) @ welcome-screen.js:362
-backend-manager.js:274 VectHare: Health cache stale for qdrant, re-verifying...
-script.js:4232 Generate entered
-index.js:19 [QR2] calling {args: Array(3), functionToCall: ƒ}
-index.js:19 [QR2] Before-generation hook skipped due to dryRun.
-script.js:4547 Core/all messages: 2116/2116
-scene-markers.js:75 VectHare Scenes: Cached 0 scenes
+VectHare: Health cache stale for qdrant, re-verifying...
+core-vector-api.js:1021 [VectHare] Hybrid search (native) for multi-collection query
+hybrid-search.js:48 [HybridSearch] Using native hybrid search (QdrantBackend)
+qdrant.js:827 [EventBase] Hybrid request: collection=vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a, topK=5, sparse=1 tokens, terms=[贖身], preview="贖身"
+character.ts:107  POST https://st.sduteam.com/api/plugins/similharity/chunks/hybrid-query 500 (Internal Server Error)
+(anonymous) @ character.ts:107
+hybridQuery @ qdrant.js:836
+await in hybridQuery
+hybridSearch @ hybrid-search.js:51
+await in hybridSearch
+queryMultipleCollections @ core-vector-api.js:1027
+await in queryMultipleCollections
+performSearch @ database-browser.js:3268
+dispatch @ jquery-3.5.1.min.js:2
+v.handle @ jquery-3.5.1.min.js:2
+qdrant.js:865 [Qdrant timing] FAILED after 891.7ms (HTTP 500), falling back to vector-only. Server said: {"error":"Qdrant POST /collections/vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a/points/query failed: 404 Not found: Collection `vecthare_eventbase_standard_critblade_chat_60d40b35-fa7a-4f30-8485-805303f4916a` doesn't exist!"}
+hybridQuery @ qdrant.js:865
+await in hybridQuery
+hybridSearch @ hybrid-search.js:51
+await in hybridSearch
+queryMultipleCollections @ core-vector-api.js:1027
+await in queryMultipleCollections
+performSearch @ database-browser.js:3268
+dispatch @ jquery-3.5.1.min.js:2
+v.handle @ jquery-3.5.1.min.js:2
+hybrid-search.js:48 [HybridSearch] Using native hybrid search (QdrantBackend)
+qdrant.js:827 [EventBase] Hybrid request: collection=vecthare_eventbase_qdrant_critblade_artificrealm創世域_67d28099-167f-4c07-a7cb-1b62e44f43d0, topK=5, sparse=1 tokens, terms=[贖身], preview="贖身"
+qdrant.js:845 [Qdrant timing] total=410.1ms, results=5
+hybrid-search.js:48 [HybridSearch] Using native hybrid search (QdrantBackend)
+qdrant.js:827 [EventBase] Hybrid request: collection=vecthare_eventbase_standard_critblade_異世界學校_60d40b35-fa7a-4f30-8485-805303f4916a, topK=5, sparse=1 tokens, terms=[贖身], preview="贖身"
+character.ts:107  POST https://st.sduteam.com/api/plugins/similharity/chunks/hybrid-query 500 (Internal Server Error)
+(anonymous) @ character.ts:107
+hybridQuery @ qdrant.js:836
+await in hybridQuery
+hybridSearch @ hybrid-search.js:51
+await in hybridSearch
+queryMultipleCollections @ core-vector-api.js:1027
+await in queryMultipleCollections
+performSearch @ database-browser.js:3268
+dispatch @ jquery-3.5.1.min.js:2
+v.handle @ jquery-3.5.1.min.js:2
+qdrant.js:865 [Qdrant timing] FAILED after 395.8ms (HTTP 500), falling back to vector-only. Server said: {"error":"Qdrant POST /collections/vecthare_eventbase_standard_critblade_異世界學校_60d40b35-fa7a-4f30-8485-805303f4916a/points/query failed: 404 Not found: Collection `vecthare_eventbase_standard_critblade_異世界學校_60d40b35-fa7a-4f30-8485-805303f4916a` doesn't exist!"}
+hybridQuery @ qdrant.js:865
+await in hybridQuery
+hybridSearch @ hybrid-search.js:51
+await in hybridSearch
+queryMultipleCollections @ core-vector-api.js:1027
+await in queryMultipleCollections
+performSearch @ database-browser.js:3268
+dispatch @ jquery-3.5.1.min.js:2
+v.handle @ jquery-3.5.1.min.js:2
+hybrid-search.js:48 [HybridSearch] Using native hybrid search (QdrantBackend)
+qdrant.js:827 [EventBase] Hybrid request: collection=vecthare_archiveevent_qdrant_critblade_異世界學校_b0c80700-8682-4998-8d96-68a246fc2750, topK=5, sparse=1 tokens, terms=[贖身], preview="贖身"
+qdrant.js:845 [Qdrant timing] total=846.7ms, results=5
+hybrid-search.js:48 [HybridSearch] Using native hybrid search (QdrantBackend)
+qdrant.js:827 [EventBase] Hybrid request: collection=vecthare_lorebook_qdrant_critblade_story1_1778514888106, topK=5, sparse=1 tokens, terms=[贖身], preview="贖身"
+qdrant.js:845 [Qdrant timing] total=599.6ms, results=5

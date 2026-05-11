@@ -12,9 +12,45 @@
  * ============================================================================
  */
 
-import { getBackend } from '../backends/backend-manager.js';
+import { getBackend, getBackendForCollection } from '../backends/backend-manager.js';
+import { parseRegistryKey, COLLECTION_PREFIXES } from './collection-ids.js';
 import { createBM25Scorer, porterStemmer } from './bm25-scorer.js';
 import { extractQueryKeywords, RETRIEVAL_KEYWORD_LEVELS, isCJKToken } from './query-keyword-extractor.js';
+
+const KNOWN_BACKENDS = ['standard', 'vectra', 'qdrant'];
+
+/**
+ * Find the storage backend a collection lives in.
+ *
+ * Tries, in order:
+ *   1. Registry-key prefix:  "qdrant:vecthare_..."  → "qdrant"
+ *   2. Embedded backend tag in new-style names — collection IDs built via
+ *      collection-ids.js include the backend as the first segment after the
+ *      type prefix, e.g. "vecthare_eventbase_standard_..." → "standard".
+ *   3. null (caller falls back to user's active backend).
+ *
+ * This matters because the DB Browser searches across mixed-backend collections.
+ */
+function resolveCollectionBackend(collectionId) {
+    const fromRegistry = parseRegistryKey(collectionId).backend;
+    if (fromRegistry) return fromRegistry;
+
+    const TYPE_PREFIXES = [
+        COLLECTION_PREFIXES.VECTHARE_EVENTBASE,
+        COLLECTION_PREFIXES.VECTHARE_ARCHIVE_EVENT,
+        COLLECTION_PREFIXES.VECTHARE_LOREBOOK,
+        COLLECTION_PREFIXES.VECTHARE_CHARACTER,
+        COLLECTION_PREFIXES.VECTHARE_DOCUMENT,
+    ];
+    for (const prefix of TYPE_PREFIXES) {
+        if (collectionId.startsWith(prefix)) {
+            const firstSegment = collectionId.slice(prefix.length).split('_')[0];
+            if (KNOWN_BACKENDS.includes(firstSegment)) return firstSegment;
+            return null; // legacy name without backend tag — caller decides
+        }
+    }
+    return null;
+}
 
 /** Default RRF constant (prevents division by zero, balances contribution) */
 export const DEFAULT_RRF_K = 60;
@@ -30,7 +66,14 @@ export const DEFAULT_RRF_K = 60;
  * @returns {Promise<{hashes: number[], metadata: object[]}>}
  */
 export async function hybridSearch(collectionId, searchText, topK, settings, options = {}) {
-    const backend = await getBackend(settings);
+    // Resolve the backend the collection was *created with*, not the user's currently
+    // selected backend. The DB Browser can search across collections that live in
+    // different backends (e.g. some in Qdrant, some in Vectra), and routing a
+    // standard-backend collection to Qdrant would 404.
+    const collectionBackend = resolveCollectionBackend(collectionId);
+    const backend = collectionBackend
+        ? await getBackendForCollection(collectionBackend, settings)
+        : await getBackend(settings);
     const debugLog = settings?.eventbase_debug_logging;
 
     const {

@@ -670,6 +670,32 @@ function _sanitizeHandleForFilter(name) {
 }
 
 /**
+ * Extract the persona handle embedded in a VectHare collection ID name.
+ *
+ * Naming convention (collection-ids.js):
+ *   vecthare_<type>_<backend>_<handle>_<charname>_<uuid>   (new)
+ *   vecthare_<type>_<handle>_<charname>_<uuid>             (legacy, no backend)
+ *
+ * Returns lowercased handle string, or null if the ID isn't persona-scoped
+ * or can't be parsed.
+ */
+const _KNOWN_BACKEND_TAGS = ["standard", "vectra", "qdrant"];
+function _extractHandleFromCollectionId(collectionId) {
+  if (!collectionId) return null;
+  const idLower = String(collectionId).toLowerCase();
+  for (const prefix of _PERSONA_SCOPED_PREFIXES) {
+    const p = prefix.toLowerCase();
+    if (!idLower.startsWith(p)) continue;
+    const segments = idLower.slice(p.length).split("_");
+    if (segments.length === 0) return null;
+    // Skip the optional backend tag if present in segment 0.
+    const handleIdx = _KNOWN_BACKEND_TAGS.includes(segments[0]) ? 1 : 0;
+    return segments[handleIdx] || null;
+  }
+  return null;
+}
+
+/**
  * Collection prefixes whose collections carry a persona-owned `creatorHandle`.
  * All VectHare content types follow the unified `vecthare_<type>_<backend>_<handle>_...`
  * naming protocol and are persona-scoped.
@@ -3235,6 +3261,18 @@ async function performSearch() {
 
   // Get collection IDs to search
   let collectionIds = browserState.collections.map((c) => c.id);
+
+  // Defense-in-depth: even though browserState.collections is already filtered by
+  // creatorHandle metadata, also drop any persona-scoped collection whose embedded
+  // handle in the *name itself* doesn't match the current persona. This guards
+  // against foreign collections that leaked through (missing/stale metadata, etc.)
+  // and prevents the search from ever hitting another user's collection.
+  const ownHandle = _sanitizeHandleForFilter(getContext()?.name1);
+  collectionIds = collectionIds.filter((id) => {
+    const handle = _extractHandleFromCollectionId(id);
+    if (handle === null) return true; // not persona-scoped (e.g. legacy file_*)
+    return handle === ownHandle;
+  });
 
   if (enabledOnly) {
     collectionIds = collectionIds.filter((id) => {

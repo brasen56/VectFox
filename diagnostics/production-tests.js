@@ -48,55 +48,76 @@ async function cleanupTestCollection(collectionId, settings) {
     unregisterCollection(collectionId); // Also try without source prefix
 }
 
+// Collection IDs the diagnostic suite touches as probes. Anything matching these
+// is owned by diagnostics and safe to drop. Add new patterns here whenever a
+// new check pokes a fresh collection name.
+const DIAGNOSTIC_TEST_COLLECTION_PATTERNS = [
+    /(^|:)vh:test:/,           // production test temp collections
+    /(^|:)vecthare_diag(_|$)/, // infrastructure endpoint probes
+    /(^|:)test$/,              // checkVectorsExtension probe
+];
+
+function isDiagnosticTestCollection(id) {
+    if (!id) return false;
+    return DIAGNOSTIC_TEST_COLLECTION_PATTERNS.some(re => re.test(id));
+}
+
 /**
- * Sweep any leftover `vh:test:*` collections from previous diagnostic runs that
- * leaked (e.g. earlier code without try/finally cleanup, or process killed mid-run).
- * Safe to call multiple times — `vh:test:` is a reserved prefix only used by
- * the production-test helpers above.
+ * Sweep any leftover diagnostic probe collections (`vh:test:*`, `vecthare_diag*`,
+ * `test`) that were created by previous diagnostic runs and not cleaned up —
+ * either because earlier code lacked try/finally, the process was killed
+ * mid-run, or the backend creates the collection on first reference of a
+ * non-existent ID (Vectra does this).
+ *
+ * Safe to call multiple times — the prefixes above are reserved for diagnostics.
  */
 export async function sweepLeftoverTestCollections(settings) {
-    let sweptIds = [];
+    const sweptIds = [];
     try {
         const response = await fetch('/api/plugins/similharity/collections', {
             method: 'GET',
             headers: getRequestHeaders(),
         });
         if (!response.ok) {
-            return { name: '[PROD] Test Collection Sweep', status: 'pass', message: 'Could not list collections (skipping sweep)', category: 'production' };
+            return { name: 'Diagnostic Collection Sweep', status: 'pass', message: 'Could not list collections (skipping sweep)', category: 'infrastructure' };
         }
         const data = await response.json();
         const collections = data.collections || [];
 
-        // Match the test-collection prefix used by testVectorStorage / testPluginEmbeddingGeneration.
         const leftovers = collections.filter(c => {
             const id = c.id || c.collectionId || c.name || '';
-            return id.startsWith('vh:test:') || id.includes(':vh:test:');
+            return isDiagnosticTestCollection(id);
         });
 
         for (const c of leftovers) {
-            // Some endpoints return id, others collectionId/name — try them in order.
             const rawId = c.id || c.collectionId || c.name;
-            // Strip backend/source prefix if present (e.g. "qdrant:transformers:vh:test:storage_..." → "vh:test:storage_...").
-            const idx = rawId.indexOf('vh:test:');
-            const cleanId = idx >= 0 ? rawId.slice(idx) : rawId;
+            // Strip backend/source prefix if present (e.g. "qdrant:transformers:vh:test:..." → "vh:test:...").
+            let cleanId = rawId;
+            for (const re of DIAGNOSTIC_TEST_COLLECTION_PATTERNS) {
+                const match = rawId.match(re);
+                if (match && match.index > 0) {
+                    cleanId = rawId.slice(match.index + (match[1] === ':' ? 1 : 0));
+                    break;
+                }
+            }
             await cleanupTestCollection(cleanId, settings);
             sweptIds.push(cleanId);
         }
 
         return {
-            name: '[PROD] Test Collection Sweep',
+            name: 'Diagnostic Collection Sweep',
             status: 'pass',
             message: sweptIds.length === 0
-                ? 'No leftover test collections found'
-                : `Cleaned ${sweptIds.length} leftover test collection(s): ${sweptIds.slice(0, 3).join(', ')}${sweptIds.length > 3 ? '...' : ''}`,
-            category: 'production'
+                ? 'No leftover diagnostic collections found'
+                : `Cleaned ${sweptIds.length} leftover diagnostic collection(s): ${sweptIds.slice(0, 3).join(', ')}${sweptIds.length > 3 ? '...' : ''}`,
+            category: 'infrastructure'
         };
     } catch (error) {
         return {
-            name: '[PROD] Test Collection Sweep',
+            name: 'Diagnostic Collection Sweep',
             status: 'warning',
             message: `Sweep error: ${error.message}`,
-            category: 'production'
+            category: 'infrastructure'
         };
     }
 }
