@@ -2755,7 +2755,13 @@ async function _runEventBaseBackfill() {
                 toastr.warning('Archive contains no usable messages', 'EventBase');
                 return;
             }
-            messages = source.messages.filter(m => m.mes && m.mes.trim().length > 0);
+            const allMessages = source.messages.filter(m => m.mes && m.mes.trim().length > 0);
+            messages = allMessages;
+            if (startFromMessage > 1) {
+                const sliceIdx = Math.min(startFromMessage - 1, allMessages.length);
+                console.log(`[EventBase] Archive start-from message ${startFromMessage} — skipping first ${sliceIdx} messages, ${allMessages.length - sliceIdx} remaining`);
+                messages = allMessages.slice(sliceIdx);
+            }
             chatUUID = source.archiveUUID;
             collectionIdOverride = buildArchiveEventCollectionId({
                 filenameCharName: source.filenameCharName,
@@ -2764,7 +2770,7 @@ async function _runEventBaseBackfill() {
             });
             console.log(`[EventBase] Archive upload route — collection: ${collectionIdOverride}, messages: ${messages.length}`);
         } else {
-            // Live chat route — unchanged behavior
+            // Live chat route
             console.log('[EventBase] Context chat length:', context.chat?.length);
             if (!Array.isArray(context.chat) || context.chat.length === 0) {
                 toastr.warning('No chat messages to process', 'EventBase');
