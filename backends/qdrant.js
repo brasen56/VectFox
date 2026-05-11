@@ -821,7 +821,13 @@ export class QdrantBackend extends VectorBackend {
 
         if (settings.eventbase_debug_logging) {
             const preview = String(searchText || '').replace(/\s+/g, ' ').slice(0, 280);
-            console.log(`[EventBase] Hybrid request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, preview="${preview}"`);
+            try {
+                const { tokenize } = await import('../core/bm25-scorer.js');
+                const terms = [...new Set(tokenize(searchText, { dedupe: false }))];
+                console.log(`[EventBase] Hybrid request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, terms=[${terms.join(', ')}], preview="${preview}"`);
+            } catch {
+                console.log(`[EventBase] Hybrid request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, preview="${preview}"`);
+            }
         }
 
         const tNetStart = performance.now();

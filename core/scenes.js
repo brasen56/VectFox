@@ -27,7 +27,6 @@ import {
     insertVectorItems,
     deleteVectorItems,
 } from './core-vector-api.js';
-import { getChatCollectionId } from './chat-vectorization.js';
 import {
     getChunkMetadata,
     saveChunkMetadata,
@@ -59,12 +58,6 @@ export const SCENE_MODES = {
  * @returns {string|null}
  */
 export function getCurrentCollectionId() {
-    // Try new format first
-    const newFormatId = getChatCollectionId();
-    if (newFormatId) {
-        return newFormatId;
-    }
-    // Fallback to legacy format
     const chatId = getCurrentChatId();
     if (!chatId) return null;
     return `vecthare_chat_${chatId}`;

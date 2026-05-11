@@ -1,7 +1,38 @@
-[Qdrant] getCollectionMetadata(vecthare_lorebook_story1_1778288919954) failed: Qdrant POST /collections/vecthare_lorebook_story1_1778288919954/points failed: 404 Not found: Collection `vecthare_lorebook_story1_1778288919954` doesn't exist!
-[Qdrant] hybridQueryNative request failed. Body: {"prefetch":[{"query":[0.010125996544957161,-0.004649042617529631,0.02534683421254158,-0.020379364490509033,0.005349582992494106,-0.029040593653917313,0.008151745423674583,-0.004840098787099123,0,-0.03388069197535515,-0.026747915893793106,-0.03489965945482254,0.029422707855701447,-0.018086684867739677,0.0009831450879573822,0.002802162664011121,-0.027766883373260498,0.040503986179828644,-0.0016876660520210862,0.01923302561044693,-0.008406487293541431,0.015411893837153912,0.019615137949585915,-0.0 Error: Qdrant POST /collections/vecthare_lorebook_story1_1778288919954/points/query failed: 404 Not found: Collection `vecthare_lorebook_story1_1778288919954` doesn't exist!
-[similharity] chunks/hybrid-query error: Error: Qdrant POST /collections/vecthare_lorebook_story1_1778288919954/points/query failed: 404 Not found: Collection `vecthare_lorebook_story1_1778288919954` doesn't exist!
-    at QdrantBackend._request (file:///home/node/app/plugins/similharity/qdrant-backend.js:127:27)
-    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
-    at async QdrantBackend.hybridQueryNative (file:///home/node/app/plugins/similharity/qdrant-backend.js:725:20)
-    at async file:///home/node/app/plugins/similharity/index.js:1291:29
+
+[Qdrant-debug] hybridQueryNative: collection=vecthare_eventbase_qdrant_critblade_artificrealm創世域_67d28099-167f-4c07-a7cb-1b62e44f43d0, topK=20, fusion=rrf, prefetchLimit=80
+[Qdrant-debug] Query text: "我對 Mayla 説 "你記得我當時怎樣為你贖身的嗎?"
+
+好，來仔細思考一下這次的劇情！
+
+- 回顧當前情況
+  * 時間：20:15，晚上
+  * 位置：新大陸.流沙之國.扎赫拉巴德.星月綠洲頂層皇家套房，9個人分配好床位（Critblade+Mayla一張，索拉雅單獨，阿斯蒙蒂斯單獨，Kashier+Fern，Valerie單獨，Engni+Lia）
+  * 人物關係：Mayla剛剛崩潰大哭"
+[Qdrant-debug] Dense: dim=4096
+[Qdrant-debug] Sparse: 710 tokens, top-5 by weight: [155974701:24.000, 1057975302:17.000, 2766195286:10.000, 796727698:9.000, 894223461:8.000]
+[Qdrant] Native hybrid (fusion=rrf) returned 20 results from vecthare_eventbase_qdrant_critblade_artificrealm創世域_67d28099-167f-4c07-a7cb-1b62e44f43d0
+[Qdrant-debug] [1] score=0.8333, hash=14478502, text="[character_state_change] Critblade嚴厲點醒Mayla，她不能整天愁眉苦臉而需展現領導能力說服眷屬跟隨。Mayla從恐懼崩潰中甦"
+[Qdrant-debug] [2] score=0.7000, hash=39473333, text="[promise_or_oath] Critblade抱住Mayla承諾這間房裡的所有人一定會幫她找到父親影翼，生要見人死要見屍，沒有人會放棄她，並大聲對房內眾"
+[Qdrant-debug] [3] score=0.4333, hash=35584485, text="[revelation] Critblade晚飯後前往Mayla房間，發現她整理行李時反覆撫摸「勾魂」上的藍色寶石以穩定情緒。Mayla表面用理性語氣列舉魔王領"
+[Qdrant-debug] [4] score=0.3125, hash=20228385, text="[relationship_change] Critblade大笑並深吻Lia以打破其緊繃情緒，安慰她不必擔心因Mayla成為公主而被拋棄，列出眷屬中已有7位公"
+[Qdrant-debug] [5] score=0.2654, hash=23163450, text="[promise_or_oath] Mayla擔心迷霧礁無收穫或找到母親後被拒，Critblade兩度承諾「不管發生什麼，我都在妳身邊」及「不管妳是誰，都不會改"
+[Qdrant-debug] [6] score=0.2213, hash=30061790, text="[dialogue_significant] 房間陷入尷尬沉默後，食物與啤酒送來，Valerie直接拿起烤羊腿大口吃起，打破禮儀規範引發Critblade、Ka"
+[Qdrant-debug] [7] score=0.2193, hash=12379189, text="[character_state_change] Critblade在藍色大宅客廳召集其餘六位眷屬，正式宣布暗之軍師Mayla新增亞特蘭蒂斯公主身份，與奈克絲北"
+[Qdrant-debug] [8] score=0.1970, hash=40982049, text="[promise_or_oath] Critblade重構Mayla價值觀，將18年妓院生涯視為堅韌勳章，列舉其影之軍師功績與早朝打破情感牢籠事例，肯定她最值得"
+[Qdrant-debug] [9] score=0.1625, hash=24646009, text="[character_state_change] Critblade隔著睡裙舔舐Mayla的乳頭並用手指抽插她的小穴，同時告訴她「老子就愛你是妓女」，挑戰她對過"
+[Qdrant-debug] [10] score=0.1444, hash=20567150, text="[relationship_change] 在潮音鎮旅店大房間，Mayla站窗邊望海突然轉身問主人如果真是海人後裔會如何看待她，主人堅定回答不會改變因為她是眷屬"
+[Qdrant-debug] hybridQueryNative: collection=vecthare_eventbase_qdrant_critblade_artificrealm創世域_67d28099-167f-4c07-a7cb-1b62e44f43d0, topK=20, fusion=rrf, prefetchLimit=80
+[Qdrant-debug] Query text: "我對 Mayla 説 "你記得我當時怎樣為你贖身的嗎?""
+[Qdrant-debug] Dense: dim=4096
+[Qdrant-debug] Sparse: 5 tokens, top-5 by weight: [155974701:1.000, 2822298187:1.000, 3741420880:1.000, 3774705617:1.000, 568836774:1.000]
+[Qdrant] Native hybrid (fusion=rrf) returned 20 results from vecthare_eventbase_qdrant_critblade_artificrealm創世域_67d28099-167f-4c07-a7cb-1b62e44f43d0
+[Qdrant-debug] [1] score=0.6667, hash=24812498, text="[relationship_change] Critblade查看system panel發現SQ_71_灰燼市場的相遇未完成，心想需對話後，走過去對躺在床上的"
+[Qdrant-debug] [2] score=0.6111, hash=10982237, text="[revelation] 不破勇希向莉莉安解釋自己是不破勇希為Mayla主人，展示心靈印記證明靈魂契約，強調Mayla自願託付一切。Mayla堅定承認自願成為眷"
+[Qdrant-debug] [3] score=0.5625, hash=58597131, text="[relationship_change] Mayla回潮音鎮引發童年被賣做妓女的恐懼，回憶賣她的人可能在鎮上，她無法下車，手冷顫抖淚流。Critblade握手"
+[Qdrant-debug] [4] score=0.5000, hash=10154576, text="[revelation] Mayla向Critblade坦露核心恐懼：過去娼妓身份與公主血統衝突，感到羞恥玷污母親莉莉安與亞特蘭蒂斯，害怕配不上Master被拋"
+[Qdrant-debug] [5] score=0.3250, hash=35584485, text="[revelation] Critblade晚飯後前往Mayla房間，發現她整理行李時反覆撫摸「勾魂」上的藍色寶石以穩定情緒。Mayla表面用理性語氣列舉魔王領"
+[Qdrant-debug] [6] score=0.2333, hash=88826628, text="[character_state_change] 薇拉崩潰後，Critblade叫Mayla召老闆進來，支付20000金幣贖身薇拉，宣告她現在是他的。Mayla"
+[Qdrant-debug] [7] score=0.2222, hash=24646009, text="[character_state_change] Critblade隔著睡裙舔舐Mayla的乳頭並用手指抽插她的小穴，同時告訴她「老子就愛你是妓女」，挑戰她對過"
+[Qdrant-debug] [8] score=0.2037, hash=40351995, text="[revelation] Mayla坐在窗邊回憶童年片段，記得大沙灘、海浪拍打礁石聲、溫柔聲音哼搖籃曲，但記不起人臉，懷疑那是母親。她害怕明天去迷霧礁一無所獲，"
+[Qdrant-debug] [9] score=0.1863, hash=40982049, text="[promise_or_oath] Critblade重構Mayla價值觀，將18年妓院生涯視為堅韌勳章，列舉其影之軍師功績與早朝打破情感牢籠事例，肯定她最值得"
+[Qdrant-debug] [10] score=0.1806, hash=23937047, text="[revelation] 白髮老人向Critblade一行人揭露Mayla的出身真相：她的母親莉莉安二十多年前從海底國度亞特蘭蒂斯來到潮音鎮，生下Mayla後將"

@@ -1,181 +1,55 @@
-Generate entered
-index.js:19 [QR2] calling {args: Array(3), functionToCall: ƒ}
-chat-vectorization.js:1842 🐰 VectHare: rearrangeChat called (type: normal, chat length: 2116)
-2backend-manager.js:274 VectHare: Health cache stale for qdrant, re-verifying...
-qdrant.js:839 [Qdrant timing] total=812.1ms, results=20
-qdrant.js:839 [Qdrant timing] total=926.4ms, results=20
+VectHare Scenes: Chat observer started
+index.js:495 VectHare: Chat changed, refreshing UI state
 collection-ids.js:137 VectHare: buildChatCollectionId() called but chunk-based chat is disabled (use EventBase). Returning null. Stack: Error
     at buildChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/collection-ids.js:137:135)
     at getChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/chat-vectorization.js:85:12)
-    at gatherCollectionsToQuery (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/chat-vectorization.js:733:30)
-    at rearrangeChat (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/chat-vectorization.js:1895:36)
-    at async vecthare_rearrangeChat (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/index.js:204:5)
-    at async runGenerationInterceptors (https://st.sduteam.com/scripts/extensions.js:2028:17)
-    at async Generate (https://st.sduteam.com/script.js:4505:25)
+    at refreshAutoSyncCheckbox (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/ui/ui-manager.js:1704:26)
+    at EventEmitter.<anonymous> (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/index.js:496:9)
+    at EventEmitter.emit (https://st.sduteam.com/lib/eventemitter.js:146:36)
+    at async getChatResult (https://st.sduteam.com/script.js:7641:5)
+    at async getChat (https://st.sduteam.com/script.js:7609:9)
+    at async selectCharacterById (https://st.sduteam.com/script.js:899:13)
+    at async openRecentCharacterChat (https://st.sduteam.com/scripts/welcome-screen.js:486:9)
 buildChatCollectionId @ collection-ids.js:137
 getChatCollectionId @ chat-vectorization.js:85
-gatherCollectionsToQuery @ chat-vectorization.js:733
-rearrangeChat @ chat-vectorization.js:1895
-await in rearrangeChat
-vecthare_rearrangeChat @ index.js:204
-runGenerationInterceptors @ extensions.js:2028
-await in runGenerationInterceptors
-Generate @ script.js:4505
-await in Generate
-triggerRefresh @ PromptViewer.vue:268
-(anonymous) @ PromptViewer.vue:250
-callWithErrorHandling @ runtime-core.esm-bundler.js:199
-(anonymous) @ runtime-core.esm-bundler.js:8133
-(anonymous) @ runtime-core.esm-bundler.js:8095
-(anonymous) @ runtime-core.esm-bundler.js:6018
-(anonymous) @ runtime-core.esm-bundler.js:5984
-(anonymous) @ runtime-core.esm-bundler.js:5483
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:5914
-(anonymous) @ runtime-core.esm-bundler.js:5457
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:5650
-(anonymous) @ runtime-core.esm-bundler.js:5605
-(anonymous) @ runtime-core.esm-bundler.js:5471
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:5650
-(anonymous) @ runtime-core.esm-bundler.js:5605
-(anonymous) @ runtime-core.esm-bundler.js:5471
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:5650
-(anonymous) @ runtime-core.esm-bundler.js:5605
-(anonymous) @ runtime-core.esm-bundler.js:5471
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:1000
-(anonymous) @ runtime-core.esm-bundler.js:1026
-process @ runtime-core.esm-bundler.js:1060
-(anonymous) @ runtime-core.esm-bundler.js:5495
-(anonymous) @ runtime-core.esm-bundler.js:6132
-run @ reactivity.esm-bundler.js:250
-(anonymous) @ runtime-core.esm-bundler.js:6260
-(anonymous) @ runtime-core.esm-bundler.js:6032
-(anonymous) @ runtime-core.esm-bundler.js:5984
-(anonymous) @ runtime-core.esm-bundler.js:5483
-(anonymous) @ runtime-core.esm-bundler.js:5856
-(anonymous) @ runtime-core.esm-bundler.js:5932
-(anonymous) @ runtime-core.esm-bundler.js:5457
-(anonymous) @ runtime-core.esm-bundler.js:6212
-run @ reactivity.esm-bundler.js:250
-runIfDirty @ reactivity.esm-bundler.js:288
-callWithErrorHandling @ runtime-core.esm-bundler.js:199
-flushJobs @ runtime-core.esm-bundler.js:408
-Promise.then
-queueFlush @ runtime-core.esm-bundler.js:322
-queueJob @ runtime-core.esm-bundler.js:317
-(anonymous) @ runtime-core.esm-bundler.js:6254
-trigger @ reactivity.esm-bundler.js:278
-endBatch @ reactivity.esm-bundler.js:336
-notify @ reactivity.esm-bundler.js:627
-trigger @ reactivity.esm-bundler.js:601
-value @ reactivity.esm-bundler.js:1540
-(anonymous) @ reactivity.esm-bundler.js:1570
-(anonymous) @ Toolbox.vue:36
-callWithErrorHandling @ runtime-core.esm-bundler.js:199
-callWithAsyncErrorHandling @ runtime-core.esm-bundler.js:206
-(anonymous) @ runtime-dom.esm-bundler.js:745
-chat-vectorization.js:1906 VectHare: Will query 1 collections: ['qdrant:vecthare_lorebook_qdrant_critblade_story1_1778514888106']
-chat-vectorization.js:1925 VectHare: Extracted 8 keywords from query: (8) ['mayla', 'critblade', 'kashier', 'fern', 'engni', 'lia', 'valerie', 'master']
-collection-ids.js:137 VectHare: buildChatCollectionId() called but chunk-based chat is disabled (use EventBase). Returning null. Stack: Error
-    at buildChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/collection-ids.js:137:135)
-    at getChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/chat-vectorization.js:85:12)
-    at rearrangeChat (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/chat-vectorization.js:1936:42)
-    at async vecthare_rearrangeChat (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/index.js:204:5)
-    at async runGenerationInterceptors (https://st.sduteam.com/scripts/extensions.js:2028:17)
-    at async Generate (https://st.sduteam.com/script.js:4505:25)
-buildChatCollectionId @ collection-ids.js:137
-getChatCollectionId @ chat-vectorization.js:85
-rearrangeChat @ chat-vectorization.js:1936
-await in rearrangeChat
-vecthare_rearrangeChat @ index.js:204
-runGenerationInterceptors @ extensions.js:2028
-await in runGenerationInterceptors
-Generate @ script.js:4505
-await in Generate
-triggerRefresh @ PromptViewer.vue:268
-(anonymous) @ PromptViewer.vue:250
-callWithErrorHandling @ runtime-core.esm-bundler.js:199
-(anonymous) @ runtime-core.esm-bundler.js:8133
-(anonymous) @ runtime-core.esm-bundler.js:8095
-(anonymous) @ runtime-core.esm-bundler.js:6018
-(anonymous) @ runtime-core.esm-bundler.js:5984
-(anonymous) @ runtime-core.esm-bundler.js:5483
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:5914
-(anonymous) @ runtime-core.esm-bundler.js:5457
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:5650
-(anonymous) @ runtime-core.esm-bundler.js:5605
-(anonymous) @ runtime-core.esm-bundler.js:5471
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:5650
-(anonymous) @ runtime-core.esm-bundler.js:5605
-(anonymous) @ runtime-core.esm-bundler.js:5471
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:5650
-(anonymous) @ runtime-core.esm-bundler.js:5605
-(anonymous) @ runtime-core.esm-bundler.js:5471
-(anonymous) @ runtime-core.esm-bundler.js:5734
-(anonymous) @ runtime-core.esm-bundler.js:1000
-(anonymous) @ runtime-core.esm-bundler.js:1026
-process @ runtime-core.esm-bundler.js:1060
-(anonymous) @ runtime-core.esm-bundler.js:5495
-(anonymous) @ runtime-core.esm-bundler.js:6132
-run @ reactivity.esm-bundler.js:250
-(anonymous) @ runtime-core.esm-bundler.js:6260
-(anonymous) @ runtime-core.esm-bundler.js:6032
-(anonymous) @ runtime-core.esm-bundler.js:5984
-(anonymous) @ runtime-core.esm-bundler.js:5483
-(anonymous) @ runtime-core.esm-bundler.js:5856
-(anonymous) @ runtime-core.esm-bundler.js:5932
-(anonymous) @ runtime-core.esm-bundler.js:5457
-(anonymous) @ runtime-core.esm-bundler.js:6212
-run @ reactivity.esm-bundler.js:250
-runIfDirty @ reactivity.esm-bundler.js:288
-callWithErrorHandling @ runtime-core.esm-bundler.js:199
-flushJobs @ runtime-core.esm-bundler.js:408
-Promise.then
-queueFlush @ runtime-core.esm-bundler.js:322
-queueJob @ runtime-core.esm-bundler.js:317
-(anonymous) @ runtime-core.esm-bundler.js:6254
-trigger @ reactivity.esm-bundler.js:278
-endBatch @ reactivity.esm-bundler.js:336
-notify @ reactivity.esm-bundler.js:627
-trigger @ reactivity.esm-bundler.js:601
-value @ reactivity.esm-bundler.js:1540
-(anonymous) @ reactivity.esm-bundler.js:1570
-(anonymous) @ Toolbox.vue:36
-callWithErrorHandling @ runtime-core.esm-bundler.js:199
-callWithAsyncErrorHandling @ runtime-core.esm-bundler.js:206
-(anonymous) @ runtime-dom.esm-bundler.js:745
-collection-metadata.js:908 [VectHare Activation Filter] Collection qdrant:vecthare_lorebook_qdrant_critblade_story1_1778514888106: hasTriggers=false, hasConditions=false
-collection-metadata.js:945 [VectHare Activation Filter] Collection qdrant:vecthare_lorebook_qdrant_critblade_story1_1778514888106: ✗ NOT_ACTIVATED (no trigger match, no condition pass, not locked)
-collection-metadata.js:965 [VectHare Activation Filter] Summary: 1 collections → 0 active
-chat-vectorization.js:1952 ⚠️ VectHare: No collections passed activation conditions and World Info disabled - chunks cannot be injected!
-chat-vectorization.js:1953    💡 Check your collection activation conditions in VectHare settings
-script.js:4547 Core/all messages: 2116/2116
-world-info.js:623 [WI] Processing sticky entry ArtificRealm創世域.42 {hash: 5608283655957508, start: 2116, end: 2117, protected: false}
-world-info.js:627 [WI] Removing sticky entry ArtificRealm創世域.42 from timedWorldInfo: chat not advanced {hash: 5608283655957508, start: 2116, end: 2117, protected: false}
-world-info.js:722 [WI] Adding sticky entry ArtificRealm創世域.42: start=2116, end=2117, protected=false
-world-info.js:5159 [WI] Adding 56 entries to prompt (56) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
-index.js:19 [QR2] calling {args: Array(1), functionToCall: ƒ}
-script.js:4606 skipWIAN not active, adding WIAN
-handler.ts:225 [Prompt Template] start generate after 20 messages
-handler.ts:395 [Prompt Template] processing 20 messages in 17ms
-onStopStreaming @ script.js:3789
-stopGeneration @ script.js:5551
-collectPrompts @ PromptViewer.vue:273
-(anonymous) @ PromptViewer.vue:367
+refreshAutoSyncCheckbox @ ui-manager.js:1704
+(anonymous) @ index.js:496
 EventEmitter.emit @ eventemitter.js:146
 await in EventEmitter.emit
-sendOpenAIRequest @ openai.js:3052
-await in sendOpenAIRequest
-sendStreamingRequest @ script.js:6095
-finishGenerating @ script.js:5334
-await in finishGenerating
-Generate @ script.js:5394
-prompts.ts:72 [Prompt Template] processing send result: 157030 tokens and 286207 chars
+getChatResult @ script.js:7641
+await in getChatResult
+getChat @ script.js:7609
+await in getChat
+selectCharacterById @ script.js:899
+await in selectCharacterById
+openRecentCharacterChat @ welcome-screen.js:486
+(anonymous) @ welcome-screen.js:362
+collection-ids.js:137 VectHare: buildChatCollectionId() called but chunk-based chat is disabled (use EventBase). Returning null. Stack: Error
+    at buildChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/collection-ids.js:137:135)
+    at getChatCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/chat-vectorization.js:85:12)
+    at getCurrentCollectionId (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/core/scenes.js:63:25)
+    at refreshSceneCache (https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/ui/scene-markers.js:54:26)
+    at https://st.sduteam.com/scripts/extensions/third-party/VectHarePlus/ui/scene-markers.js:493:19
+buildChatCollectionId @ collection-ids.js:137
+getChatCollectionId @ chat-vectorization.js:85
+getCurrentCollectionId @ scenes.js:63
+refreshSceneCache @ scene-markers.js:54
+(anonymous) @ scene-markers.js:493
+setTimeout
+(anonymous) @ scene-markers.js:492
+EventEmitter.emit @ eventemitter.js:146
+await in EventEmitter.emit
+getChatResult @ script.js:7641
+await in getChatResult
+getChat @ script.js:7609
+await in getChat
+selectCharacterById @ script.js:899
+await in selectCharacterById
+openRecentCharacterChat @ welcome-screen.js:486
+(anonymous) @ welcome-screen.js:362
+backend-manager.js:274 VectHare: Health cache stale for qdrant, re-verifying...
+script.js:4232 Generate entered
+index.js:19 [QR2] calling {args: Array(3), functionToCall: ƒ}
+index.js:19 [QR2] Before-generation hook skipped due to dryRun.
+script.js:4547 Core/all messages: 2116/2116
+scene-markers.js:75 VectHare Scenes: Cached 0 scenes

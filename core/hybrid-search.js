@@ -100,8 +100,10 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     const expandedTopK = Math.min(topK * 3, 100);
 
     // 1. Vector search
-    console.log(`[HybridSearch] Fetching ${expandedTopK} vector results from collection: ${collectionId}`);
-    console.log(`[HybridSearch] Backend: ${backend.constructor.name}, Source: ${settings.source}`);
+    if (debugLog) {
+        console.log(`[HybridSearch] Fetching ${expandedTopK} vector results from collection: ${collectionId}`);
+        console.log(`[HybridSearch] Backend: ${backend.constructor.name}, Source: ${settings.source}`);
+    }
 
     let vectorResults;
     try {
@@ -112,15 +114,17 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
             settings,
             queryVector
         );
-        console.log(`[HybridSearch] Raw vector results:`, vectorResults ? `hashes=${vectorResults.hashes?.length}, metadata=${vectorResults.metadata?.length}` : 'null');
+        if (debugLog) console.log(`[HybridSearch] Raw vector results:`, vectorResults ? `hashes=${vectorResults.hashes?.length}, metadata=${vectorResults.metadata?.length}` : 'null');
     } catch (error) {
         console.error(`[HybridSearch] Vector query failed:`, error);
         return { hashes: [], metadata: [] };
     }
 
     if (!vectorResults || !vectorResults.metadata || vectorResults.metadata.length === 0) {
-        console.log('[HybridSearch] No vector results found');
-        console.log(`[HybridSearch] Debug - vectorResults:`, JSON.stringify(vectorResults));
+        if (debugLog) {
+            console.log('[HybridSearch] No vector results found');
+            console.log(`[HybridSearch] Debug - vectorResults:`, JSON.stringify(vectorResults));
+        }
         return { hashes: [], metadata: [] };
     }
 
@@ -137,24 +141,25 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     // 3. Perform BM25 scoring over the ANN candidate set only (not full-corpus).
     //    Unlike native hybrid (Qdrant), this cannot surface documents that the
     //    dense vector search missed — BM25 is computed only on the vector top-K.
-    console.log(`[HybridSearch] Computing BM25 scores for ${resultsWithText.length} results...`);
+    if (debugLog) console.log(`[HybridSearch] Computing BM25 scores for ${resultsWithText.length} results...`);
     const bm25Results = performBM25Search(resultsWithText, searchText, {
         k1: settings.bm25_k1 || 1.5,
         b: settings.bm25_b || 0.75,
         fieldBoosting: true,  // Enable title (3x) and tags (2x) boosting
-        settings
+        settings,
+        debugLog,
     });
 
     // 4. Fuse results
     let fusedResults;
     if (fusionMethod === 'rrf') {
-        console.log(`[HybridSearch] Applying RRF fusion (k=${rrfK})...`);
+        if (debugLog) console.log(`[HybridSearch] Applying RRF fusion (k=${rrfK})...`);
         fusedResults = reciprocalRankFusion(
             [vectorResultsToRanked(vectorResults), bm25Results],
             rrfK
         );
     } else {
-        console.log(`[HybridSearch] Applying weighted fusion (α=${vectorWeight}, β=${textWeight})...`);
+        if (debugLog) console.log(`[HybridSearch] Applying weighted fusion (α=${vectorWeight}, β=${textWeight})...`);
         fusedResults = weightedCombination(
             vectorResultsToScored(vectorResults),
             bm25Results,
@@ -166,20 +171,21 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     // 5. Return top K fused results
     const topResults = fusedResults.slice(0, topK);
 
-    console.log(`[HybridSearch] Returning ${topResults.length} fused results`);
-    if (topResults.length > 0) {
-        // Log score distribution for debugging
-        const scores = topResults.map(r => r.rrfScore || r.combinedScore || 0);
-        console.log(`[HybridSearch] Score distribution: min=${Math.min(...scores).toFixed(4)}, max=${Math.max(...scores).toFixed(4)}`);
-        console.log(`[HybridSearch] Top 3 results:`);
-        topResults.slice(0, 3).forEach((r, i) => {
-            const score = (r.rrfScore || r.combinedScore || 0).toFixed(4);
-            const vRank = r.ranks?.vector || 'N/A';
-            const tRank = r.ranks?.text || 'N/A';
-            const vScore = (r.vectorScore || 0).toFixed(4);
-            const tScore = (r.textScore || r.bm25Score || 0).toFixed(4);
-            console.log(`  [${i + 1}] finalScore=${score}, vectorRank=${vRank}, textRank=${tRank}, vectorScore=${vScore}, textScore=${tScore}`);
-        });
+    if (debugLog) {
+        console.log(`[HybridSearch] Returning ${topResults.length} fused results`);
+        if (topResults.length > 0) {
+            const scores = topResults.map(r => r.rrfScore || r.combinedScore || 0);
+            console.log(`[HybridSearch] Score distribution: min=${Math.min(...scores).toFixed(4)}, max=${Math.max(...scores).toFixed(4)}`);
+            console.log(`[HybridSearch] Top 3 results:`);
+            topResults.slice(0, 3).forEach((r, i) => {
+                const score = (r.rrfScore || r.combinedScore || 0).toFixed(4);
+                const vRank = r.ranks?.vector || 'N/A';
+                const tRank = r.ranks?.text || 'N/A';
+                const vScore = (r.vectorScore || 0).toFixed(4);
+                const tScore = (r.textScore || r.bm25Score || 0).toFixed(4);
+                console.log(`  [${i + 1}] finalScore=${score}, vectorRank=${vRank}, textRank=${tRank}, vectorScore=${vScore}, textScore=${tScore}`);
+            });
+        }
     }
 
     return {
@@ -408,7 +414,7 @@ function performBM25Search(results, query, options = {}) {
         return results;
     }
 
-    const { settings, ...scorerOptions } = options;
+    const { settings, debugLog, ...scorerOptions } = options;
     const scorer = createBM25Scorer(results, scorerOptions);
     if (!scorer || scorer.totalDocs === 0) {
         console.warn('[HybridSearch] Failed to create BM25 scorer or no documents indexed');
@@ -420,6 +426,7 @@ function performBM25Search(results, query, options = {}) {
     const maxKeywords = RETRIEVAL_KEYWORD_LEVELS[level]?.maxKeywords ?? 50;
     const rawKeywords = extractQueryKeywords(query, maxKeywords);
     const queryTokens = rawKeywords.map(token => isCJKToken(token) ? token : porterStemmer(token));
+    if (debugLog) console.log(`[HybridSearch] BM25 query tokens (${queryTokens.length}): [${queryTokens.join(', ')}]`);
     const scoredResults = results.map((result, idx) => {
         const bm25Score = scorer.scoreDocument(queryTokens, idx);
         return {

@@ -22,7 +22,6 @@ import { openTextCleaningManager } from './text-cleaning-manager.js';
 import { progressTracker } from './progress-tracker.js';
 import { resetBackendHealth } from '../backends/backend-manager.js';
 import { getHealthIndicatorHtml, getHealthModalHtml, initializeHealthDashboard } from './health-dashboard.js';
-import { getChatCollectionId } from '../core/chat-vectorization.js';
 import { doesChatHaveVectors, getCollectionRegistry } from '../core/collection-loader.js';
 import { getModelField } from '../core/providers.js';
 import { getChunkingStrategies } from '../core/content-types.js';
@@ -1701,7 +1700,7 @@ export function refreshWIStatus() {
 }
 
 export function refreshAutoSyncCheckbox(settings) {
-    const collectionId = getChatCollectionId();
+    const collectionId = null; // DEAD-CHUNK-CHAT: always null
     const $status = $('#vecthare_autosync_status');
     if (!collectionId) {
         $('#vecthare_autosync_enabled').prop('checked', false);
@@ -2005,7 +2004,7 @@ function bindSettingsEvents(settings, callbacks) {
                 return;
             }
 
-            const collectionId = getChatCollectionId();
+            const collectionId = null; // DEAD-CHUNK-CHAT: always null
             if (!collectionId) {
                 toastr.warning('Could not get collection ID for this chat');
                 $checkbox.prop('checked', false);
