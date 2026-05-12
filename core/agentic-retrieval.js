@@ -374,7 +374,7 @@ async function _callPlanner({ systemPrompt, userMessage, llmCfg, timeoutMs }) {
  */
 function _getRecentChatForPlanner(settings) {
     const chat = getContext().chat || [];
-    const depth = Math.max(1, Math.min(50, settings.agentic_retrieval_chat_depth || 5));
+    const depth = Math.max(1, Math.min(50, settings.agentic_retrieval_chat_depth || 3));
     return chat
         .filter(m => !m.is_system)
         .slice(-depth)

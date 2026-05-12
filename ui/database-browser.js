@@ -731,6 +731,16 @@ const _PERSONA_SCOPED_PREFIXES = [
  * @returns {object[]}
  */
 function _filterCollectionsByCurrentPersona(collections) {
+  // SUPERADMIN MODE bypass — when `settings.superadmin === true` (hand-edited
+  // into settings.json, no UI toggle), skip persona filtering entirely and
+  // show every collection on the server. See defaults in index.js.
+  if (browserState.settings?.superadmin === true) {
+    console.log(
+      `VectHare DB Browser: ⚡ superadmin=true → bypassing persona/handle filter (showing ALL ${collections.length} collections)`,
+    );
+    return collections;
+  }
+
   const ownHandle = _sanitizeHandleForFilter(getContext()?.name1);
 
   return collections.filter((c) => {
@@ -3258,12 +3268,17 @@ async function performSearch() {
   // handle in the *name itself* doesn't match the current persona. This guards
   // against foreign collections that leaked through (missing/stale metadata, etc.)
   // and prevents the search from ever hitting another user's collection.
-  const ownHandle = _sanitizeHandleForFilter(getContext()?.name1);
-  collectionIds = collectionIds.filter((id) => {
-    const handle = _extractHandleFromCollectionId(id);
-    if (handle === null) return true; // not persona-scoped (e.g. legacy file_*)
-    return handle === ownHandle;
-  });
+  //
+  // SUPERADMIN MODE bypass — when `settings.superadmin === true`, skip this gate
+  // too so the search can reach foreign collections that the user wants to query.
+  if (browserState.settings?.superadmin !== true) {
+    const ownHandle = _sanitizeHandleForFilter(getContext()?.name1);
+    collectionIds = collectionIds.filter((id) => {
+      const handle = _extractHandleFromCollectionId(id);
+      if (handle === null) return true; // not persona-scoped (e.g. legacy file_*)
+      return handle === ownHandle;
+    });
+  }
 
   if (enabledOnly) {
     collectionIds = collectionIds.filter((id) => {

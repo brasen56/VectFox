@@ -194,11 +194,21 @@ const defaultSettings = {
     agentic_retrieval_openrouter_api_key: '',          // '' → inherit summarize_openrouter_api_key
     agentic_retrieval_vllm_url: '',                    // '' → inherit summarize_vllm_url
     agentic_retrieval_vllm_api_key: '',                // '' → inherit summarize_vllm_api_key
-    agentic_retrieval_chat_depth: 5,                   // # of past chat turns sent to planner (slider 3-15)
+    agentic_retrieval_chat_depth: 3,                   // # of past chat turns sent to planner (slider 1-10)
     agentic_retrieval_candidates_to_show: 12,          // Pre-search slice shown to planner (slider 5-20)
     agentic_retrieval_max_queries: 4,                  // Hard ceiling on planner output (slider 1-4)
     agentic_retrieval_timeout_ms: 30000,               // Planner LLM call timeout (matches summarize default; some models need >5s)
     agentic_retrieval_debug_logging: false,            // Separate debug toggle from eventbase_debug_logging
+
+    // ─── Hidden / Power-User ────────────────────────────────────────────
+    // SUPERADMIN MODE — no GUI toggle. Set to true by hand-editing settings.json
+    // (the `vecthareplus` block under SillyTavern's extension_settings) to enable.
+    // When true, the Database Browser bypasses ALL persona / handle ID filtering
+    // and shows EVERY collection on the server regardless of creatorHandle. Locking
+    // a foreign collection then works normally. Intended for dev / debugging /
+    // multi-persona admin scenarios. Do not expose in the UI — this is a tripwire,
+    // not a feature.
+    superadmin: false,
 };
 
 // Runtime settings (merged with saved settings)

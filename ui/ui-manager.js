@@ -1172,9 +1172,9 @@ export function renderSettings(containerId, settings, callbacks) {
                             <p class="vecthare-section-label" style="margin-top:16px;"><strong>Retrieval Tuning</strong></p>
 
                             <div class="vecthare-form-group">
-                                <label class="vecthare-label">Past chat turns sent to planner: <span id="vecthare_agentic_chat_depth_val">5</span></label>
-                                <input type="range" id="vecthare_agentic_chat_depth" min="3" max="15" step="1" class="vecthare-range" />
-                                <small class="vecthare_hint">How many recent non-system chat turns are included as narrative context for the planner.</small>
+                                <label class="vecthare-label">Past chat turns sent to planner: <span id="vecthare_agentic_chat_depth_val">3</span></label>
+                                <input type="range" id="vecthare_agentic_chat_depth" min="1" max="10" step="1" class="vecthare-range" />
+                                <small class="vecthare_hint">How many recent non-system chat turns are included as narrative context for the planner. Lower = faster + cheaper LLM call; higher = more story context for the planner to reason about.</small>
                             </div>
 
                             <div class="vecthare-form-group">
@@ -2447,7 +2447,7 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
     };
-    bindAgenticSlider('#vecthare_agentic_chat_depth', '#vecthare_agentic_chat_depth_val', 'agentic_retrieval_chat_depth', 5);
+    bindAgenticSlider('#vecthare_agentic_chat_depth', '#vecthare_agentic_chat_depth_val', 'agentic_retrieval_chat_depth', 3);
     bindAgenticSlider('#vecthare_agentic_candidates', '#vecthare_agentic_candidates_val', 'agentic_retrieval_candidates_to_show', 12);
     bindAgenticSlider('#vecthare_agentic_max_queries', '#vecthare_agentic_max_queries_val', 'agentic_retrieval_max_queries', 4);
 
