@@ -243,21 +243,42 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     scored.sort((a, b) => b._finalScore - a._finalScore);
 
     // 5. Duplicate suppression — same event_type + character overlap >= 60%
-    //    AND temporal proximity (source windows within DUPLICATE_WINDOW_GAP messages).
+    //    AND temporal proximity (source windows within DUPLICATE_WINDOW_GAP messages)
+    //    AND similarity score below DUPLICATE_SCORE_OVERRIDE.
     //
-    //    Why temporal proximity matters: without it, two completely distinct scenes
-    //    between the same characters (e.g. a relationship_change between Critblade
-    //    and Mayla in 1577-08-29 vs. another in 1577-09-23) get falsely flagged as
-    //    duplicates because they share event_type + characters. The temporal gate
-    //    only catches *real* ingestion artifacts where the same scene was extracted
-    //    by overlapping windows. Two events 50 days / 1000 messages apart are
-    //    obviously different scenes even with the same cast.
+    //    Three conditions ALL have to hold for a candidate to be suppressed:
+    //      (a) Same event_type as an already-accepted event
+    //      (b) Character overlap (Jaccard) >= 60%
+    //      (c) Source windows within DUPLICATE_WINDOW_GAP messages
+    //      (d) Candidate's raw similarity score below DUPLICATE_SCORE_OVERRIDE
+    //
+    //    Why each condition:
+    //      (a)+(b) catch the "same cast + same scene type" duplicate pattern that
+    //              overlapping ingestion windows produce.
+    //      (c)     prevents false positives where two distinct scenes happen to share
+    //              the same cast type 50 days / 1000 messages apart.
+    //      (d)     score-based escape hatch — a candidate that scored above 0.75 on
+    //              the query is almost certainly a real signal the user asked for,
+    //              not an ingestion artifact. Let it survive even if (a)+(b)+(c)
+    //              would normally flag it. The thinking: real duplicates from
+    //              overlapping windows tend to share scores closely with their
+    //              "winner"; if a "duplicate" significantly out-scores or matches
+    //              the query, it's more likely a distinct event with similar shape.
     //
     //    DUPLICATE_WINDOW_GAP is intentionally small (20 messages). Real ingestion
-    //    duplicates come from overlapping windows during extraction (window size
-    //    is typically 2-6 messages, so adjacent windows are within a few messages).
+    //    duplicates come from overlapping windows during extraction (window size is
+    //    typically 2-6 messages, so adjacent windows are within a few messages).
     //    Anything beyond 20 messages is almost certainly a distinct narrative beat.
+    //
+    //    DUPLICATE_SCORE_OVERRIDE = 0.75 is intentionally high. Most Qdrant RRF
+    //    scores land in 0.2-0.6; crossing 0.75 means the query text and event are
+    //    very tightly aligned (often a near-exact concept/keyword anchor match).
     const DUPLICATE_WINDOW_GAP = 20;
+    const DUPLICATE_SCORE_OVERRIDE = 0.75;
+    const _candidateSimScore = (c) =>
+        typeof c.score === 'number' ? c.score :
+        typeof c.vectorScore === 'number' ? c.vectorScore : 0;
+
     const dedupedEvents = [];
     for (const candidate of scored) {
         let isDuplicate = false;
@@ -274,15 +295,24 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
             const haveTiming = typeof aEnd === 'number' && typeof cEnd === 'number';
             const withinWindow = haveTiming
                 ? Math.abs(aEnd - cEnd) <= DUPLICATE_WINDOW_GAP
-                : true;  // unknown timing → treat as duplicate (legacy safety)
+                : true;  // unknown timing → treat as suspect (legacy safety)
 
-            if (withinWindow) {
-                isDuplicate = true;
+            if (!withinWindow) continue;
+
+            // Score-based escape hatch: high-similarity candidates survive dedup.
+            const candSim = _candidateSimScore(candidate);
+            if (candSim >= DUPLICATE_SCORE_OVERRIDE) {
                 if (debugLog) {
-                    console.log(`[EventBase] Dedup: "${candidate.event_type}" suppressed (chars overlap, ${haveTiming ? `windows ${Math.abs(aEnd - cEnd)} msgs apart` : 'no timing info'})`);
+                    console.log(`[EventBase] Dedup: "${candidate.event_type}" ESCAPED dedup via score override (sim=${candSim.toFixed(3)} >= ${DUPLICATE_SCORE_OVERRIDE}, windows ${haveTiming ? Math.abs(aEnd - cEnd) + ' msgs' : '?'} apart)`);
                 }
-                break;
+                continue;  // not a duplicate after all — let it through
             }
+
+            isDuplicate = true;
+            if (debugLog) {
+                console.log(`[EventBase] Dedup: "${candidate.event_type}" suppressed (sim=${candSim.toFixed(3)}, ${haveTiming ? `windows ${Math.abs(aEnd - cEnd)} msgs apart` : 'no timing info'})`);
+            }
+            break;
         }
         if (!isDuplicate) dedupedEvents.push(candidate);
     }
