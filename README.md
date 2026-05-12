@@ -201,7 +201,7 @@ Older content gets a lower score so it only surfaces when really relevant.
 relevance = original_score × (0.5 ^ (message_age / half_life))
 ```
 
-With half-life = 50: a message 50 ago is at 50% relevance, 100 ago at 25%, 150 ago at 12.5%. Floor (default 0.3) prevents complete forgetting. Mark important chunks **temporally blind** to make them immune.
+With half-life = 50: a message 50 ago is at 50% relevance, 100 ago at 25%, 150 ago at 12.5%. Floor (default 0.3) prevents complete forgetting. Mark important chunks **temporally blind** to make them immune.  A3 Path should not need to use this feature because the whole point of using A3 path is to allow the backend search the complete database with no performance penalty.
 
 > **EventBase note:** EventBase has its own built-in recency bonus in the 4-weight re-ranker. The standalone decay setting only affects non-chat content (lorebook, documents).
 
@@ -214,7 +214,7 @@ With half-life = 50: a message 50 ago is at 50% relevance, 100 ago at 25%, 150 a
 | **Standard (Vectra - SillyTavern default vector format)** | Small datasets, multilingual, getting started | No dependencies. Limited to A1/A2 hybrid. |
 | **Qdrant** | Large chats, multilingual, production | A3 hybrid (best accuracy). Requires Qdrant + Similharity plugin (installation below). |
 
-Use **Qdrant vector database** for any ultra fast and accurate delopment — A3 is materially more accurate than A1/A2, especially for CJK, and it is free and opensource.  2000+ events in the database takes 1.5 seconds round trip search.
+Use **Qdrant vector database** for any ultra fast and accurate delopment — A3 is materially more accurate than A1/A2, especially for CJK, and it is free and opensource.  2000+ events in the database takes less than 1 seconds round trip search.
 
 ---
 
