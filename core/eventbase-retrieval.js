@@ -226,11 +226,11 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         // unmatched events even if their semantic scores are slightly higher.
         //
         // Configurable via `eventbase_anchor_boost` (Core tab slider, 0.00-0.50,
-        // default 0.25). Setting to 0 disables the boost (useful when measuring
+        // default 0.20). Setting to 0 disables the boost (useful when measuring
         // agentic-mode-only contribution to recall).
         const anchorBoostAmount = typeof settings.eventbase_anchor_boost === 'number'
             ? Math.max(0, Math.min(0.5, settings.eventbase_anchor_boost))
-            : 0.25;
+            : 0.20;
         const anchorBoost = anchorBoostAmount > 0 && anchorText && (meta.keywords || []).some(
             k => k.length >= 2 && anchorText.includes(k.toLowerCase())
         ) ? anchorBoostAmount : 0;
@@ -279,15 +279,15 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     //    scores land in 0.2-0.6; crossing 0.75 means the query text and event are
     //    very tightly aligned (often a near-exact concept/keyword anchor match).
     // Configurable via `eventbase_dedup_window_gap` (Core tab slider, 0-200,
-    // default 20). Semantics: events N or more messages apart are kept.
+    // default 10). Semantics: events N or more messages apart are kept.
     //   0   → temporal-proximity dedup fully DISABLED (every distance kept,
     //         including same-window duplicates that were extracted from one chunk).
     //   1   → only literal same-window (distance=0) duplicates suppressed.
-    //   20  → distances 0..19 suppressed; 20+ kept (default).
+    //   10  → distances 0..9 suppressed; 10+ kept (default).
     //   200 → aggressive dedup (max).
     const DUPLICATE_WINDOW_GAP = typeof settings.eventbase_dedup_window_gap === 'number'
         ? Math.max(0, Math.min(200, settings.eventbase_dedup_window_gap))
-        : 20;
+        : 10;
     const DUPLICATE_SCORE_OVERRIDE = 0.75;
     const _candidateSimScore = (c) =>
         typeof c.score === 'number' ? c.score :
@@ -342,7 +342,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     // already see that content directly; injecting the event adds redundant information.
     // Skipped when cross-chat locked: source_window_end belongs to a different conversation
     // and is meaningless relative to the current chat length.
-    const dedupDepth = settings.deduplication_depth ?? 50;
+    const dedupDepth = settings.deduplication_depth ?? 0;
     const visibleThreshold = dedupDepth > 0 ? chatLength - dedupDepth : -1;
 
     const contextDedupedEvents = (skipContextDedup || dedupDepth <= 0)

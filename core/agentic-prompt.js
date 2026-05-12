@@ -41,7 +41,9 @@ about when planning:
   locations    — array of places
   factions     — array of groups
   items        — array of items
-  concepts     — array of themes (e.g. "ransom", "first kiss")
+  concepts     — array of themes, in the SAME LANGUAGE as the chat
+                 (English chat → English concepts like "ransom"; Chinese chat
+                 → Chinese concepts like "贖身"; Japanese → "試練"; etc.)
   keywords     — array of search terms
   DateTime     — in-story timestamp
 
@@ -51,24 +53,123 @@ Your output is STRICT JSON with three top-level fields:
              Aim for COMPLEMENTARY coverage, not paraphrases of the same
              question. Each query should target a DIFFERENT angle of what
              the user needs to remember.
-             If the chat language is non-English, emit queries in BOTH the
-             chat language AND English — events may be indexed in either.
 
   filters:   Optional. Object with any of:
                characters_any, locations_any, factions_any, concepts_any,
                event_type_any  (arrays of strings)
                importance_gte  (number 1-10)
-             Use sparingly — over-filtering hides relevant events.
-             You may omit this field entirely.
 
   rationale: One sentence in the chat language explaining your plan. For
              debugging only — it is not used in retrieval.
 
+═══════════════════════════════════════════════════════════════════════════
+🔴 CRITICAL — LANGUAGE-MATCHING RULE
+═══════════════════════════════════════════════════════════════════════════
+
+Stored events are tagged in the LANGUAGE OF THE STORY. The summarization
+step that extracts events is instructed to preserve the source language —
+so a Chinese chat produces Chinese-tagged events (Chinese concepts, Chinese
+keywords, Chinese open_threads, etc.), a Japanese chat produces Japanese
+events, etc.
+
+This means: queries MUST be written in the same language as the chat.
+Cross-language pairing (e.g. adding English to a Chinese query) injects
+tokens that match NOTHING in the corpus and pollutes sparse-vector search.
+
+Step 1 — DETECT the chat language from the user message and recent turns.
+Supported: English, Traditional Chinese, Simplified Chinese, Japanese,
+Korean, Latin-script (Spanish/French/German/Portuguese/etc.).
+
+Step 2 — Emit queries in that language. Only that language. No translation.
+
+  English chat:
+    ✓ "Astarion reaction Gauntlet of Shar trial"
+    ✗ "Astarion 試煉 Gauntlet"                       ← DO NOT mix in Chinese
+    ✗ "アスタリオン Gauntlet"                         ← DO NOT mix in Japanese
+
+  Chinese chat:
+    ✓ "Mayla 贖身 2萬金幣付款"
+    ✓ "Mayla 綁架 被擄走的經過"
+    ✗ "Mayla 贖身 ransom payment"                    ← DO NOT add English
+    ✗ "Mayla 贖身 身代金"                             ← DO NOT add Japanese
+
+  Japanese chat:
+    ✓ "アスタリオン 試練 影界での反応"
+    ✗ "アスタリオン 試練 trial Gauntlet"             ← DO NOT add English
+    ✗ "アスタリオン 試煉 trial"                       ← DO NOT add Chinese
+
+  Korean chat:
+    ✓ "마이라 몸값 협상 과정"
+    ✗ "마이라 몸값 ransom payment"                   ← DO NOT add English
+
+  Latin-script (Spanish / French / German / etc.) chat:
+    ✓ "Mayla rescate negociación intercambio"
+    ✗ "Mayla rescate ransom payment"                ← DO NOT add English
+
+Proper noun exception:
+  Character names, place names, and item names KEEP THEIR ORIGINAL FORM
+  as they appear in the chat — even if that form is in another script.
+  Example: a Chinese chat may have "Critblade" (English name) and "Mayla"
+  (English name) alongside "卡希雅" (Chinese transliteration). Use them
+  AS-IS in your queries. Do NOT translate proper nouns.
+
+    ✓ "Critblade Mayla 贖身"   ← Critblade and Mayla stay English, 贖身 stays Chinese
+    ✗ "克里特刀 瑪伊拉 贖身"   ← DO NOT translate or transliterate proper nouns
+
+═══════════════════════════════════════════════════════════════════════════
+🔵 FILTER RULES — concept tags matter
+═══════════════════════════════════════════════════════════════════════════
+
+If your queries name a canonical term (e.g. ransom, betrayal, first kiss,
+贖身, 綁架, 試練, 몸값, rescate), you SHOULD also add that SAME term to
+the concepts_any filter — in the same language as your queries. The
+concept payload tag is the strongest anchor for sparse-vector matching.
+Skipping it leaves signal on the table.
+
+Always match the query language:
+  English chat, queries say "ransom"  →  concepts_any: ["ransom"]
+  Chinese chat, queries say "贖身"     →  concepts_any: ["贖身"]
+  Japanese chat, queries say "試練"    →  concepts_any: ["試練"]
+
+DO NOT mix languages in concepts_any. Concepts are THEMES (e.g. 贖身,
+ransom, betrayal) — they must match the chat language. The corpus has
+zero English concept tags for a Chinese story.
+
+Proper nouns (character names, place names, item names, faction names)
+are NOT translated regardless of chat language. They appear in
+characters_any / locations_any / items_any / factions_any in whatever
+form they have in the chat:
+
+  Chinese chat:  characters_any: ["Critblade", "Mayla", "卡希雅"]
+                 locations_any: ["潮音鎮", "Baldur's Gate"]
+                 items_any: ["勾魂"]
+
+  Japanese chat: characters_any: ["Astarion", "Mayla", "アスタリオン"]
+                 locations_any: ["ガントレット", "Baldur's Gate"]
+
+  English chat:  characters_any: ["Astarion", "Critblade"]
+                 locations_any: ["Baldur's Gate", "Gauntlet of Shar"]
+
+This is the SAME rule as the "Proper noun exception" in queries above —
+proper nouns keep their original form everywhere they appear.
+
+Use importance_gte for "remember the time when..." questions where you
+want to skip filler events — set 6 or 7 to focus on major beats.
+
+Over-filtering on characters_any is fine when the user explicitly names
+a character. Don't over-constrain on locations/factions unless clearly
+relevant.
+
+═══════════════════════════════════════════════════════════════════════════
+
 DECOMPOSITION GUIDE — different question types need different coverage:
 
   "why X happened?"      → pull X itself AND the cause chain (prior events
-                           leading to X). Multiple queries covering different
-                           steps of that chain.
+                           leading to X). Emit ONE query per stage of the
+                           chain — e.g. "why I paid ransom?" decomposes
+                           into: (1) kidnapping → (2) negotiation → (3)
+                           payment act → (4) aftermath. Four chain-stage
+                           queries beat four rephrased "why" queries.
   "what happened at Y?"  → pull events at location Y, sorted by importance.
   "remember when...?"    → pull the event + its result/aftermath + emotional
                            reactions. Don't over-filter; user may misremember.
@@ -96,16 +197,32 @@ User says: 我對 Mayla 説 "你記得我當時為甚麼為你贖身嗎?"
 Output:
 {
   "queries": [
-    "Mayla 贖身 ransom payment",
-    "Mayla 綁架 kidnapping captivity",
-    "贖金談判 negotiation ransom broker",
-    "Mayla 獲救 rescue aftermath emotional"
+    "Mayla 贖身 2萬金幣付款",
+    "Mayla 綁架 被擄走 監禁",
+    "贖金談判 老闆 中介",
+    "Mayla 獲救 後續 情感反應"
   ],
   "filters": {
     "characters_any": ["Mayla"],
-    "concepts_any": ["ransom", "kidnapping", "rescue"]
+    "concepts_any": ["贖身", "綁架", "獲救"]
   },
   "rationale": "用戶在問「為甚麼」,需要完整因果鏈:綁架前因 → 贖金談判 → 付款 → 救出反應。"
+}
+
+Example 3 — Japanese chat, character-state question:
+User says: アスタリオン、ガントレットで何を考えていたの?
+Output:
+{
+  "queries": [
+    "ガントレット 探索 入り口",
+    "アスタリオン 試練 反応",
+    "影界 発見 物語"
+  ],
+  "filters": {
+    "characters_any": ["Astarion"],
+    "concepts_any": ["ガントレット", "試練"]
+  },
+  "rationale": "アスタリオンの試練に対する視点を聞いている — その場所での彼の出来事と反応を引き出す。"
 }
 
 Return ONLY the JSON object. No commentary, no markdown fences, no preamble.`;

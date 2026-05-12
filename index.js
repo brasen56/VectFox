@@ -95,7 +95,13 @@ const defaultSettings = {
     score_threshold: 0.25,
 
     // Deduplication settings
-    deduplication_depth: 50, // Number of recent messages to check for duplicates (0 = check all)
+    // Recent-context skip: drop candidate events whose source_window_end falls within
+    // the last N messages of the chat — assumption is that the LLM already sees those
+    // messages in raw form. In practice this assumption breaks because actual visible
+    // chat context is typically ~3-6 messages (depends on context budget / system prompt /
+    // other extensions). Default 0 = filter disabled, never skip. Power users can opt in
+    // to a small value (e.g. 3-10) if their setup has predictable raw-context visibility.
+    deduplication_depth: 0,
 
     // Keyword scoring method for retrieval (standard backend only; ignored when native hybrid active)
     keyword_scoring_method: 'bm25', // 'bm25' (fast re-rank of ANN top-K) | 'hybrid' (candidate-limited hybrid fusion over expanded vector results)
@@ -185,13 +191,15 @@ const defaultSettings = {
 
     // Anchor boost: flat additive bonus when an event's keyword appears verbatim
     // in the user's last message. Rescues historically-distant events the user
-    // explicitly asks about. Slider 0.00-0.50, default 0.25. 0 = disabled.
-    eventbase_anchor_boost: 0.25,
-    // Dedup temporal proximity: only suppress two same-type/same-cast events
-    // when their source windows are within this many messages of each other.
-    // Slider 1-200, default 20. Lower = stricter (keep more distinct events);
-    // higher = more aggressive dedup.
-    eventbase_dedup_window_gap: 20,
+    // explicitly asks about. Slider 0.00-0.50, default 0.20 (selected from
+    // 4-run grid benchmarking — see plans/agentic-retrieval-plan.md notes).
+    // 0 = disabled.
+    eventbase_anchor_boost: 0.20,
+    // Dedup temporal proximity: events N or more messages apart are treated as
+    // distinct (kept). Slider 0-200, default 10. 0 = dedup fully disabled;
+    // 10 catches same-window duplicates plus near-adjacent extraction artifacts
+    // (windows 0-9 apart) while keeping genuinely distinct scenes 10+ msgs away.
+    eventbase_dedup_window_gap: 10,
 
     // ─── AgentMode (Agentic Retrieval) ──────────────────────────────────
     // Optional LLM planner step that consumes pre-search candidates plus

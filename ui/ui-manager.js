@@ -483,22 +483,22 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <small class="vecthare_hint">Minimum number of messages in chat before RAG injection starts (0 = inject immediately)</small>
 
                                 <label for="vecthare_deduplication_depth" style="margin-top: 12px;">
-                                    <small>Dedup Depth: <span id="vecthare_deduplication_depth_value">50</span> messages</small>
+                                    <small>Skip Already-Visible Events: <span id="vecthare_deduplication_depth_value">0</span> messages</small>
                                 </label>
                                 <input type="range" id="vecthare_deduplication_depth" class="vecthare-slider" min="0" max="500" step="10" />
-                                <small class="vecthare_hint">Recent messages to check for duplicates (0 = check all, lower = allow older content to resurface)</small>
+                                <small class="vecthare_hint">Drop candidate events whose source window is in the last N messages of the chat (assumption: the LLM can already see them in raw context). <b>0 = OFF (recommended)</b> — never skip on this basis. Real raw-context visibility is usually only ~3-6 messages (depends on context budget), so larger values tend to over-filter. Independent from "Dedup Window Gap" below, which is about removing near-duplicate events from the candidate pool.</small>
 
                                 <label for="vecthare_eventbase_dedup_window_gap" style="margin-top: 12px;">
-                                    <small>Dedup Window Gap: <span id="vecthare_eventbase_dedup_window_gap_val">20</span> messages</small>
+                                    <small>Dedup Window Gap: <span id="vecthare_eventbase_dedup_window_gap_val">10</span> messages</small>
                                 </label>
                                 <input type="range" id="vecthare_eventbase_dedup_window_gap" class="vecthare-slider" min="0" max="200" step="1" />
-                                <small class="vecthare_hint">EventBase only. Minimum source-window distance at which two same-type/same-cast events are considered <b>distinct</b> (kept). <b>0 = OFF</b> (no temporal-proximity dedup; even same-window duplicates kept). <b>1</b> = only same-window duplicates suppressed. <b>20</b> = events within 19 messages dedup'd; 20+ apart kept (default). Higher = more aggressive dedup.</small>
+                                <small class="vecthare_hint">EventBase only. Minimum source-window distance at which two same-type/same-cast events are considered <b>distinct</b> (kept). <b>0 = OFF</b> (no temporal-proximity dedup; even same-window duplicates kept). <b>1</b> = only same-window duplicates suppressed. <b>10</b> (default) = events within 9 messages dedup'd; 10+ apart kept. Higher = more aggressive dedup.</small>
 
                                 <label for="vecthare_eventbase_anchor_boost" style="margin-top: 12px;">
-                                    <small>Anchor Boost: <span id="vecthare_eventbase_anchor_boost_val">0.25</span></small>
+                                    <small>Anchor Boost: <span id="vecthare_eventbase_anchor_boost_val">0.20</span></small>
                                 </label>
                                 <input type="range" id="vecthare_eventbase_anchor_boost" class="vecthare-slider" min="0" max="0.5" step="0.05" />
-                                <small class="vecthare_hint">EventBase only. Flat additive bonus when an event's stored keyword appears verbatim in your last message. Rescues historically-distant events the user explicitly asks about. 0 = disabled. Range 0.00-0.50, default 0.25.</small>
+                                <small class="vecthare_hint">EventBase only. Flat additive bonus when an event's stored keyword appears verbatim in your last message. Rescues historically-distant events the user explicitly asks about. 0 = disabled. Range 0.00-0.50, default 0.20.</small>
 
                                 <div style="margin-top: 12px;">
                                     <label class="checkbox_label" for="vecthare_retrieval_popup_on_start">
@@ -2670,49 +2670,52 @@ function bindSettingsEvents(settings, callbacks) {
         });
     $('#vecthare_threshold_value').text(settings.score_threshold.toFixed(2));
 
-    // Deduplication depth
+    // "Skip Already-Visible Events" (legacy key name: deduplication_depth).
+    // Default 0 = filter disabled. See settings comment in index.js — the assumption
+    // that the LLM sees the last N messages in raw form is usually wrong (~3-6 in
+    // practice), so this is opt-in only.
     $('#vecthare_deduplication_depth')
-        .val(settings.deduplication_depth ?? 50)
+        .val(settings.deduplication_depth ?? 0)
         .on('input', function() {
             const value = parseInt($(this).val());
-            const safeValue = isNaN(value) ? 50 : Math.max(0, value);
+            const safeValue = isNaN(value) ? 0 : Math.max(0, value);
             $('#vecthare_deduplication_depth_value').text(safeValue);
             settings.deduplication_depth = safeValue;
             Object.assign(extension_settings.vecthareplus, settings);
             saveSettingsDebounced();
         });
-    $('#vecthare_deduplication_depth_value').text(settings.deduplication_depth ?? 50);
+    $('#vecthare_deduplication_depth_value').text(settings.deduplication_depth ?? 0);
 
     // EventBase Dedup Window Gap — temporal proximity threshold for the
     // dedup gate in eventbase-retrieval.js. See settings comment in index.js.
     // 0 = temporal dedup fully disabled.
     $('#vecthare_eventbase_dedup_window_gap')
-        .val(settings.eventbase_dedup_window_gap ?? 20)
+        .val(settings.eventbase_dedup_window_gap ?? 10)
         .on('input', function() {
             const value = parseInt($(this).val());
-            const safeValue = isNaN(value) ? 20 : Math.max(0, Math.min(200, value));
+            const safeValue = isNaN(value) ? 10 : Math.max(0, Math.min(200, value));
             $('#vecthare_eventbase_dedup_window_gap_val').text(safeValue);
             settings.eventbase_dedup_window_gap = safeValue;
             Object.assign(extension_settings.vecthareplus, settings);
             saveSettingsDebounced();
         });
-    $('#vecthare_eventbase_dedup_window_gap_val').text(settings.eventbase_dedup_window_gap ?? 20);
+    $('#vecthare_eventbase_dedup_window_gap_val').text(settings.eventbase_dedup_window_gap ?? 10);
 
     // EventBase Anchor Boost — flat additive bonus on keyword-anchored events.
     // See settings comment in index.js and the boost code in
     // eventbase-retrieval.js (around the `_finalScore` formula).
     $('#vecthare_eventbase_anchor_boost')
-        .val(settings.eventbase_anchor_boost ?? 0.25)
+        .val(settings.eventbase_anchor_boost ?? 0.20)
         .on('input', function() {
             const value = parseFloat($(this).val());
-            const safeValue = isNaN(value) ? 0.25 : Math.max(0, Math.min(0.5, value));
+            const safeValue = isNaN(value) ? 0.20 : Math.max(0, Math.min(0.5, value));
             $('#vecthare_eventbase_anchor_boost_val').text(safeValue.toFixed(2));
             settings.eventbase_anchor_boost = safeValue;
             Object.assign(extension_settings.vecthareplus, settings);
             saveSettingsDebounced();
         });
     $('#vecthare_eventbase_anchor_boost_val').text(
-        (typeof settings.eventbase_anchor_boost === 'number' ? settings.eventbase_anchor_boost : 0.25).toFixed(2)
+        (typeof settings.eventbase_anchor_boost === 'number' ? settings.eventbase_anchor_boost : 0.20).toFixed(2)
     );
 
     // Keyword scoring method (bm25 = A1 fast re-rank; hybrid = A2 client-side hybrid fusion, ANN-bound ≤100)
