@@ -373,7 +373,8 @@ function onRunDiagnosticsClick() {
 async function onMigrateCollectionsClick() {
     const { findCollectionsToMigrate, migrateAllCollections } = await import('./core/collection-migrator.js');
     
-    const collectionsToMigrate = findCollectionsToMigrate();
+    console.log('VectFox: Starting collection migration check...');
+    const collectionsToMigrate = await findCollectionsToMigrate(settings);
     
     if (collectionsToMigrate.length === 0) {
         toastr.info('No legacy collections found to migrate', 'VectFox Migration');

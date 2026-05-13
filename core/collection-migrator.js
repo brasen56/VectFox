@@ -143,9 +143,16 @@ export async function deleteOldCollection(oldCollectionId, settings) {
 
 /**
  * Finds all collections that need migration (vecthare_* prefix)
- * @returns {string[]} Array of collection IDs to migrate
+ * @param {object} settings - VectFox settings (optional, for auto-discovery)
+ * @returns {Promise<string[]>} Array of collection IDs to migrate
  */
-export function findCollectionsToMigrate() {
+export async function findCollectionsToMigrate(settings = null) {
+    // Auto-discover collections from backend if settings provided
+    if (settings) {
+        const { discoverExistingCollections } = await import('./collection-loader.js');
+        await discoverExistingCollections(settings);
+    }
+
     const registry = getCollectionRegistry();
     const legacyPrefixes = [
         COLLECTION_PREFIXES.VECTHARE_CHAT,
@@ -156,9 +163,14 @@ export function findCollectionsToMigrate() {
         COLLECTION_PREFIXES.VECTHARE_EVENTBASE,
     ];
 
-    return registry.filter((collectionId) =>
-        legacyPrefixes.some((prefix) => collectionId.startsWith(prefix)),
-    );
+    const legacyCollections = registry.filter((collectionId) => {
+        // Handle both raw collection IDs and registry keys (backend:collectionId)
+        const id = collectionId.includes(':') ? collectionId.split(':')[1] : collectionId;
+        return legacyPrefixes.some((prefix) => id.startsWith(prefix));
+    });
+
+    console.log(`VectFox Migration: Found ${legacyCollections.length} legacy collections:`, legacyCollections);
+    return legacyCollections;
 }
 
 /**
@@ -169,7 +181,7 @@ export function findCollectionsToMigrate() {
  * @returns {Promise<{totalMigrated: number, failed: string[], itemCount: number}>}
  */
 export async function migrateAllCollections(settings, onProgress = null, deleteOld = false) {
-    const collectionsToMigrate = findCollectionsToMigrate();
+    const collectionsToMigrate = await findCollectionsToMigrate(settings);
     const total = collectionsToMigrate.length;
     const failed = [];
     let totalItemCount = 0;
@@ -178,7 +190,16 @@ export async function migrateAllCollections(settings, onProgress = null, deleteO
     console.log(`VectFox: Starting migration of ${total} collections...`);
 
     for (let i = 0; i < collectionsToMigrate.length; i++) {
-        const oldCollectionId = collectionsToMigrate[i];
+        const registryKey = collectionsToMigrate[i];
+        
+        // Extract actual collection ID from registry key (might be "backend:collectionId")
+        const { parseRegistryKey } = await import('./collection-ids.js');
+        const parsed = parseRegistryKey(registryKey);
+        const oldCollectionId = parsed.collectionId;
+        const backend = parsed.backend;
+        
+        console.log(`VectFox: Migrating ${registryKey} (extracted ID: ${oldCollectionId}, backend: ${backend})`);
+        
         const collectionNum = i + 1;
 
         onProgress?.(
