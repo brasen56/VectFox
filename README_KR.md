@@ -1,6 +1,6 @@
 # 🐰 VectHarePlus — SillyTavern을 위한 고급 RAG
 
-> *롤플레잉 대화를 위한 완벽한 기억.* VectHarePlus는 LLM이 추출한 채팅 이벤트, 네이티브 스파스 벡터 하이브리드 검색, 그리고 똑똑한 메모리 감쇠를 SillyTavern에 제공합니다.
+> *긴 롤플레잉 스토리를 더 오래, 더 자연스럽게 기억하세요.* VectHarePlus는 LLM 기반 스토리 이벤트 추출, 네이티브 희소 벡터 하이브리드 검색, 그리고 실제 벡터 데이터베이스를 기반으로 한 빠르고 확장성 높은 메모리 시스템을 제공합니다.
 
 ![License](https://img.shields.io/badge/license-GPLv3-blue) ![Status](https://img.shields.io/badge/status-Active-brightgreen)
 

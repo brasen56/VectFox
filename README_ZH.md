@@ -1,6 +1,6 @@
 # 🐰 VectHarePlus — SillyTavern 進階 RAG 系統
 
-> *替你的角色扮演對話帶來真正可靠的記憶。* VectHarePlus 為 SillyTavern 加入由 LLM 萃取的聊天事件、原生稀疏向量混合搜尋，以及智慧型記憶衰減。
+> *為長篇角色扮演故事打造的持久記憶。*VectHarePlus 能自動從對話中提取劇情事件，結合原生稀疏向量混合搜尋，並透過真正的向量資料庫帶來高速且可擴展的記憶系統。
 
 ![License](https://img.shields.io/badge/license-GPLv3-blue) ![Status](https://img.shields.io/badge/status-Active-brightgreen)
 

@@ -1,6 +1,6 @@
 # 🐰 VectHarePlus — Advanced RAG for SillyTavern
 
-> *Perfect memory for your roleplay conversations.* VectHarePlus brings LLM-extracted chat events, native sparse-vector hybrid search, and smart memory decay to SillyTavern.
+> *Persistent memory for long-running roleplay stories*. VectHarePlus delivers LLM-extracted story events, native sparse-vector hybrid search, and scalable performance powered by a real vector database.
 
 ![License](https://img.shields.io/badge/license-GPLv3-blue) ![Status](https://img.shields.io/badge/status-Active-brightgreen)
 

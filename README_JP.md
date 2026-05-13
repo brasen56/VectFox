@@ -1,6 +1,6 @@
 # 🐰 VectHarePlus — SillyTavern 向け高度 RAG システム
 
-> *ロールプレイ会話に、ちゃんと頼れる記憶を。* VectHarePlus は、LLM が抽出したチャットイベント、ネイティブのスパースベクトル・ハイブリッド検索、そして賢いメモリ減衰を SillyTavern に追加します。
+> *長編ロールプレイをもっと自然に、もっと覚えてくれる存在へ。*VectHarePlus は、LLMによるストーリーイベント抽出、ネイティブなスパースベクトル・ハイブリッド検索、そして本格的なベクターデータベースによる高速かつスケーラブルなメモリーを実現します。
 
 ![License](https://img.shields.io/badge/license-GPLv3-blue) ![Status](https://img.shields.io/badge/status-Active-brightgreen)
 
