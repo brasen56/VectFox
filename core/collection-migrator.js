@@ -85,7 +85,7 @@ export async function migrateCollection(oldCollectionId, settings, onProgress = 
             hash: chunk.hash,
             text: chunk.text,
             index: chunk.index || 0,
-            meta: chunk.meta || {},
+            metadata: chunk.metadata || {},
         }));
 
         onProgress?.(50, 100, `Inserting ${items.length} vectors into ${newCollectionId}...`);
