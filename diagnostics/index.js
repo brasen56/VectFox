@@ -88,7 +88,7 @@ export async function runDiagnostics(settings, includeProductionTests = false) {
     // Try to get extension version from manifest.json
     try {
         // Derive manifest URL from this module's location so it works regardless of
-        // the folder name the user installs the extension under (e.g. VectFox vs VectFoxPlus).
+        // the folder name the user installs the extension under (e.g. VectFox vs VectFox).
         const manifestUrl = new URL('../manifest.json', import.meta.url).href + `?_=${Date.now()}`;
         console.log('VectFox Diagnostics: Fetching manifest from:', manifestUrl);
         const manifestResponse = await fetch(manifestUrl);

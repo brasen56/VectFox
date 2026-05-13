@@ -27,7 +27,7 @@ let isModalOpen = false;
  * @returns {string} Current backend name
  */
 function getCurrentBackend() {
-    return extension_settings.VectFoxplus?.vector_backend || 'standard';
+    return extension_settings.vectfox?.vector_backend || 'standard';
 }
 
 /**

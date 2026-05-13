@@ -83,7 +83,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
 
     // If the fingerprint cache says windows were extracted but Qdrant has no data
     // (e.g. collection was deleted externally), reset the cache so we start fresh.
-    const cacheEntries = extension_settings?.VectFoxplus?.eventbase_extracted_windows?.[uuid];
+    const cacheEntries = extension_settings?.VectFox?.eventbase_extracted_windows?.[uuid];
     if (Array.isArray(cacheEntries) && cacheEntries.length > 0) {
         try {
             const existingHashes = collectionId ? await getSavedHashes(collectionId, settings) : [];
@@ -409,7 +409,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     }
 
     if (settings.retrieval_popup_on_start) {
-        toastr.info('Retrieving context from EventBase...', 'VectFoxPlus Retrieval');
+        toastr.info('Retrieving context from EventBase...', 'VectFox Retrieval');
     }
 
     // Extract the user's most recent message for focused keyword extraction.
@@ -478,7 +478,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
             const msg = rawCount > 0
                 ? `EventBase: ${rawCount} event(s) already in context`
                 : 'EventBase: no events matched';
-            toastr.info(msg, 'VectFoxPlus Retrieval');
+            toastr.info(msg, 'VectFox Retrieval');
         }
         setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
@@ -522,7 +522,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     }
 
     if (settings.retrieval_popup_on_result) {
-        toastr.success(`EventBase: injected ${injectedCount} event(s)`, 'VectFoxPlus Retrieval');
+        toastr.success(`EventBase: injected ${injectedCount} event(s)`, 'VectFox Retrieval');
     }
 }
 

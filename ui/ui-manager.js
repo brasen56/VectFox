@@ -41,11 +41,16 @@ import { CJK_TOKENIZER_MODES, setCjkTokenizerMode, ensureJiebaTokenizerLoaded, e
 export function renderSettings(containerId, settings, callbacks) {
     console.log('VectFox UI: Rendering settings...');
 
+    // Ensure extension_settings.vectfox exists before any UI event handlers fire
+    if (!extension_settings.vectfox) {
+        extension_settings.vectfox = {};
+    }
+
     const html = `
         <div id="VectFox_settings">
             <div class="inline-drawer">
                 <div class="inline-drawer-toggle inline-drawer-header">
-                    <b>VectFoxPlus - Advanced RAG</b>
+                    <b>VectFox - Advanced RAG</b>
                     <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
                 </div>
                 <div class="inline-drawer-content">
@@ -996,7 +1001,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <input type="checkbox" id="VectFox_agentic_debug" />
                                 <span>Debug Agent Mode</span>
                             </label>
-                            <small class="VectFox_hint">Log [VectFoxPlus-Agentic] details: mode marker, narrative context preview (~50 words per turn), LLM round-trip ms, planner output JSON, Qdrant fanout ms, total agent overhead ms, per-query hit counts. Only fires when Agent Mode is enabled (AgentMode tab).</small>
+                            <small class="VectFox_hint">Log [VectFox-Agentic] details: mode marker, narrative context preview (~50 words per turn), LLM round-trip ms, planner output JSON, Qdrant fanout ms, total agent overhead ms, per-query hit counts. Only fires when Agent Mode is enabled (AgentMode tab).</small>
 
 
                         </div>
@@ -1540,7 +1545,7 @@ function stopConsoleCapture() {
  * Executes diagnostics based on selected categories
  */
 async function executeDiagnostics() {
-    const settings = extension_settings.VectFoxplus;
+    const settings = extension_settings.vectfox;
 
     // Get selected categories
     const runInfrastructure = $('#VectFox_diag_infrastructure').prop('checked');
@@ -1785,7 +1790,7 @@ export async function loadWebLlmModels(settings) {
         } else if (models.length > 0) {
             settings.webllm_model = models[0].id;
             $select.val(settings.webllm_model);
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         }
     });
@@ -2205,7 +2210,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.summarize_provider || 'openrouter')
         .on('change', function() {
             settings.summarize_provider = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             updateSummarizeUI(settings.summarize_provider);
         });
@@ -2217,7 +2222,7 @@ function bindSettingsEvents(settings, callbacks) {
             // Bind 'input' too — 'change' alone only fires on blur, so clicking Vectorize
             // immediately after typing would skip the save.
             settings.summarize_model = String($(this).val()).trim();
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2293,7 +2298,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.summarize_vllm_url || '')
         .on('change', function() {
             settings.summarize_vllm_url = String($(this).val()).trim();
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2314,7 +2319,7 @@ function bindSettingsEvents(settings, callbacks) {
         const value = String($(this).val()).trim();
         if (value) {
             settings.summarize_vllm_api_key = value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             toastr.success('vLLM summarization API key saved');
             $(this).val('');
@@ -2339,7 +2344,7 @@ function bindSettingsEvents(settings, callbacks) {
         const value = String($(this).val()).trim();
         if (value) {
             settings.summarize_openrouter_api_key = value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             toastr.success('OpenRouter summarization API key saved');
             $(this).val('');
@@ -2361,7 +2366,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', !!settings.agentic_retrieval_enabled)
         .on('change', function() {
             settings.agentic_retrieval_enabled = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2369,7 +2374,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.agentic_retrieval_provider || '')
         .on('change', function() {
             settings.agentic_retrieval_provider = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             updateAgenticUI(settings.agentic_retrieval_provider);
         });
@@ -2379,7 +2384,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.agentic_retrieval_model || '')
         .on('input change', function() {
             settings.agentic_retrieval_model = String($(this).val()).trim();
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2400,7 +2405,7 @@ function bindSettingsEvents(settings, callbacks) {
         const value = String($(this).val()).trim();
         if (value) {
             settings.agentic_retrieval_openrouter_api_key = value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             toastr.success('AgentMode OpenRouter key saved');
             $(this).val('');
@@ -2412,7 +2417,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.agentic_retrieval_vllm_url || '')
         .on('change', function() {
             settings.agentic_retrieval_vllm_url = String($(this).val()).trim();
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2432,7 +2437,7 @@ function bindSettingsEvents(settings, callbacks) {
         const value = String($(this).val()).trim();
         if (value) {
             settings.agentic_retrieval_vllm_api_key = value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             toastr.success('AgentMode vLLM key saved');
             $(this).val('');
@@ -2449,7 +2454,7 @@ function bindSettingsEvents(settings, callbacks) {
             const v = Number($(this).val());
             settings[settingKey] = v;
             $(valSpanId).text(v);
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     };
@@ -2462,7 +2467,7 @@ function bindSettingsEvents(settings, callbacks) {
         .on('change input', function() {
             const v = Number($(this).val());
             settings.agentic_retrieval_timeout_ms = Math.max(1000, Math.min(60000, v || 30000));
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2470,7 +2475,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', !!settings.agentic_retrieval_debug_logging)
         .on('change', function() {
             settings.agentic_retrieval_debug_logging = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2480,7 +2485,7 @@ function bindSettingsEvents(settings, callbacks) {
         .on('input', function() {
             const value = Number($(this).val());
             settings.chunk_size = value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2528,7 +2533,7 @@ function bindSettingsEvents(settings, callbacks) {
         // Sync UI controls
         $('#VectFox_keyword_scoring_method').val(settings.keyword_scoring_method || 'bm25');
         $('#VectFox_hybrid_fusion_method').val(settings.hybrid_fusion_method || 'rrf');
-        Object.assign(extension_settings.VectFoxplus, settings);
+        Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
     }
 
@@ -2557,7 +2562,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.qdrant_use_cloud || false)
         .on('change', async function() {
             settings.qdrant_use_cloud = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
 
             // Toggle between local and cloud settings
@@ -2595,7 +2600,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.qdrant_host || 'localhost')
         .on('input', function() {
             settings.qdrant_host = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2604,7 +2609,7 @@ function bindSettingsEvents(settings, callbacks) {
         .on('input', function() {
             const value = parseInt($(this).val());
             settings.qdrant_port = isNaN(value) ? 6333 : value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2612,7 +2617,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.qdrant_url || '')
         .on('input', function() {
             settings.qdrant_url = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2620,7 +2625,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.qdrant_api_key || '')
         .on('input', function() {
             settings.qdrant_api_key = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2629,7 +2634,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.qdrant_multitenancy || false)
         .on('change', function() {
             settings.qdrant_multitenancy = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2643,7 +2648,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.source)
         .on('change', function() {
             settings.source = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             toggleProviderSettings(settings.source, settings);
             console.log(`VectFox: Embedding provider changed to ${settings.source}`);
@@ -2659,7 +2664,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 0.3 : value;
             $('#VectFox_threshold_value').text(safeValue.toFixed(2));
             settings.score_threshold = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_threshold_value').text(settings.score_threshold.toFixed(2));
@@ -2675,7 +2680,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 0 : Math.max(0, value);
             $('#VectFox_deduplication_depth_value').text(safeValue);
             settings.deduplication_depth = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_deduplication_depth_value').text(settings.deduplication_depth ?? 0);
@@ -2690,7 +2695,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 10 : Math.max(0, Math.min(200, value));
             $('#VectFox_eventbase_dedup_window_gap_val').text(safeValue);
             settings.eventbase_dedup_window_gap = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_eventbase_dedup_window_gap_val').text(settings.eventbase_dedup_window_gap ?? 10);
@@ -2705,7 +2710,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 0.20 : Math.max(0, Math.min(0.5, value));
             $('#VectFox_eventbase_anchor_boost_val').text(safeValue.toFixed(2));
             settings.eventbase_anchor_boost = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_eventbase_anchor_boost_val').text(
@@ -2717,7 +2722,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.keyword_scoring_method || 'bm25')
         .on('change', function() {
             settings.keyword_scoring_method = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             console.log(`VectFox: Keyword scoring method changed to ${settings.keyword_scoring_method}`);
             updateNativeHybridUI();
@@ -2728,7 +2733,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.hybrid_keyword_level || 'balance')
         .on('change', function() {
             settings.hybrid_keyword_level = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             console.log(`VectFox: Hybrid keyword level changed to ${settings.hybrid_keyword_level}`);
         });
@@ -2741,7 +2746,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 1.5 : value;
             $('#VectFox_bm25_k1_value').text(safeValue.toFixed(1));
             settings.bm25_k1 = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_bm25_k1_value').text((settings.bm25_k1 || 1.5).toFixed(1));
@@ -2754,7 +2759,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 0.75 : value;
             $('#VectFox_bm25_b_value').text(safeValue.toFixed(2));
             settings.bm25_b = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_bm25_b_value').text((settings.bm25_b || 0.75).toFixed(2));
@@ -2766,7 +2771,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.hybrid_fusion_method || 'rrf')
         .on('change', function() {
             settings.hybrid_fusion_method = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             // Show weights only for weighted method, RRF settings for RRF
             const isWeighted = settings.hybrid_fusion_method === 'weighted';
@@ -2787,7 +2792,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 0.5 : value;
             $('#VectFox_hybrid_vector_weight_value').text(safeValue.toFixed(1));
             settings.hybrid_vector_weight = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_hybrid_vector_weight_value').text((settings.hybrid_vector_weight ?? 0.5).toFixed(1));
@@ -2800,7 +2805,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 0.5 : value;
             $('#VectFox_hybrid_text_weight_value').text(safeValue.toFixed(1));
             settings.hybrid_text_weight = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_hybrid_text_weight_value').text((settings.hybrid_text_weight ?? 0.5).toFixed(1));
@@ -2813,7 +2818,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 60 : value;
             $('#VectFox_hybrid_rrf_k_value').text(safeValue);
             settings.hybrid_rrf_k = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_hybrid_rrf_k_value').text(settings.hybrid_rrf_k || 60);
@@ -2829,7 +2834,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 2 : value;
             $('#VectFox_query_depth_value').text(safeValue);
             settings.query = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_query_depth_value').text(settings.query || 2);
@@ -2841,7 +2846,7 @@ function bindSettingsEvents(settings, callbacks) {
             const value = parseInt($(this).val());
             const safeValue = isNaN(value) ? (settings.insert || 3) : value;
             settings.top_k = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2850,7 +2855,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.eventbase_autosync_popup !== false)
         .on('change', function() {
             settings.eventbase_autosync_popup = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2859,7 +2864,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.retrieval_popup_on_start || false)
         .on('change', function() {
             settings.retrieval_popup_on_start = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2867,7 +2872,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.retrieval_popup_on_result || false)
         .on('change', function() {
             settings.retrieval_popup_on_result = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2892,7 +2897,7 @@ function bindSettingsEvents(settings, callbacks) {
             }
 
             settings.enabled_world_info = enabled;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             // Show/hide the detailed world info settings panel
             $('#VectFox_world_info_settings').toggle(enabled);
@@ -2904,7 +2909,7 @@ function bindSettingsEvents(settings, callbacks) {
             const value = parseFloat($(this).val());
             const safeValue = isNaN(value) ? 0.3 : Math.max(0, Math.min(1, value));
             settings.world_info_threshold = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2914,7 +2919,7 @@ function bindSettingsEvents(settings, callbacks) {
             const value = parseInt($(this).val());
             const safeValue = isNaN(value) ? 3 : Math.max(1, Math.min(20, value));
             settings.world_info_top_k = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2924,7 +2929,7 @@ function bindSettingsEvents(settings, callbacks) {
             const value = parseInt($(this).val());
             const safeValue = isNaN(value) ? 3 : Math.max(1, Math.min(10, value));
             settings.world_info_query_depth = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2933,7 +2938,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.custom_stopwords || '')
         .on('input', function() {
             settings.custom_stopwords = $(this).val();
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -2944,7 +2949,7 @@ function bindSettingsEvents(settings, callbacks) {
             const mode = String($(this).val());
             settings.cjk_tokenizer_mode = mode;
             setCjkTokenizerMode(mode);
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
 
             if (mode === CJK_TOKENIZER_MODES.jieba) {
@@ -3155,7 +3160,7 @@ function bindSettingsEvents(settings, callbacks) {
         .on('change', function() {
             const value = parseInt($(this).val());
             settings.position = value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             // Show/hide depth slider based on position
             $('#VectFox_injection_depth_row').toggle(value === 1);
@@ -3171,7 +3176,7 @@ function bindSettingsEvents(settings, callbacks) {
             const safeValue = isNaN(value) ? 2 : value;
             $('#VectFox_injection_depth_value').text(safeValue);
             settings.depth = safeValue;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_injection_depth_value').text(settings.depth ?? 2);
@@ -3181,7 +3186,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.rag_context || '')
         .on('input', function() {
             settings.rag_context = $(this).val();
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3192,7 +3197,7 @@ function bindSettingsEvents(settings, callbacks) {
             const sanitized = $(this).val().replace(/[^a-zA-Z0-9_-]/g, '');
             $(this).val(sanitized);
             settings.rag_xml_tag = sanitized;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3219,7 +3224,7 @@ function bindSettingsEvents(settings, callbacks) {
             const enabled = $(this).prop('checked');
             settings.default_decay_enabled = enabled;
             updateDecayTypeSection(enabled);
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3228,7 +3233,7 @@ function bindSettingsEvents(settings, callbacks) {
 
     $('input[name="VectFox_default_decay_type"]').on('change', function() {
         settings.default_decay_type = $(this).val();
-        Object.assign(extension_settings.VectFoxplus, settings);
+        Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
     });
 
@@ -3239,7 +3244,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.electronhub_model)
         .on('change', function() {
             settings.electronhub_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3248,7 +3253,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.use_alt_endpoint)
         .on('input', function() {
             settings.use_alt_endpoint = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             $('#VectFox_alt_endpoint_url').toggle(settings.use_alt_endpoint);
         });
@@ -3258,7 +3263,7 @@ function bindSettingsEvents(settings, callbacks) {
         .toggle(settings.use_alt_endpoint)
         .on('input', function() {
             settings.alt_endpoint_url = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3267,7 +3272,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.webllm_model)
         .on('change', function() {
             settings.webllm_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3315,7 +3320,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.ollama_model)
         .on('input', function() {
             settings.ollama_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3323,7 +3328,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.ollama_keep)
         .on('input', function() {
             settings.ollama_keep = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3332,7 +3337,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.bananabread_rerank)
         .on('input', function() {
             settings.bananabread_rerank = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3341,7 +3346,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.injection_debug_logging || false)
         .on('change', function() {
             settings.injection_debug_logging = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3353,7 +3358,7 @@ function bindSettingsEvents(settings, callbacks) {
             // Merged control: one checkbox drives both EventBase and vectorizing logs.
             settings.debug_vectorizing_log = enabled;
             settings.eventbase_debug_logging = enabled;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3362,7 +3367,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', !!settings.eventbase_native_rerank)
         .on('change', function() {
             settings.eventbase_native_rerank = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3371,7 +3376,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', !!settings.eventbase_compare_rerank)
         .on('change', function() {
             settings.eventbase_compare_rerank = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3380,7 +3385,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', !!settings.eventbase_compare_rerank_verbose)
         .on('change', function() {
             settings.eventbase_compare_rerank_verbose = $(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3406,7 +3411,7 @@ function bindSettingsEvents(settings, callbacks) {
                 const v = parseInt($(this).val(), 10);
                 settings[settingKey] = v;
                 if (labelId) $(`#VectFox_eventbase_${labelId}_val`).text(v);
-                Object.assign(extension_settings.VectFoxplus, settings);
+                Object.assign(extension_settings.vectfox, settings);
                 saveSettingsDebounced();
             });
         if (labelId) $(`#VectFox_eventbase_${labelId}_val`).text(settings[settingKey] ?? $el.val());
@@ -3423,7 +3428,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.eventbase_injection_format || 'densetext')
         .on('change', function() {
             settings.eventbase_injection_format = String($(this).val() || 'densetext').toLowerCase();
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3435,7 +3440,7 @@ function bindSettingsEvents(settings, callbacks) {
                 const v = parseFloat($(this).val());
                 if (!isNaN(v)) {
                     settings[settingKey] = v;
-                    Object.assign(extension_settings.VectFoxplus, settings);
+                    Object.assign(extension_settings.vectfox, settings);
                     saveSettingsDebounced();
                 }
             });
@@ -3454,7 +3459,7 @@ function bindSettingsEvents(settings, callbacks) {
                 if (!isNaN(v) && v >= 0) {
                     settings[`eventbase_${k}`] = v;
                     _normalizeRerankWeights();
-                    Object.assign(extension_settings.VectFoxplus, settings);
+                    Object.assign(extension_settings.vectfox, settings);
                     saveSettingsDebounced();
                 }
             });
@@ -3468,7 +3473,7 @@ function bindSettingsEvents(settings, callbacks) {
         ['rerank_w_cosine', 'rerank_w_importance', 'rerank_w_persist', 'rerank_w_recency'].forEach(k => {
             $(`#VectFox_eventbase_${k}`).val(settings[`eventbase_${k}`]);
         });
-        Object.assign(extension_settings.VectFoxplus, settings);
+        Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
         toastr.success('Re-rank weights reset to defaults');
     });
@@ -3482,7 +3487,7 @@ function bindSettingsEvents(settings, callbacks) {
 
     $('#VectFox_eventbase_custom_prompt').on('input', function() {
         settings.eventbase_custom_prompt = $(this).val();
-        Object.assign(extension_settings.VectFoxplus, settings);
+        Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
     });
 
@@ -3491,7 +3496,7 @@ function bindSettingsEvents(settings, callbacks) {
         const { DEFAULT_EXTRACTION_PROMPT } = await import('../core/eventbase-schema.js');
         settings.eventbase_custom_prompt = '';
         $('#VectFox_eventbase_custom_prompt').val(DEFAULT_EXTRACTION_PROMPT);
-        Object.assign(extension_settings.VectFoxplus, settings);
+        Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
         toastr.success('Extraction prompt reset to default', 'EventBase');
     });
@@ -3524,7 +3529,7 @@ function bindSettingsEvents(settings, callbacks) {
             if (value) {
                 // Store in extension settings (primary storage for this key)
                 settings.bananabread_api_key = value;
-                Object.assign(extension_settings.VectFoxplus, settings);
+                Object.assign(extension_settings.vectfox, settings);
                 saveSettingsDebounced();
 
                 // Also write to ST secrets for potential future compatibility
@@ -3541,7 +3546,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.openai_model)
         .on('change', function() {
             settings.openai_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3550,7 +3555,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.cohere_model)
         .on('change', function() {
             settings.cohere_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3559,7 +3564,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.togetherai_model)
         .on('change', function() {
             settings.togetherai_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3568,7 +3573,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.vllm_model)
         .on('input', function() {
             settings.vllm_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3580,7 +3585,7 @@ function bindSettingsEvents(settings, callbacks) {
             const value = String($(this).val()).trim();
             if (value && value !== '••••••••') {
                 settings.vllm_api_key = value;
-                Object.assign(extension_settings.VectFoxplus, settings);
+                Object.assign(extension_settings.vectfox, settings);
                 saveSettingsDebounced();
                 $(this).val('••••••••').attr('placeholder', '••••••••');
                 toastr.success('vLLM API key saved');
@@ -3592,7 +3597,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.google_model)
         .on('change', function() {
             settings.google_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3601,7 +3606,7 @@ function bindSettingsEvents(settings, callbacks) {
         .val(settings.openrouter_model)
         .on('input', function() {
             settings.openrouter_model = String($(this).val());
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3723,7 +3728,7 @@ function bindSettingsEvents(settings, callbacks) {
         .on('input', function() {
             const value = parseInt($(this).val());
             settings.rate_limit_calls = isNaN(value) ? 0 : value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3732,7 +3737,7 @@ function bindSettingsEvents(settings, callbacks) {
         .on('input', function() {
             const value = parseInt($(this).val());
             settings.rate_limit_interval = isNaN(value) ? 60 : value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3740,7 +3745,7 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', !!settings.eventbase_debug_qdrant_backend)
         .on('change', function() {
             settings.eventbase_debug_qdrant_backend = !!$(this).prop('checked');
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3751,7 +3756,7 @@ function bindSettingsEvents(settings, callbacks) {
             const value = parseInt($(this).val());
             $('#VectFox_insert_batch_size_value').text(value);
             settings.insert_batch_size = value;
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
     $('#VectFox_insert_batch_size_value').text(settings.insert_batch_size || 50);
@@ -3762,7 +3767,7 @@ function bindSettingsEvents(settings, callbacks) {
         .on('input', function() {
             const value = parseInt($(this).val());
             settings.min_chat_length = isNaN(value) ? 0 : Math.max(0, value);
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
 
@@ -3869,7 +3874,7 @@ async function initializeCottonTalesIntegration(settings) {
                 emotionClassifier.updateClassifierSetting('useEmbeddingSimilarity', true);
             }
 
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             updateMethodUI(method);
         });
@@ -3888,7 +3893,7 @@ async function initializeCottonTalesIntegration(settings) {
             } else {
                 $('#VectFox_custom_classifier_model').hide();
                 settings.emotion_classifier_model = value;
-                Object.assign(extension_settings.VectFoxplus, settings);
+                Object.assign(extension_settings.vectfox, settings);
                 saveSettingsDebounced();
                 emotionClassifier.updateClassifierSetting('model', value);
             }
@@ -3907,7 +3912,7 @@ async function initializeCottonTalesIntegration(settings) {
         .on('input', function() {
             settings.emotion_classifier_custom = $(this).val();
             settings.emotion_classifier_model = $(this).val();
-            Object.assign(extension_settings.VectFoxplus, settings);
+            Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             emotionClassifier.updateClassifierSetting('model', $(this).val());
         });
@@ -4250,7 +4255,7 @@ function copyDiagnosticsReport(results) {
     };
 
     // Get current settings for the report
-    const settings = extension_settings.VectFoxplus;
+    const settings = extension_settings.vectfox;
     const backend = settings.vector_backend || 'qdrant';
     const source = settings.source || 'none';
     const modelField = getModelField(source);
@@ -4421,7 +4426,7 @@ function handleFixAll(checks) {
  * @param {boolean} silent - If true, suppress toast notifications and don't close modal
  */
 function handleDiagnosticFix(action, silent = false) {
-    const settings = extension_settings.VectFoxplus;
+    const settings = extension_settings.vectfox;
 
     switch (action) {
         case 'enable_chats':

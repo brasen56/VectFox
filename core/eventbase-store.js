@@ -236,7 +236,7 @@ export function markWindowExtracted(sourceHashes, chatUUID) {
     const uuid = chatUUID || getChatUUID();
     if (!uuid) return;
 
-    const store = extension_settings.VectFoxplus;
+    const store = extension_settings.vectfox;
     if (!store) return;
     if (!store.eventbase_extracted_windows) store.eventbase_extracted_windows = {};
     if (!store.eventbase_extracted_windows[uuid]) store.eventbase_extracted_windows[uuid] = [];
@@ -264,7 +264,7 @@ export function markWindowExtracted(sourceHashes, chatUUID) {
 export function clearWindowCacheForChat(chatUUID) {
     const uuid = chatUUID || getChatUUID();
     if (!uuid) return;
-    const store = extension_settings?.VectFoxplus;
+    const store = extension_settings?.VectFox;
     if (!store?.eventbase_extracted_windows) return;
     delete store.eventbase_extracted_windows[uuid];
     _windowCacheSet.delete(uuid);
@@ -297,7 +297,7 @@ export function isLastWindowExtracted(messages, windowSize, step, chatUUID, hash
     const hashes = lastMsgs.map(hashFn);
 
     if (!_windowCacheSet.has(uuid)) {
-        const arr = extension_settings?.VectFoxplus?.eventbase_extracted_windows?.[uuid];
+        const arr = extension_settings?.VectFox?.eventbase_extracted_windows?.[uuid];
         _windowCacheSet.set(uuid, new Set(Array.isArray(arr) ? arr : []));
     }
 
@@ -321,7 +321,7 @@ export async function isWindowAlreadyExtracted(sourceHashes, messageIds, setting
 
     // Build the Set from the persisted array on first access for this chat
     if (!_windowCacheSet.has(uuid)) {
-        const arr = extension_settings?.VectFoxplus?.eventbase_extracted_windows?.[uuid];
+        const arr = extension_settings?.VectFox?.eventbase_extracted_windows?.[uuid];
         _windowCacheSet.set(uuid, new Set(Array.isArray(arr) ? arr : []));
     }
 

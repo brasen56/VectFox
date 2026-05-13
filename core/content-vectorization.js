@@ -99,7 +99,7 @@ export async function vectorizeContent({ contentType, source, settings, abortSig
         const collectionId = generateCollectionId(contentType, source, settings);
         
         // Get full extension settings for keyword extraction (includes custom_stopwords)
-        const VectFoxSettings = extension_settings.VectFoxplus;
+        const VectFoxSettings = extension_settings.vectfox;
         
         const enrichedChunks = enrichChunks(chunks, contentType, source, settings, preparedContent, VectFoxSettings);
         const hashedChunks = enrichedChunks.map(chunk => ({
@@ -921,7 +921,7 @@ function enrichChunks(chunks, contentType, source, settings, preparedContent, Ve
  * Deletes a content collection
  */
 export async function deleteContentCollection(collectionId) {
-    const VectFoxSettings = extension_settings.VectFoxplus;
+    const VectFoxSettings = extension_settings.vectfox;
     await purgeVectorIndex(collectionId, VectFoxSettings);
     console.log(`VectFox: Deleted collection: ${collectionId}`);
 }

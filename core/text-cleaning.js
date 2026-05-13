@@ -188,20 +188,20 @@ export const CLEANING_PRESETS = {
  * @returns {object} Cleaning settings
  */
 export function getCleaningSettings() {
-    if (!extension_settings.VectFoxplus) {
-        extension_settings.VectFoxplus = {};
+    if (!extension_settings.vectfox) {
+        extension_settings.vectfox = {};
     }
-    if (!extension_settings.VectFoxplus.cleaning) {
+    if (!extension_settings.vectfox.cleaning) {
         // Default: Custom preset with all MVU + standard patterns pre-checked
         // (equivalent to MVU Game Maker preset, but lets users toggle individual patterns)
         const defaultEnabled = Object.keys(BUILTIN_PATTERNS).filter(id => id !== 'strip_all_html');
-        extension_settings.VectFoxplus.cleaning = {
+        extension_settings.vectfox.cleaning = {
             selectedPreset: 'custom',
             customPatterns: [],
             enabledBuiltins: defaultEnabled,
         };
     }
-    return extension_settings.VectFoxplus.cleaning;
+    return extension_settings.vectfox.cleaning;
 }
 
 /**
@@ -209,10 +209,10 @@ export function getCleaningSettings() {
  * @param {object} settings - Settings to save
  */
 export function saveCleaningSettings(settings) {
-    if (!extension_settings.VectFoxplus) {
-        extension_settings.VectFoxplus = {};
+    if (!extension_settings.vectfox) {
+        extension_settings.vectfox = {};
     }
-    extension_settings.VectFoxplus.cleaning = settings;
+    extension_settings.vectfox.cleaning = settings;
 }
 
 /**

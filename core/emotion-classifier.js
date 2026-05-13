@@ -285,8 +285,8 @@ export function getClassifierSettings() {
  * @param {any} value - Setting value
  */
 export function updateClassifierSetting(key, value) {
-    if (!extension_settings.VectFoxplus) {
-        extension_settings.VectFoxplus = {};
+    if (!extension_settings.vectfox) {
+        extension_settings.vectfox = {};
     }
 
     const keyMap = {
@@ -297,7 +297,7 @@ export function updateClassifierSetting(key, value) {
     };
 
     const settingKey = keyMap[key] || key;
-    extension_settings.VectFoxplus[settingKey] = value;
+    extension_settings.vectfox[settingKey] = value;
 
     // Clear cache if model changes
     if (key === 'model') {
