@@ -810,6 +810,7 @@ export class QdrantBackend extends VectorBackend {
                 prefetchLimit: topK * 4,
             },
             sparseQueryVector,
+            ...getPluginProviderParams(settings),
         };
 
         if (settings.qdrant_multitenancy) {
@@ -941,6 +942,7 @@ export class QdrantBackend extends VectorBackend {
             },
             sparseQueryVector,
             rerankParams,
+            ...getPluginProviderParams(settings),
         };
 
         if (settings.qdrant_multitenancy) {
