@@ -379,7 +379,6 @@ This ensures ChunkBase's `keyword_scoring_method` never leaks into EventBase que
 2. **A3 uses globally-accurate IDF.** Qdrant's `modifier: "idf"` computes IDF over the true full corpus (every indexed document), not the ANN-bounded subset. This eliminates the BM25 IDF bias that A1 and A2 carry.
 3. **Path routing is content-type-scoped.** ChunkBase's `keyword_scoring_method` no longer affects EventBase. Changing to "Hybrid" in ChunkBase tab only switches lorebook queries.
 4. **Sparse vectors are tokenizer-locked.** The CJK tokenizer mode at upsert is baked into a sentinel metadata point on each Qdrant collection. Querying after a mode change shows a modal asking the user to revert or re-vectorize.
-5. **Migration tool (dev-only).** Existing dense-only Qdrant collections must be migrated to add sparse vectors — Action tab → Dev Tools → "Upgrade Collection to Native Sparse Vectors". The button is tagged `// MIGRATE-DELETE` in code for easy removal before release.
 
 ### GUI hide/show rules
 

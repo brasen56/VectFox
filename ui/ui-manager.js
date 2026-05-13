@@ -972,20 +972,12 @@ export function renderSettings(containerId, settings, callbacks) {
                             </label>
                             <small class="vecthare_hint">Log native hybrid backend keyword/fusion diagnostics from the Similharity Qdrant backend. Turn this off when not actively debugging to avoid noisy console output.</small>
 
-                            <!-- MIGRATE-DELETE: Dev-only sparse-vector migration block. Remove this entire div once migration is no longer needed. -->
-                            <div style="margin-top: 24px; padding: 12px; background: rgba(180,80,0,0.1); border-radius: 8px; border: 1px solid rgba(180,80,0,0.3);">
-                                <div style="font-weight: 700; margin-bottom: 6px;">Dev Tools (Remove Before Release)</div>
-                                <p style="margin: 4px 0 8px;">Re-tokenize an existing Qdrant collection into native sparse vectors. <strong>Does not re-embed</strong> — dense vectors are kept as-is, only the BM25 sparse representation is computed. Locks the active CJK tokenizer mode into the collection.</p>
-                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                                    <input type="text" id="vecthare_migrate_sparse_collection" placeholder="Collection name (e.g. vecthare_main)" class="vecthare-input" style="flex:1; min-width:240px;" />
-                                    <button id="vecthare_migrate_sparse_run" class="vecthare-action-btn vecthare-btn-secondary">
-                                        <i class="fa-solid fa-wand-magic-sparkles"></i>
-                                        <span>Upgrade Collection to Native Sparse Vectors</span>
-                                    </button>
-                                </div>
-                                <div id="vecthare_migrate_sparse_status" style="margin-top: 8px; font-family: monospace; font-size: 12px; color: var(--SmartThemeBodyColor);"></div>
-                            </div>
-                            <!-- /MIGRATE-DELETE -->
+                            <label class="checkbox_label" for="vecthare_agentic_debug" style="margin-top: 12px;">
+                                <input type="checkbox" id="vecthare_agentic_debug" />
+                                <span>Debug Agent Mode</span>
+                            </label>
+                            <small class="vecthare_hint">Log [VectHarePlus-Agentic] details: mode marker, narrative context preview (~50 words per turn), LLM round-trip ms, planner output JSON, Qdrant fanout ms, total agent overhead ms, per-query hit counts. Only fires when Agent Mode is enabled (AgentMode tab).</small>
+
 
                         </div>
                     </div>
@@ -1207,24 +1199,6 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <small class="vecthare_hint">Hard timeout for the planner call. Default <b>30000 ms (30s)</b>. On timeout, agent mode falls back to pre-search only. Increase if your planner model is slow (large models / free-tier providers often take 10-20s on a 1500-token prompt).</small>
                             </div>
 
-                            <!-- Debug -->
-                            <p class="vecthare-section-label" style="margin-top:16px;"><strong>Debug</strong></p>
-                            <div class="vecthare-form-group">
-                                <label class="checkbox_label" for="vecthare_agentic_debug">
-                                    <input id="vecthare_agentic_debug" type="checkbox" />
-                                    <span>Enable agent-mode debug logging</span>
-                                </label>
-                                <small class="vecthare_hint" style="display:block; margin-top:6px;">
-                                    Logs: mode marker, narrative context preview (~50 words per turn), full LLM prompt, LLM round-trip ms, Qdrant fanout ms, total agent overhead ms, per-query hit counts.
-                                </small>
-                            </div>
-
-                            <!-- Phase 1 note -->
-                            <div style="margin-top:16px; padding:10px 12px; border-left:3px solid var(--grey50); background:rgba(0,0,0,0.05); border-radius:4px;">
-                                <small style="opacity:0.85;">
-                                    <b>Phase 1 note:</b> the planner may emit payload filter hints in its output, but they are not yet applied to queries. Each planner query runs as a standard Qdrant hybrid search. Filter routing through Similharity is on the Phase 1.5 roadmap.
-                                </small>
-                            </div>
 
                         </div>
                     </div>
@@ -3750,43 +3724,6 @@ function bindSettingsEvents(settings, callbacks) {
     $('#vecthare_reopen_progress').on('click', () => {
         if (!progressTracker.reopen()) {
             toastr.info('No active progress to show', 'VectHare');
-        }
-    });
-
-    // MIGRATE-DELETE: Dev-only sparse-vector migration handler
-    $('#vecthare_migrate_sparse_run').on('click', async () => {
-        const $status = $('#vecthare_migrate_sparse_status');
-        const collection = String($('#vecthare_migrate_sparse_collection').val() || '').trim();
-        if (!collection) {
-            $status.text('Enter a collection name first.');
-            return;
-        }
-        const cjkMode = settings.cjk_tokenizer_mode || 'intl';
-        const confirmed = confirm(
-            `Migrate "${collection}" to native sparse vectors?\n\n` +
-            `Tokenizer mode "${cjkMode}" will be locked into this collection. ` +
-            `Dense vectors are kept (no re-embed). Original collection will be dropped and an alias created.`
-        );
-        if (!confirmed) {
-            $status.text('Cancelled.');
-            return;
-        }
-        $status.text('Starting...');
-        try {
-            const { migrateCollectionToSparse } = await import('../core/migrate-to-sparse.js');
-            const result = await migrateCollectionToSparse({
-                sourceCollection: collection,
-                cjkTokenizerMode: cjkMode,
-                onProgress: ({ phase, done, total }) => {
-                    $status.text(`[${phase}] ${done}${total ? ' / ' + total : ''}`);
-                },
-            });
-            $status.text(`Done. Migrated ${result.totalMigrated} points. Alias "${collection}" → ${result.target}.`);
-            toastr.success(`Migrated ${result.totalMigrated} points to sparse vectors`, 'VectHare');
-        } catch (error) {
-            console.error('[VectHare] Sparse migration failed:', error);
-            $status.text(`FAILED: ${error.message}`);
-            toastr.error(error.message, 'Sparse migration failed');
         }
     });
 
