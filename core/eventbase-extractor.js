@@ -293,6 +293,23 @@ function _detectScript(text) {
     return 'mixed';
 }
 
+/**
+ * Infers the human language for the LLM hint, even for mixed-script excerpts.
+ * Returns null when the excerpt is clearly Latin-only.
+ */
+function _inferLanguageHint(text) {
+    if (!text) return null;
+    const hangul = (text.match(/[\uAC00-\uD7AF]/g) || []).length;
+    const hiragana = (text.match(/[\u3040-\u309F\u30A0-\u30FF]/g) || []).length;
+    const cjk = (text.match(/[\u3000-\u9FFF\uF900-\uFAFF]/g) || []).length + hangul + hiragana;
+    const latin = (text.match(/[a-zA-Z]/g) || []).length;
+    const total = cjk + latin;
+    if (total === 0 || cjk / total < 0.15) return null; // too little CJK to guess
+    if (hangul > hiragana && hangul > cjk * 0.3) return '\uD55C\uAD6D\uC5B4 (Korean)';
+    if (hiragana > 5) return '\u65E5\u672C\u8A9E (Japanese)';
+    return '\u4E2D\u6587 (Chinese)';
+}
+
 // ---------------------------------------------------------------------------
 // HTTP callers
 // ---------------------------------------------------------------------------
@@ -440,11 +457,10 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
 
     // Detect dominant script BEFORE building prompt so we can inject an explicit language hint
     const excerptScript = _detectScript(excerptText);
-    const _scriptHints = { cjk: '繁體中文 / 中文 (Chinese)', latin: 'English', empty: null, mixed: null };
-    const scriptHint = _scriptHints[excerptScript] || null;
+    const languageHint = _inferLanguageHint(excerptText);
     let basePrompt = buildExtractionPrompt(excerptText, maxCount, settings.eventbase_custom_prompt || '');
-    if (scriptHint) {
-        basePrompt = `DETECTED EXCERPT LANGUAGE: ${scriptHint}. You MUST write ALL string fields in that language — no exceptions.\n\n${basePrompt}`;
+    if (languageHint) {
+        basePrompt = `DETECTED EXCERPT LANGUAGE: ${languageHint}. You MUST write ALL string fields in that language — no exceptions.\n\n${basePrompt}`;
     }
     const prompt = basePrompt;
     const provider = (settings.summarize_provider || 'openrouter').toLowerCase();
