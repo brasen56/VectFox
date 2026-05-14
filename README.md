@@ -440,9 +440,9 @@ Scene support was removed (it was a chunk-based-chat-era feature, and chat now r
 
 ## 🐛 Troubleshooting
 
-**"No embeddings available"** — Enable Vectors extension in main ST settings, select an embedding provider, add API key if needed, run Diagnostics.
+**"No embeddings available"** — Click the Vectorize Content icon, Enable Vectors extension in main ST settings, select an embedding provider, add API key if needed, run Diagnostics.
 
-**Events/chunks not retrieved** — Click Vectorize to index, lower the score threshold (try 0.3), confirm the collection is "Active for current chat" or has matching triggers.
+**Events/chunks not retrieved** — Click Database Browser icon, click on the collection of the chat, confirm the collection is "Active for current chat".
 
 **"What would the AI actually recall for this message?"** — Use the **Debug Query** button in the Actions tab for "what-if" testing. Type any text and run it against the live database to see exactly which events would be retrieved and their scores, without sending a real chat message. Useful for tuning thresholds and verifying that important events are indexed correctly.
 
@@ -450,7 +450,6 @@ Scene support was removed (it was a chunk-based-chat-era feature, and chat now r
 
 **Slow performance** — Switch to Qdrant + A3 (single round-trip, server-side fusion). Reduce EventBase Top K. Use API embedding providers (parallel) instead of local GPU (sequential).
 
-**Memory forgetting important details** — Mark important chunks temporally blind, raise the decay floor, add trigger keywords (English content only).
 
 ---
 
