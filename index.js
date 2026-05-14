@@ -367,64 +367,6 @@ function onRunDiagnosticsClick() {
     openDiagnosticsModal();
 }
 
-// ──── DELETE-IN-FOLLOWUP: VectFox v2 one-shot upgrade handler ────
-/**
- * Action: Upgrade to VectFox v2 (one-shot upgrade for on-disk literals)
- */
-async function onUpgradeVectFoxV2Click() {
-    const confirmed = confirm(
-        'This will upgrade your Qdrant collections to VectFox v2 format.\n\n' +
-        'This will rewrite internal database identifiers to the new VectFox naming scheme.\n\n' +
-        'Continue?'
-    );
-    
-    if (!confirmed) {
-        toastr.info('Upgrade cancelled');
-        return;
-    }
-    
-    progressTracker.show('Upgrading to VectFox v2', 0, 'collections');
-    
-    try {
-        const { getRequestHeaders, saveSettingsDebounced } = await import('../../../../script.js');
-        const response = await fetch('/api/plugins/similharity/chunks/upgrade-vectfox-v2', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-        });
-        
-        if (!response.ok) {
-            throw new Error(`Upgrade failed: ${response.statusText}`);
-        }
-        
-        const result = await response.json();
-        progressTracker.hide();
-        
-        if (result.success) {
-            settings.vectfox_v2_upgrade_done = true;
-            saveSettingsDebounced();
-            
-            let summary = `Successfully upgraded to VectFox v2!\n\n`;
-            summary += `Sentinel rewrites: ${result.report.sentinelRewrites.filter(r => r.hadLegacy).length} collections\n`;
-            if (result.report.multitenancyRename) {
-                summary += `Multitenancy collection: ${result.report.multitenancyRename.pointCount} points migrated`;
-            }
-            
-            toastr.success(summary, 'Upgrade Complete', { timeOut: 10000 });
-            
-            // Hide the button
-            $('#VectFox_upgrade_v2').hide();
-        } else {
-            const errors = result.report.errors.map(e => `${e.collection || e.phase}: ${e.error}`).join('\n');
-            toastr.error(`Upgrade failed:\n${errors}`, 'VectFox Upgrade', { timeOut: 15000 });
-        }
-    } catch (error) {
-        progressTracker.hide();
-        console.error('VectFox: Upgrade failed:', error);
-        toastr.error('Upgrade failed: ' + error.message, 'VectFox Upgrade');
-    }
-}
-// ──── END DELETE-IN-FOLLOWUP ────
-
 /**
  * Initialize VectFox extension
  */
@@ -499,7 +441,6 @@ jQuery(async () => {
         onPurge: onPurgeClick,
         onCleanupCorrupted: onCleanupCorruptedClick,
         onRunDiagnostics: onRunDiagnosticsClick,
-        onUpgradeVectFoxV2: onUpgradeVectFoxV2Click, // DELETE-IN-FOLLOWUP
     });
 
     // Initialize auto-sync checkbox state for current chat (if any)

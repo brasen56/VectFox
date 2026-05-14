@@ -300,7 +300,7 @@ Each event object MUST have these fields:
 - DateTime: in the format of ISO 8601 string (e.g., "2024-01-01T12:00:00Z") representing when the event occurred in the story timeline, if it can be determined from the excerpt; otherwise, this field can be omitted or set to null. 
 - items: array of strings, EXACT ORIGINAL SCRIPT
 - concepts: array of strings, SAME LANGUAGE AS EXCERPT
-- keywords: array of 8-15 strings, SAME LANGUAGE AS EXCERPT. These are search aids used by a keyword retrieval engine — be GENEROUS and INCLUSIVE. Include every distinctive term that a future query about this event might use: key actions/verbs (e.g. 贖身/誓言/背叛 or "ransom"/"oath"/"betray"), distinctive objects/items mentioned, emotional or thematic tags (e.g. 崩潰/忠誠/恐懼 or "breakdown"/"loyalty"/"fear"), unique concepts, and any rare/specific noun that isn't generic filler. DO NOT pad with generic words (the/and/then/我/你). Quality matters but err on the side of MORE rather than fewer — sparse keywords cause retrieval misses. NOTE: the Chinese terms above are only illustrative — the example below is in Traditional Chinese, but if the excerpt is in English/Japanese/Korean/etc., write keywords in that language. NEVER mix Chinese keywords into a non-Chinese excerpt's output.
+- keywords: array of 8-15 strings, SAME LANGUAGE AS EXCERPT. These are search aids used by a keyword retrieval engine — be GENEROUS and INCLUSIVE. Include every distinctive term that a future query about this event might use: key actions/verbs (e.g. "ransom"/"oath"/"betray" for English, 贖身/誓言/背叛 for Chinese), distinctive objects/items mentioned, emotional or thematic tags (e.g. "breakdown"/"loyalty"/"fear" for English, 崩潰/忠誠/恐懼 for Chinese), unique concepts, and any rare/specific noun that isn't generic filler. DO NOT pad with generic words (the/and/then/我/你). Quality matters but err on the side of MORE rather than fewer — sparse keywords cause retrieval misses. CRITICAL: if the excerpt is in English, every keyword MUST be in English. NEVER output Chinese, Japanese, or any other language in this field when the excerpt is in English.
 - open_threads: array of strings, SAME LANGUAGE AS EXCERPT (unresolved questions/promises)
 - should_persist: boolean (false for ephemeral moments unlikely to matter later)
 
@@ -309,6 +309,9 @@ VALID OUTPUT EXAMPLES
 =========================
 Zero events (filler scene):
 []
+
+One event (English excerpt):
+[{"event_type":"relationship_change","importance":7,"summary":"Aria takes the blame for Leon's mistake in front of the commander, shielding him from punishment at personal cost. Leon is visibly shaken by her sacrifice and vows to repay her.","cause":"Leon froze during the mission briefing and Aria covered for him without hesitation.","result":"Leon feels indebted to Aria; their dynamic shifts from rivalry to fragile trust.","characters":["Aria","Leon","Commander Voss"],"locations":["Command Tent"],"factions":["Iron Company"],"DateTime":null,"items":[],"concepts":["sacrifice","debt","trust"],"keywords":["blame","shield","punishment","mistake","sacrifice","debt","trust","rivalry","vow","repay","commander","mission briefing","froze","covered"],"open_threads":["Will Leon repay Aria?","How will Commander Voss react if he finds out?"],"should_persist":true}]
 
 One event (Traditional Chinese excerpt):
 [{"event_type":"promise_or_oath","importance":9,"summary":"師傅承諾幫梅拉尋找失蹤的父親暗影之翼。","cause":"梅拉在房間中央哭著請求幫助。","result":"尋找暗影之翼成為隊伍的核心目標。","characters":["梅拉","師父"],"locations":["星月綠洲頂樓公寓"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["失蹤的父親"],"keywords":["暗影之翼","尋找父親","承諾","哭泣","請求","失蹤","核心目標","隊伍任務","誓言","親情"],"open_threads":["確定暗影之翼是生是死"],"should_persist":true}]
