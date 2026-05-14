@@ -437,15 +437,21 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
     }
 
     const maxCount = settings.eventbase_max_events_per_window || 5;
-    const prompt = buildExtractionPrompt(excerptText, maxCount, settings.eventbase_custom_prompt || '');
+
+    // Detect dominant script BEFORE building prompt so we can inject an explicit language hint
+    const excerptScript = _detectScript(excerptText);
+    const _scriptHints = { cjk: '繁體中文 / 中文 (Chinese)', latin: 'English', empty: null, mixed: null };
+    const scriptHint = _scriptHints[excerptScript] || null;
+    let basePrompt = buildExtractionPrompt(excerptText, maxCount, settings.eventbase_custom_prompt || '');
+    if (scriptHint) {
+        basePrompt = `DETECTED EXCERPT LANGUAGE: ${scriptHint}. You MUST write ALL string fields in that language — no exceptions.\n\n${basePrompt}`;
+    }
+    const prompt = basePrompt;
     const provider = (settings.summarize_provider || 'openrouter').toLowerCase();
 
     if (debugLog) {
         console.log(`[EventBase] Extracting events — window=${windowIndex}, provider=${provider}, messages=${messages.length}`);
     }
-
-    // Detect dominant script of excerpt for post-parse sanity check
-    const excerptScript = _detectScript(excerptText);
 
     // Call provider
     let rawReply;
@@ -515,9 +521,8 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         const summaryScript = _detectScript(event.summary);
         if (excerptScript !== 'empty' && excerptScript !== 'mixed' && summaryScript !== 'empty' && summaryScript !== 'mixed') {
             if (excerptScript !== summaryScript) {
-                // cjk→latin: LLM summarised in English for a CJK source — valid, keep it
-                // latin→cjk: more suspicious but still keep; just log both cases
-                console.warn(`[EventBase] Window ${windowIndex}, item ${i}: language mismatch (excerpt=${excerptScript}, summary=${summaryScript}) — kept`);
+                console.warn(`[EventBase] Window ${windowIndex}, item ${i}: language mismatch (excerpt=${excerptScript}, summary=${summaryScript}) — dropped`);
+                continue;
             }
         }
 
