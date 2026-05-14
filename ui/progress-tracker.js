@@ -55,6 +55,7 @@ export class ProgressTracker {
     show(operation, totalItems = 0, itemLabel = 'Progress') {
         this.currentOperation = operation;
         this.isComplete = false;
+        this.completedSuccess = false;
         this.isCancelling = false;
         this.stats = {
             totalItems: totalItems,
@@ -259,6 +260,7 @@ export class ProgressTracker {
      */
     complete(success, message = '') {
         this.isComplete = true;
+        this.completedSuccess = success;
         this.isCancelling = false;
         this.clearCancelHandler();
 
@@ -407,7 +409,9 @@ export class ProgressTracker {
         // Calculate progress percentage
         // Prioritize embedding progress if available, otherwise use processed items
         let percent = 0;
-        if (this.stats.totalChunksToEmbed > 0 && this.stats.embeddedChunks >= 0) {
+        if (this.isComplete && this.completedSuccess) {
+            percent = 100;
+        } else if (this.stats.totalChunksToEmbed > 0 && this.stats.embeddedChunks >= 0) {
             percent = Math.round((this.stats.embeddedChunks / this.stats.totalChunksToEmbed) * 100);
             if (isDebugVectorizingLogEnabled()) {
                 console.log(`[ProgressTracker] Progress bar: ${this.stats.embeddedChunks}/${this.stats.totalChunksToEmbed} = ${percent}%`);
