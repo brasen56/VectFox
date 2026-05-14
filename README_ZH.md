@@ -367,14 +367,12 @@ cd SillyTavern/plugins
 git clone -b Similharity-Plugin https://github.com/KritBlade/VectFox.git similharity
 cd similharity
 npm install
-reboot Sillytavern server
 ```
 
 在 `config.yaml` 中搜尋以下鍵並改為 true：（Windows 通常會在 SillyTavern\config.yaml，而 Linux/Mac 應該在 SillyTavern\config\config.yaml）
 ```yaml
 enableServerPlugins: true
 ```
-
 重啟 SillyTavern。
 
 ### 步驟 3：設定 VectFox

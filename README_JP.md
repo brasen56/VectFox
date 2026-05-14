@@ -365,14 +365,12 @@ cd SillyTavern/plugins
 git clone -b Similharity-Plugin https://github.com/KritBlade/VectFox.git similharity
 cd similharity
 npm install
-reboot Sillytavern server
 ```
 
 `config.yaml` で次のキーを探し、true に変更します：（Windows では SillyTavern\config.yaml、Linux/Mac では SillyTavern\config\config.yaml にあるはずです）
 ```yaml
 enableServerPlugins: true
 ```
-
 SillyTavern を再起動します。
 
 ### ステップ 3：VectFox を設定する

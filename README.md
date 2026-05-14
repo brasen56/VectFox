@@ -289,7 +289,7 @@ The **Parallel Windows** slider (Chunking Strategy section in Vectorize Content)
 |---|---|
 | **1 (safe)** | One window at a time. Lowest provider load, no risk of rate limits, slowest. |
 | **2–4** | Mild parallelism. Good middle ground for most providers. |
-| **5–8 (fast)** | Aggressive parallelism. Best for cloud providers with high rate limits (OpenRouter, OpenAI, Cohere). May trip rate limits on free tiers. |
+| **5–8 (fast)** | Aggressive parallelism. Best for cloud providers with high rate limits (OpenRouter, OpenAI, vLLM). May trip rate limits on free tiers. |
 
 Use **1** if you're on a strict rate-limited free tier or a single local GPU. Crank to **8** if you're on a paid cloud provider and want a 2000-message chat ingested in minutes instead of an hour.
 
@@ -359,22 +359,7 @@ Use **Qdrant vector database** for any ultra fast and accurate delopment — A3 
 
 That's it! VectFox will be downloaded and enabled automatically.
 
-### Step 2: Configure VectFox
-1. Open **VectFox Settings** (Core tab in the extensions panel).
-2. Choose your vector storage (Standard or Qdrant).
-3. Select your embedding provider (Transformers, vLLM, Ollama, OpenRouter, etc.).
-   - 💡 **Recommended:** use `qwen/qwen3-embedding-8b` through **OpenRouter**. It's extremely cheap ($0.00000015/run), multilingual (excellent CJK + Latin), and produces high-quality dense vectors for the corpus size VectFox targets.
-4. Select your Summarization LLM (OpenRouter or vLLM) — used by EventBase extraction during vectorization.
-   - 💡 **Recommended cheap & fast models:** `openai/gpt-4o-mini` or `x-ai/grok-4.1-fast` ($0.0004/run) through OpenRouter. Both are very cheap and fast enough to keep ingestion latency low. Same recommendation applies to the **Agent Mode LLM** (configured separately in the AgentMode tab) — if you leave the AgentMode model field blank it inherits this summarizer setting.
-5. Configure API keys if using cloud providers (OpenRouter / vLLM / OpenAI / Cohere).
-6. Under **Keyword Extraction**, choose the language of your story.
-7. Most settings work fine on default — feel free to tweak.
-8. Open your chat in SillyTavern, then click the VectFox extension icon again. You **HAVE** to click "Vectorize Content" and choose **Chat History** to vectorize your first DB.
-9. Enable Auto-Sync if needed in the **AutoSync** tab. Frequency is controlled by the EventBase tab under *Extraction > Window Size*.
-10. Vectorize your lorebook / World Info if needed in the **WorldInfo** tab.
-11. (Optional) Turn on **Agent Mode** in the AgentMode tab once everything else works. Leave provider/model/API-key blank to inherit from your summarizer config — that way the same cheap/fast model used in step 4 also drives the planner. See "How It Works → Agent Mode" above for what it does.
-
-### Step 3: (Needed for Qdrant backends ONLY) Install Similharity Plugin
+### Step 2: (Needed for Qdrant backends ONLY, can skip if you on A1 or A2 path) Install Similharity Plugin 
 
 ```bash
 Open Command prompt on Windows or Terminal on Linux/Mac or Get into Console if you are on docker
@@ -383,13 +368,30 @@ git clone -b Similharity-Plugin https://github.com/KritBlade/VectFox.git similha
 cd similharity
 npm install
 ```
-
 Search the following key in `config.yaml` and change to true:  (Windows will be at SillyTavern\config.yaml while linux/Mac should be at SillyTavern\config\config.yaml)
 ```yaml
 enableServerPlugins: true
 ```
-
 Restart SillyTavern.
+
+### Step 3: Configure VectFox
+1. Open **VectFox Settings** (Core tab in the extensions panel).
+2. Choose your vector storage (Standard or Qdrant).
+3. Select your embedding provider (Transformers, vLLM, Ollama, OpenRouter, etc.).
+   - 💡 **Recommended:** use `qwen/qwen3-embedding-8b` through **OpenRouter**. It's extremely cheap ($0.00000015/run), multilingual (excellent CJK + Latin), and produces high-quality dense vectors for the corpus size VectFox targets.
+4. Select your Summarization LLM (OpenRouter or vLLM) — used by EventBase extraction during vectorization.
+   - 💡 **Recommended cheap & fast models:** `openai/gpt-4o-mini` or `x-ai/grok-4.1-fast` ($0.0004/run) through OpenRouter. Both are very cheap and fast enough to keep ingestion latency low. Same recommendation applies to the **Agent Mode LLM** (configured separately in the AgentMode tab) — if you leave the AgentMode model field blank it inherits this summarizer setting.
+5. Configure API keys if using cloud providers (OpenRouter / vLLM ).
+6. Under **Keyword Extraction**, choose the language of your story.
+7. Most settings work fine on default — feel free to tweak.
+8. Open your chat in SillyTavern, then click the VectFox extension icon again. You **HAVE** to click "Vectorize Content" and choose **Chat History** to vectorize your first DB.
+9. Enable Auto-Sync if needed in the **AutoSync** tab. Frequency is controlled by the EventBase tab under *Extraction > Window Size*.
+10. Vectorize your lorebook / World Info if needed in the **WorldInfo** tab.
+11. (Optional) Turn on **Agent Mode** in the AgentMode tab once everything else works. Leave provider/model/API-key blank to inherit from your summarizer config — that way the same cheap/fast model used in step 4 also drives the planner. See "How It Works → Agent Mode" above for what it does.
+
+
+
+
 
 ---
 
