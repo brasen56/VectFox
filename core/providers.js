@@ -25,25 +25,10 @@ export const EMBEDDING_PROVIDERS = {
         requiresApiKey: false,
         requiresUrl: false,
     },
-    webllm: {
-        name: 'WebLLM Extension',
-        local: true,
-        requiresModel: true,
-        modelField: 'webllm_model',
-        requiresApiKey: false,
-        requiresUrl: false,
-    },
+    // webllm: { name: 'WebLLM Extension', local: true, requiresModel: true, modelField: 'webllm_model', requiresApiKey: false, requiresUrl: false },
 
     // Local server providers (need URL)
-    bananabread: {
-        name: 'BananaBread',
-        local: true,
-        requiresModel: false,
-        requiresApiKey: true,
-        secretKey: 'bananabread_api_key',
-        requiresUrl: true,
-        defaultUrl: 'http://localhost:8008',
-    },
+    // bananabread: { name: 'BananaBread', local: true, requiresModel: false, requiresApiKey: true, secretKey: 'bananabread_api_key', requiresUrl: true, defaultUrl: 'http://localhost:8008' },
     ollama: {
         name: 'Ollama',
         local: true,
@@ -52,20 +37,8 @@ export const EMBEDDING_PROVIDERS = {
         requiresApiKey: false,
         requiresUrl: true,
     },
-    llamacpp: {
-        name: 'llama.cpp',
-        local: true,
-        requiresModel: false,
-        requiresApiKey: false,
-        requiresUrl: true,
-    },
-    koboldcpp: {
-        name: 'KoboldCpp',
-        local: true,
-        requiresModel: false,
-        requiresApiKey: false,
-        requiresUrl: true,
-    },
+    // llamacpp: { name: 'llama.cpp', local: true, requiresModel: false, requiresApiKey: false, requiresUrl: true },
+    // koboldcpp: { name: 'KoboldCpp', local: true, requiresModel: false, requiresApiKey: false, requiresUrl: true },
     vllm: {
         name: 'vLLM',
         local: true,
@@ -76,33 +49,9 @@ export const EMBEDDING_PROVIDERS = {
     },
 
     // Cloud providers (need API key)
-    openai: {
-        name: 'OpenAI',
-        local: false,
-        requiresModel: true,
-        modelField: 'openai_model',
-        requiresApiKey: true,
-        secretKey: SECRET_KEYS.OPENAI,
-        requiresUrl: false,
-    },
-    cohere: {
-        name: 'Cohere',
-        local: false,
-        requiresModel: true,
-        modelField: 'cohere_model',
-        requiresApiKey: true,
-        secretKey: SECRET_KEYS.COHERE,
-        requiresUrl: false,
-    },
-    togetherai: {
-        name: 'TogetherAI',
-        local: false,
-        requiresModel: true,
-        modelField: 'togetherai_model',
-        requiresApiKey: true,
-        secretKey: SECRET_KEYS.TOGETHERAI,
-        requiresUrl: false,
-    },
+    // openai: { name: 'OpenAI', local: false, requiresModel: true, modelField: 'openai_model', requiresApiKey: true, secretKey: SECRET_KEYS.OPENAI, requiresUrl: false },
+    // cohere: { name: 'Cohere', local: false, requiresModel: true, modelField: 'cohere_model', requiresApiKey: true, secretKey: SECRET_KEYS.COHERE, requiresUrl: false },
+    // togetherai: { name: 'TogetherAI', local: false, requiresModel: true, modelField: 'togetherai_model', requiresApiKey: true, secretKey: SECRET_KEYS.TOGETHERAI, requiresUrl: false },
     openrouter: {
         name: 'OpenRouter',
         local: false,
@@ -112,62 +61,12 @@ export const EMBEDDING_PROVIDERS = {
         secretKey: SECRET_KEYS.OPENROUTER,
         requiresUrl: false,
     },
-    mistral: {
-        name: 'MistralAI',
-        local: false,
-        requiresModel: true,
-        modelField: 'mistral_model',
-        requiresApiKey: true,
-        secretKey: SECRET_KEYS.MISTRALAI,
-        requiresUrl: false,
-    },
-    nomicai: {
-        name: 'NomicAI',
-        local: false,
-        requiresModel: false,
-        requiresApiKey: true,
-        secretKey: SECRET_KEYS.NOMICAI,
-        requiresUrl: false,
-    },
-
-    // Google providers
-    palm: {
-        name: 'Google AI Studio',
-        local: false,
-        requiresModel: true,
-        modelField: 'google_model',
-        requiresApiKey: true,
-        secretKey: SECRET_KEYS.MAKERSUITE,
-        requiresUrl: false,
-    },
-    vertexai: {
-        name: 'Google Vertex AI',
-        local: false,
-        requiresModel: true,
-        modelField: 'google_model',
-        requiresApiKey: true,
-        secretKey: SECRET_KEYS.VERTEXAI,
-        requiresUrl: false,
-    },
-
-    // Other
-    electronhub: {
-        name: 'Electron Hub',
-        local: false,
-        requiresModel: true,
-        modelField: 'electronhub_model',
-        requiresApiKey: true,
-        secretKey: SECRET_KEYS.ELECTRONHUB,
-        requiresUrl: false,
-    },
-    extras: {
-        name: 'Extras (deprecated)',
-        local: false,
-        requiresModel: false,
-        requiresApiKey: false,
-        requiresUrl: true,
-        deprecated: true,
-    },
+    // mistral: { name: 'MistralAI', local: false, requiresModel: true, modelField: 'mistral_model', requiresApiKey: true, secretKey: SECRET_KEYS.MISTRALAI, requiresUrl: false },
+    // nomicai: { name: 'NomicAI', local: false, requiresModel: false, requiresApiKey: true, secretKey: SECRET_KEYS.NOMICAI, requiresUrl: false },
+    // palm: { name: 'Google AI Studio', local: false, requiresModel: true, modelField: 'google_model', requiresApiKey: true, secretKey: SECRET_KEYS.MAKERSUITE, requiresUrl: false },
+    // vertexai: { name: 'Google Vertex AI', local: false, requiresModel: true, modelField: 'google_model', requiresApiKey: true, secretKey: SECRET_KEYS.VERTEXAI, requiresUrl: false },
+    // electronhub: { name: 'Electron Hub', local: false, requiresModel: true, modelField: 'electronhub_model', requiresApiKey: true, secretKey: SECRET_KEYS.ELECTRONHUB, requiresUrl: false },
+    // extras: { name: 'Extras (deprecated)', local: false, requiresModel: false, requiresApiKey: false, requiresUrl: true, deprecated: true },
 };
 
 /**

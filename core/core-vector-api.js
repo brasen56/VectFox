@@ -190,33 +190,13 @@ function stripFormatting(text) {
 export function getVectorsRequestBody(args = {}, settings) {
     const body = Object.assign({}, args);
     switch (settings.source) {
-        case 'extras':
-            body.extrasUrl = extension_settings.apiUrl;
-            body.extrasKey = extension_settings.apiKey;
-            break;
-        case 'electronhub':
-            body.model = settings.electronhub_model;
-            break;
         case 'openrouter':
             body.model = settings.openrouter_model;
-            break;
-        case 'togetherai':
-            body.model = settings.togetherai_model;
-            break;
-        case 'openai':
-            body.model = settings.openai_model;
-            break;
-        case 'cohere':
-            body.model = settings.cohere_model;
             break;
         case 'ollama':
             body.model = settings.ollama_model;
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.OLLAMA];
             body.keep = !!settings.ollama_keep;
-            break;
-        case 'llamacpp':
-            body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
-            console.log(`VectFox DEBUG llamacpp (core-vector-api): use_alt_endpoint=${settings.use_alt_endpoint}, alt_endpoint_url="${settings.alt_endpoint_url}", ST_url="${textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP]}", final apiUrl="${body.apiUrl}"`);
             break;
         case 'vllm':
             body.apiUrl = (settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.VLLM])
@@ -225,29 +205,17 @@ export function getVectorsRequestBody(args = {}, settings) {
                 .replace(/\/embeddings$/, '');
             body.model = settings.vllm_model;
             if (settings.vllm_api_key) body.apiKey = settings.vllm_api_key;
-            console.log(`[VectFox] vLLM embed URL after normalize: "${body.apiUrl}", model="${body.model}", hasKey=${!!body.apiKey}`);
             break;
-        case 'bananabread':
-            body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : 'http://localhost:8008';
-            // Use extension settings for API key (custom keys aren't returned by ST's readSecretState)
-            if (settings.bananabread_api_key) {
-                body.apiKey = settings.bananabread_api_key;
-            }
-            break;
-        case 'webllm':
-            body.model = settings.webllm_model;
-            break;
-        case 'palm':
-            body.model = settings.google_model;
-            body.api = 'makersuite';
-            break;
-        case 'vertexai':
-            body.model = settings.google_model;
-            body.api = 'vertexai';
-            body.vertexai_auth_mode = oai_settings.vertexai_auth_mode;
-            body.vertexai_region = oai_settings.vertexai_region;
-            body.vertexai_express_project_id = oai_settings.vertexai_express_project_id;
-            break;
+        // case 'extras': body.extrasUrl = extension_settings.apiUrl; body.extrasKey = extension_settings.apiKey; break;
+        // case 'electronhub': body.model = settings.electronhub_model; break;
+        // case 'togetherai': body.model = settings.togetherai_model; break;
+        // case 'openai': body.model = settings.openai_model; break;
+        // case 'cohere': body.model = settings.cohere_model; break;
+        // case 'llamacpp': body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP]; break;
+        // case 'bananabread': body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : 'http://localhost:8008'; if (settings.bananabread_api_key) body.apiKey = settings.bananabread_api_key; break;
+        // case 'webllm': body.model = settings.webllm_model; break;
+        // case 'palm': body.model = settings.google_model; body.api = 'makersuite'; break;
+        // case 'vertexai': body.model = settings.google_model; body.api = 'vertexai'; body.vertexai_auth_mode = oai_settings.vertexai_auth_mode; body.vertexai_region = oai_settings.vertexai_region; body.vertexai_express_project_id = oai_settings.vertexai_express_project_id; break;
         default:
             break;
     }
@@ -265,21 +233,9 @@ export function getVectorsRequestBody(args = {}, settings) {
 export async function getAdditionalArgs(items, settings, onProgress = null) {
     const args = {};
     switch (settings.source) {
-        case 'webllm':
-            args.embeddings = await createWebLlmEmbeddings(items, settings);
-            break;
-        case 'koboldcpp': {
-            const { embeddings, model } = await createKoboldCppEmbeddings(items, settings, onProgress);
-            args.embeddings = embeddings;
-            args.model = model;
-            break;
-        }
-        case 'bananabread': {
-            const { embeddings, model } = await createBananaBreadEmbeddings(items, settings);
-            args.embeddings = embeddings;
-            args.model = model;
-            break;
-        }
+        // case 'webllm': args.embeddings = await createWebLlmEmbeddings(items, settings); break;
+        // case 'koboldcpp': { const { embeddings, model } = await createKoboldCppEmbeddings(items, settings, onProgress); args.embeddings = embeddings; args.model = model; break; }
+        // case 'bananabread': { const { embeddings, model } = await createBananaBreadEmbeddings(items, settings); args.embeddings = embeddings; args.model = model; break; }
     }
     return args;
 }

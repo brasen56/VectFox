@@ -73,11 +73,6 @@ function getPluginProviderParams(settings) {
                 : textgenerationwebui_settings.server_urls[textgen_types.OLLAMA];
             params.keep = !!settings.ollama_keep;
             break;
-        case 'llamacpp':
-            params.apiUrl = settings.use_alt_endpoint
-                ? settings.alt_endpoint_url
-                : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
-            break;
         case 'vllm':
             params.apiUrl = (settings.use_alt_endpoint
                 ? settings.alt_endpoint_url
@@ -87,19 +82,9 @@ function getPluginProviderParams(settings) {
                 .replace(/\/embeddings$/, '');
             if (settings.vllm_api_key) params.apiKey = settings.vllm_api_key;
             break;
-        case 'koboldcpp':
-            params.apiUrl = settings.use_alt_endpoint
-                ? settings.alt_endpoint_url
-                : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP];
-            break;
-        case 'bananabread':
-            params.apiUrl = settings.use_alt_endpoint
-                ? settings.alt_endpoint_url
-                : 'http://localhost:8008';
-            if (settings.bananabread_api_key) {
-                params.apiKey = settings.bananabread_api_key;
-            }
-            break;
+        // case 'llamacpp': params.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP]; break;
+        // case 'koboldcpp': params.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP]; break;
+        // case 'bananabread': params.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : 'http://localhost:8008'; if (settings.bananabread_api_key) params.apiKey = settings.bananabread_api_key; break;
         default:
             break;
     }
