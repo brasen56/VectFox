@@ -2875,6 +2875,7 @@ function bindSettingsEvents(settings, callbacks) {
     // Initialize world info settings visibility based on current setting
     $('#VectFox_world_info_settings').toggle(settings.enabled_world_info || false);
     refreshWIStatus();
+    document.addEventListener('vectfox:collections-updated', refreshWIStatus);
 
     // Debug buttons: Test semantic WI and dump registry
     $('#VectFox_wi_test_btn').on('click', async function() {

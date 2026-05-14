@@ -2522,6 +2522,7 @@ function saveActivation() {
 
   closeActivationEditor();
   renderCollections(); // metadata-only change, no need to re-discover collections
+  document.dispatchEvent(new CustomEvent('vectfox:collections-updated'));
   toastr.success("Collection settings saved", "VectFox");
 }
 
