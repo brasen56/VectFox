@@ -3,7 +3,7 @@
  * Run this in browser console to test BM25 implementation
  */
 
-import { BM25Scorer, createBM25Scorer, applyBM25Scoring } from './core/bm25-scorer.js';
+import { BM25Scorer, createBM25Scorer, applyBM25Scoring } from '../core/bm25-scorer.js';
 
 // Test corpus
 const testDocuments = [
