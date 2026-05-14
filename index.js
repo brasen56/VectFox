@@ -386,9 +386,10 @@ async function onUpgradeVectFoxV2Click() {
     progressTracker.show('Upgrading to VectFox v2', 0, 'collections');
     
     try {
+        const { getRequestHeaders } = await import('../../../../script.js');
         const response = await fetch('/api/plugins/similharity/chunks/upgrade-vectfox-v2', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getRequestHeaders(),
         });
         
         if (!response.ok) {
