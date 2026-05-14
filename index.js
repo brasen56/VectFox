@@ -499,7 +499,7 @@ jQuery(async () => {
     }
 
     // D5: Cross-repo version check — warn loud if similharity is behind.
-    const SIMILHARITY_EXPECTED_VERSION = '3.2.0';
+    const SIMILHARITY_EXPECTED_VERSION = '3.3.1';
     (async () => {
         try {
             const resp = await fetch('/api/plugins/similharity/version');
