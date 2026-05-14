@@ -225,6 +225,7 @@ export function getVectorsRequestBody(args = {}, settings) {
                 .replace(/\/embeddings$/, '');
             body.model = settings.vllm_model;
             if (settings.vllm_api_key) body.apiKey = settings.vllm_api_key;
+            console.log(`[VectFox] vLLM embed URL after normalize: "${body.apiUrl}", model="${body.model}", hasKey=${!!body.apiKey}`);
             break;
         case 'bananabread':
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : 'http://localhost:8008';
