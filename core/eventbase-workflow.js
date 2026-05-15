@@ -14,7 +14,7 @@
 import { setExtensionPrompt, extension_prompts, getCurrentChatId, substituteParams } from '../../../../../script.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID, parseRegistryKey, COLLECTION_PREFIXES, getRegistryBackend, buildChatSearchPatterns, matchesPatterns } from './collection-ids.js';
-import { getCollectionRegistry, sanitizeHandleId } from './collection-loader.js';
+import { getCollectionRegistry, getCollectionListing } from './collection-loader.js';
 import { queryCollection } from './core-vector-api.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { EventBaseFatalError, EventBaseExtractionError } from './eventbase-schema.js';
@@ -24,7 +24,7 @@ import { getSavedHashes } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
 import { formatEventsForInjectionDetailed } from './eventbase-injection.js';
-import { isCollectionEnabled, isCollectionLockedToChat, setCollectionLock, getCollectionMeta } from './collection-metadata.js';
+import { isCollectionEnabled, isCollectionLockedToChat, setCollectionLock } from './collection-metadata.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 
 /** Extension prompt tag for EventBase (distinct from legacy chunks tag) */
@@ -650,44 +650,21 @@ export function getChatAutoSyncStatus(settings) {
     const uuid = getChatUUID();
     if (!uuid) return { state: 'no-chat' };
 
-    // Persona filter: superadmin sees all collections, regular users only their own.
-    // Same rule as _filterCollectionsByCurrentPersona in database-browser.js.
-    const ctx = getContext();
-    const isSuperAdmin = settings?.superadmin === true;
-    const ownHandle = isSuperAdmin ? null : sanitizeHandleId(ctx?.name1 || '');
-
     // Match by UUID — robust to legacy ID formats and character renames
     // (the chat's UUID is the stable identifier; everything else can drift).
+    // Ownership/superadmin filtering is bundled into getCollectionListing.
     const patterns = buildChatSearchPatterns(chatId, uuid);
-    const registry = getCollectionRegistry();
-    const matchedRegistryKey = Array.isArray(registry)
-        ? registry.find(key => {
-            const parsed = parseRegistryKey(key);
-            const id = parsed.collectionId || '';
-            if (!id.toLowerCase().startsWith('vf_eventbase_') &&
-                !id.toLowerCase().includes('eventbase_')) return false;
-            if (!matchesPatterns(id, patterns) && !matchesPatterns(key, patterns)) return false;
-            // Persona ownership check: skip other users' collections.
-            if (ownHandle) {
-                const meta = getCollectionMeta(id);
-                const creatorHandle = meta?.creatorHandle;
-                if (creatorHandle) {
-                    if (creatorHandle !== ownHandle) return false;
-                } else {
-                    // No creatorHandle stamp yet — fall back to ID substring check.
-                    if (!id.includes(`_${ownHandle}_`)) return false;
-                }
-            }
-            return true;
-        })
-        : null;
+    const listing = getCollectionListing(settings);
+    const match = listing.find(({ collectionId, registryKey, isOwn }) => {
+        if (!isOwn) return false;
+        const idLower = collectionId.toLowerCase();
+        if (!idLower.startsWith('vf_eventbase_') && !idLower.includes('eventbase_')) return false;
+        return matchesPatterns(collectionId, patterns) || matchesPatterns(registryKey, patterns);
+    });
 
-    if (!matchedRegistryKey) {
-        return { state: 'no-collection' };
-    }
+    if (!match) return { state: 'no-collection' };
 
-    const matchedCollectionId = parseRegistryKey(matchedRegistryKey).collectionId;
-
+    const ctx = getContext();
     const messages = Array.isArray(ctx?.chat)
         ? ctx.chat.filter(m => m.mes && m.mes.trim().length > 0)
         : [];
@@ -695,7 +672,7 @@ export function getChatAutoSyncStatus(settings) {
     const fullyVectorized = isChatFullyVectorized(messages, settings, uuid);
     return {
         state: fullyVectorized ? 'fully-vectorized' : 'partial',
-        collectionId: matchedCollectionId,
-        registryKey: matchedRegistryKey,
+        collectionId: match.collectionId,
+        registryKey: match.registryKey,
     };
 }

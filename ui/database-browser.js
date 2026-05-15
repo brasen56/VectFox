@@ -18,6 +18,7 @@ import {
   clearCollectionRegistry,
   deleteCollection,
   sanitizeHandleId,
+  getCollectionListing,
 } from "../core/collection-loader.js";
 import { COLLECTION_PREFIXES } from "../core/collection-ids.js";
 import {
@@ -755,7 +756,14 @@ function _filterCollectionsByCurrentPersona(collections) {
     return collections;
   }
 
-  const ownHandle = _sanitizeHandleForFilter(getContext()?.name1);
+  // Single source of truth for ownership: getCollectionListing already encodes
+  // the superadmin bypass + creatorHandle check + ID-substring fallback.
+  // Build a quick lookup by both registry key and bare collection id.
+  const ownLookup = new Map();
+  for (const entry of getCollectionListing(browserState.settings)) {
+    ownLookup.set(entry.registryKey, entry.isOwn);
+    ownLookup.set(entry.collectionId, entry.isOwn);
+  }
 
   return collections.filter((c) => {
     const idLower = String(c.id || "").toLowerCase();
@@ -765,16 +773,12 @@ function _filterCollectionsByCurrentPersona(collections) {
       idLower.startsWith(prefix.toLowerCase())
     );
 
-    // Global collections (lorebooks, documents, characters) — always visible.
+    // Shared types (lorebook / document / character) — always visible.
     if (!isPersonaScoped) return true;
 
-    // Persona-scoped — keep only if creatorHandle exactly matches.
-    // Try both registry-key form and bare id, since setCollectionMeta may have been
-    // called with either.
-    const meta =
-      getCollectionMeta(c.registryKey || `${c.backend}:${c.id}`) ||
-      getCollectionMeta(c.id);
-    return String(meta?.creatorHandle || "").toLowerCase() === ownHandle;
+    // Persona-scoped — keep only if the listing says we own it.
+    const key = c.registryKey || `${c.backend}:${c.id}`;
+    return ownLookup.get(key) === true || ownLookup.get(c.id) === true;
   });
 }
 
@@ -872,8 +876,17 @@ export function renderCollections() {
     return;
   }
 
+  // Build lock-state lookup once from the listing (single source of truth for
+  // ownership AND isActive). Card rendering reads from this instead of calling
+  // isCollectionActiveForContext per card.
+  const isActiveById = new Map();
+  for (const entry of getCollectionListing(browserState.settings)) {
+    isActiveById.set(entry.collectionId, entry.isActive);
+    isActiveById.set(entry.registryKey, entry.isActive);
+  }
+
   // Render collection cards
-  const cardsHtml = filtered.map((c) => renderCollectionCard(c)).join("");
+  const cardsHtml = filtered.map((c) => renderCollectionCard(c, isActiveById)).join("");
   container.html(cardsHtml);
 
   // Bind card events
@@ -887,9 +900,13 @@ export function renderCollections() {
 /**
  * Renders a single collection card (V1-inspired layout)
  * @param {object} collection Collection data
+ * @param {Map<string, boolean>} [isActiveById] Optional lookup keyed by both
+ *   bare collectionId and `${backend}:${collectionId}` — produced by the
+ *   caller from getCollectionListing(). When omitted, the badge falls back
+ *   to a direct isCollectionActiveForContext call.
  * @returns {string} Card HTML
  */
-function renderCollectionCard(collection) {
+function renderCollectionCard(collection, isActiveById = null) {
   // Map collection types to icon functions
   const typeIconMap = {
     chat: icons.messageSquare,
@@ -969,13 +986,18 @@ function renderCollectionCard(collection) {
   // Lock badge — show only when locked to the CURRENT chat. Locks to other chats
   // still exist (visible in the Settings modal as "X lock (other chat)"), but the
   // listing badge would be misleading there since the collection isn't active here.
-  // The lock badge mirrors the "Active for current chat" checkbox — same source of truth.
-  const currentChatId = getCurrentChatId();
-  const currentCharacterId = getContext()?.characterId;
-  const isActive = isCollectionActiveForContext(collection.id, {
-    chatId: currentChatId,
-    characterId: currentCharacterId,
-  });
+  // The lock badge mirrors the "Active for current chat" checkbox — same source
+  // of truth (isCollectionActiveForContext, bundled into getCollectionListing).
+  let isActive;
+  if (isActiveById) {
+    const key = collection.registryKey || `${collection.backend}:${collection.id}`;
+    isActive = isActiveById.get(key) === true || isActiveById.get(collection.id) === true;
+  } else {
+    isActive = isCollectionActiveForContext(collection.id, {
+      chatId: getCurrentChatId(),
+      characterId: getContext()?.characterId,
+    });
+  }
   let lockBadge = "";
   if (isActive) {
     const lockTitle = collection.scope === 'character'

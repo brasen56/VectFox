@@ -22,7 +22,7 @@ import { openTextCleaningManager } from './text-cleaning-manager.js';
 import { progressTracker } from './progress-tracker.js';
 import { resetBackendHealth } from '../backends/backend-manager.js';
 import { getHealthIndicatorHtml, getHealthModalHtml, initializeHealthDashboard, refreshIndicator as refreshHealthIndicator } from './health-dashboard.js';
-import { doesChatHaveVectors, getCollectionRegistry, registerCollection, sanitizeHandleId } from '../core/collection-loader.js';
+import { doesChatHaveVectors, getCollectionRegistry, getCollectionListing } from '../core/collection-loader.js';
 import { getCollectionMeta } from '../core/collection-metadata.js';
 import { parseRegistryKey } from '../core/collection-ids.js';
 import { getModelField } from '../core/providers.js';
@@ -1699,10 +1699,6 @@ export async function refreshWIStatus() {
     if (!$status.length) return;
 
     const settings = extension_settings.vectfox || {};
-    const ownHandle = sanitizeHandleId(getContext()?.name1);
-    const isSuperadmin = settings.superadmin === true;
-
-    const registry = getCollectionRegistry();
     const $wiCheckbox = $('#VectFox_enabled_world_info');
 
     // The WI checkbox mirrors the activation state: checked iff at least one own-persona
@@ -1720,32 +1716,20 @@ export async function refreshWIStatus() {
         }
     };
 
-    // Ownership check via creatorHandle stamp — robust to handles containing underscores.
-    const _isOwnLorebook = (key) => {
-        const id = parseRegistryKey(key).collectionId;
-        if (!id.startsWith('vf_lorebook_')) return false;
-        if (isSuperadmin) return true;
-        registerCollection(key); // stamps creatorHandle if missing, no-op otherwise
-        const meta = getCollectionMeta(key) || getCollectionMeta(id);
-        return String(meta?.creatorHandle || '').toLowerCase() === ownHandle;
-    };
+    // Single source of truth for ownership AND isActive — getCollectionListing
+    // encodes the superadmin bypass + creatorHandle check + lock-state check.
+    const ownLorebookEntries = getCollectionListing(settings)
+        .filter(e => e.isOwn && e.collectionId.startsWith('vf_lorebook_'));
 
-    const anyLorebook = Array.isArray(registry) && registry.some(_isOwnLorebook);
-    if (!anyLorebook) {
+    if (ownLorebookEntries.length === 0) {
         $status.html('<i class="fa-solid fa-circle-exclamation" style="color: var(--warning-color, #f39c12);"></i> No lorebooks vectorized — vectorize one first');
         _setWIEnabled(false);
         return;
     }
 
-    const chatId = getCurrentChatId();
-    const characterId = getContext()?.characterId;
-    const { isCollectionActiveForContext } = await import('../core/collection-metadata.js');
-
-    // Single source of truth — same helper as listing badge and Collection Settings checkbox.
-    const activeIds = registry
-        .filter(_isOwnLorebook)
-        .map(key => parseRegistryKey(key).collectionId)
-        .filter(id => isCollectionActiveForContext(id, { chatId, characterId }));
+    const activeIds = ownLorebookEntries
+        .filter(e => e.isActive)
+        .map(e => e.collectionId);
 
     if (activeIds.length === 0) {
         $status.html(
@@ -2834,41 +2818,24 @@ function bindSettingsEvents(settings, callbacks) {
             const enabled = $(this).prop('checked');
             const $checkbox = $(this);
 
-            // Filter lorebook collections to only those owned by the current persona handle.
-            // superadmin=true (hand-edited into settings.json) bypasses the handle filter.
-            const ownHandle = sanitizeHandleId(getContext()?.name1);
-            const isSuperadmin = settings.superadmin === true;
-            const registry = getCollectionRegistry();
-            // Use creatorHandle stamp (set via substring search) — reliable for handles with underscores.
-            const _isOwnLorebook = (key) => {
-                const id = parseRegistryKey(key).collectionId;
-                if (!id.startsWith('vf_lorebook_')) return false;
-                if (isSuperadmin) return true;
-                registerCollection(key); // stamps creatorHandle if missing
-                const meta = getCollectionMeta(key) || getCollectionMeta(id);
-                return String(meta?.creatorHandle || '').toLowerCase() === ownHandle;
-            };
+            // Single source of truth — getCollectionListing handles superadmin
+            // bypass + creatorHandle ownership + isActive lock-state check.
+            const ownLorebookEntries = getCollectionListing(settings)
+                .filter(e => e.isOwn && e.collectionId.startsWith('vf_lorebook_'));
 
             const chatId = getCurrentChatId();
             const characterId = getContext()?.characterId;
-            const metaMod = await import('../core/collection-metadata.js');
-            const { isCollectionActiveForContext, removeCollectionLock, removeCollectionCharacterLock } = metaMod;
+            const { removeCollectionLock, removeCollectionCharacterLock } = await import('../core/collection-metadata.js');
 
             if (enabled) {
-                const hasLorebookVectors = Array.isArray(registry) && registry.some(_isOwnLorebook);
-                if (!hasLorebookVectors) {
+                if (ownLorebookEntries.length === 0) {
                     $checkbox.prop('checked', false);
                     toastr.info('Vectorize a lorebook first to use Semantic WI Activation');
                     openContentVectorizer('lorebook');
                     return;
                 }
 
-                // Verify at least one own lorebook is active for this chat.
-                const hasActive = registry.some(key => {
-                    if (!_isOwnLorebook(key)) return false;
-                    const id = parseRegistryKey(key).collectionId;
-                    return isCollectionActiveForContext(id, { chatId, characterId });
-                });
+                const hasActive = ownLorebookEntries.some(e => e.isActive);
                 if (!hasActive) {
                     $checkbox.prop('checked', false);
                     toastr.info('Lock a lorebook to this chat in Database Browser → Collection Settings');
@@ -2877,19 +2844,16 @@ function bindSettingsEvents(settings, callbacks) {
                 }
             } else {
                 // Uncheck mirrors Collection Settings uncheck: remove the lock that's making each
-                // active own-persona lorebook active. After this, isCollectionActiveForContext
-                // returns false for all of them and the listing badge drops the 🔒.
+                // active own-persona lorebook active. After this, isActive returns false for all
+                // of them and the listing badge drops the 🔒.
                 let removed = 0;
-                for (const key of registry) {
-                    if (!_isOwnLorebook(key)) continue;
-                    const id = parseRegistryKey(key).collectionId;
-                    if (!isCollectionActiveForContext(id, { chatId, characterId })) continue;
-                    const meta = getCollectionMeta(key) || getCollectionMeta(id);
-                    if (meta.scope === 'chat' && chatId) {
-                        removeCollectionLock(id, chatId);
+                for (const e of ownLorebookEntries) {
+                    if (!e.isActive) continue;
+                    if (e.meta.scope === 'chat' && chatId) {
+                        removeCollectionLock(e.collectionId, chatId);
                         removed++;
-                    } else if (meta.scope === 'character' && characterId) {
-                        removeCollectionCharacterLock(id, String(characterId));
+                    } else if (e.meta.scope === 'character' && characterId) {
+                        removeCollectionCharacterLock(e.collectionId, String(characterId));
                         removed++;
                     }
                 }

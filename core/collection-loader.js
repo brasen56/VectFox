@@ -11,7 +11,7 @@
 
 import { extension_settings } from '../../../../extensions.js';
 import { getContext } from '../../../../extensions.js';
-import { characters, substituteParams, getRequestHeaders, saveSettingsDebounced } from '../../../../../script.js';
+import { characters, substituteParams, getRequestHeaders, saveSettingsDebounced, getCurrentChatId } from '../../../../../script.js';
 import { getSavedHashes, queryCollection } from './core-vector-api.js';
 import { getStringHash } from '../../../../utils.js';
 import {
@@ -24,6 +24,7 @@ import {
     ensureCollectionMeta,
     getCollectionMeta,
     setCollectionMeta,
+    isCollectionActiveForContext,
 } from './collection-metadata.js';
 import { purgeVectorIndex } from './core-vector-api.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
@@ -151,6 +152,74 @@ export function registerCollection(collectionId) {
     if (isNew) {
         saveSettingsDebounced(); // Persist to disk!
     }
+}
+
+/**
+ * Return every registry entry plus its metadata, annotated with `isOwn` (does
+ * the current persona own this collection?) and `isActive` (is it locked to
+ * the current chat / character context?).
+ *
+ * Single source of truth for persona/superadmin filtering AND lock-state
+ * derivation when iterating the registry. Callers narrow the result by
+ * collection-id prefix and/or these flags as their UX requires — they should
+ * NOT re-derive ownership themselves and should NOT call
+ * isCollectionActiveForContext when iterating the listing.
+ *
+ * Calls registerCollection(key) for every entry (idempotent) to guarantee the
+ * `creatorHandle` stamp exists before the ownership check, even when callers
+ * bypass loadAllCollections().
+ *
+ * @param {object} settings - extension_settings.vectfox
+ * @returns {Array<{
+ *   registryKey: string,
+ *   collectionId: string,
+ *   backend: string,
+ *   meta: object,
+ *   isOwn: boolean,
+ *   isActive: boolean
+ * }>}
+ */
+export function getCollectionListing(settings) {
+    const registry = getCollectionRegistry();
+    if (!Array.isArray(registry)) return [];
+
+    const isSuperadmin = settings?.superadmin === true;
+    const ownHandle = isSuperadmin
+        ? null
+        : sanitizeHandleId(getContext()?.name1 || '').toLowerCase();
+
+    // Snapshot active context once per listing call.
+    const chatId = getCurrentChatId();
+    const characterId = getContext()?.characterId;
+
+    return registry.map(registryKey => {
+        const parsed = parseRegistryKey(registryKey);
+        const collectionId = parsed.collectionId || '';
+        const backend = parsed.backend || '';
+
+        // Idempotent: stamps creatorHandle on legacy entries.
+        try { registerCollection(registryKey); } catch (_) {}
+
+        const meta =
+            getCollectionMeta(registryKey) ||
+            getCollectionMeta(collectionId) ||
+            {};
+
+        let isOwn;
+        if (isSuperadmin) {
+            isOwn = true;
+        } else if (meta.creatorHandle) {
+            isOwn = String(meta.creatorHandle).toLowerCase() === ownHandle;
+        } else {
+            // No stamp yet — fall back to ID substring (handles registered
+            // before the creatorHandle stamp logic existed).
+            isOwn = collectionId.toLowerCase().includes(`_${ownHandle}_`);
+        }
+
+        const isActive = isCollectionActiveForContext(collectionId, { chatId, characterId });
+
+        return { registryKey, collectionId, backend, meta, isOwn, isActive };
+    });
 }
 
 /**
