@@ -14,7 +14,7 @@
 import { setExtensionPrompt, extension_prompts, getCurrentChatId, substituteParams } from '../../../../../script.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID, parseRegistryKey, COLLECTION_PREFIXES, getRegistryBackend, buildChatSearchPatterns, matchesPatterns } from './collection-ids.js';
-import { getCollectionRegistry } from './collection-loader.js';
+import { getCollectionRegistry, sanitizeHandleId } from './collection-loader.js';
 import { queryCollection } from './core-vector-api.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { EventBaseFatalError, EventBaseExtractionError } from './eventbase-schema.js';
@@ -24,7 +24,7 @@ import { getSavedHashes } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
 import { formatEventsForInjectionDetailed } from './eventbase-injection.js';
-import { isCollectionEnabled, isCollectionLockedToChat, setCollectionLock } from './collection-metadata.js';
+import { isCollectionEnabled, isCollectionLockedToChat, setCollectionLock, getCollectionMeta } from './collection-metadata.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 
 /** Extension prompt tag for EventBase (distinct from legacy chunks tag) */
@@ -650,6 +650,12 @@ export function getChatAutoSyncStatus(settings) {
     const uuid = getChatUUID();
     if (!uuid) return { state: 'no-chat' };
 
+    // Persona filter: superadmin sees all collections, regular users only their own.
+    // Same rule as _filterCollectionsByCurrentPersona in database-browser.js.
+    const ctx = getContext();
+    const isSuperAdmin = settings?.superadmin === true;
+    const ownHandle = isSuperAdmin ? null : sanitizeHandleId(ctx?.name1 || '');
+
     // Match by UUID — robust to legacy ID formats and character renames
     // (the chat's UUID is the stable identifier; everything else can drift).
     const patterns = buildChatSearchPatterns(chatId, uuid);
@@ -660,7 +666,19 @@ export function getChatAutoSyncStatus(settings) {
             const id = parsed.collectionId || '';
             if (!id.toLowerCase().startsWith('vf_eventbase_') &&
                 !id.toLowerCase().includes('eventbase_')) return false;
-            return matchesPatterns(id, patterns) || matchesPatterns(key, patterns);
+            if (!matchesPatterns(id, patterns) && !matchesPatterns(key, patterns)) return false;
+            // Persona ownership check: skip other users' collections.
+            if (ownHandle) {
+                const meta = getCollectionMeta(id);
+                const creatorHandle = meta?.creatorHandle;
+                if (creatorHandle) {
+                    if (creatorHandle !== ownHandle) return false;
+                } else {
+                    // No creatorHandle stamp yet — fall back to ID substring check.
+                    if (!id.includes(`_${ownHandle}_`)) return false;
+                }
+            }
+            return true;
         })
         : null;
 
@@ -670,7 +688,6 @@ export function getChatAutoSyncStatus(settings) {
 
     const matchedCollectionId = parseRegistryKey(matchedRegistryKey).collectionId;
 
-    const ctx = getContext();
     const messages = Array.isArray(ctx?.chat)
         ? ctx.chat.filter(m => m.mes && m.mes.trim().length > 0)
         : [];

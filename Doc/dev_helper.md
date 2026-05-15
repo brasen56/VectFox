@@ -93,53 +93,17 @@ cleanup. Pre-existing collection chunks may still carry
 any code path and is silently ignored, the same orphan-but-harmless pattern as
 the post-Scenes data in §11.
 
-## 5) Collection Active State — Two Separate Controls
+## 5) Card Pause/Resume Button (`enabled` flag)
 
-There are **two independent toggles** for collection activity. They store data in different fields and must be checked separately.
+The pause/resume icon on each collection card is a **separate concern** from locks. It's a hard kill switch — when off, the collection is blocked from any activation regardless of locks, triggers, or scope.
 
-### A) Card Pause/Resume Button (`enabled` flag)
 - **UI:** Play/pause icon button on each collection card in the Database Browser
-- **Writes:** `setCollectionEnabled(registryKey, false)` → stores `{ enabled: false }` under `extension_settings.vectfoxplus.collections[registryKey]`
+- **Writes:** `setCollectionEnabled(registryKey, false)` → stores `{ enabled: false }` under `extension_settings.vectfox.collections[registryKey]`
 - **Key format:** `collection.registryKey || collection.id` — for EventBase collections registered via `eventbase-store.js`, this is the **plain collection ID** (no `backend:source:` prefix) because `registerCollection(collectionId)` is called with the raw ID
-- **Read:** `isCollectionEnabled(collectionId)` in `core/collection-metadata.js` line 318
+- **Read:** `isCollectionEnabled(collectionId)` in `core/collection-metadata.js`
 - **Default:** `true` (enabled) when no metadata exists
 
-### B) "Active for current chat" Checkbox (lock system)
-- **UI:** Checkbox in the Collection Settings panel (gear icon → "Active for current chat")
-- **Writes:** `setCollectionLock(collectionId, chatId)` / `removeCollectionLock(collectionId, chatId)` → stores chat IDs in `{ lockedToChatIds: [...] }` under the **plain collection ID** entry in metadata
-- **Key format:** Plain collection ID (`state.collectionId` which is `collection.id`, not `collection.registryKey`)
-- **Read:** `isCollectionLockedToChat(collectionId, chatId)` in `core/collection-metadata.js` line 626
-- **Role:** This is a **fallback activation** — not a gate. A collection locked to the current chat activates even with no triggers/conditions. A collection NOT locked can still activate if its triggers or conditions match.
-
-### Activation Priority (in `shouldCollectionActivate`, `core/collection-metadata.js`)
-
-```
-1. Pause button (enabled=false)     → BLOCKED always, nothing else checked
-2. Activation Triggers match        → ACTIVE  (regardless of lock state)
-3. Advanced Conditions pass         → ACTIVE  (regardless of lock state)
-4. "Active for current chat" locked → ACTIVE  (manual always-on fallback)
-5. Nothing matched                  → BLOCKED
-```
-
-Behaviour matrix:
-
-| Checkbox | Triggers/Conditions | Result |
-|---|---|---|
-| ✗ unchecked | keywords match | ✓ ACTIVE (triggers win) |
-| ✓ checked | empty | ✓ ACTIVE (lock fallback) |
-| ✓ checked | keywords match | ✓ ACTIVE (triggers win) |
-| ✓ checked | set but no match | ✓ ACTIVE (lock fallback) |
-| ✗ unchecked | set but no match | ✗ BLOCKED |
-| ✗ unchecked | empty | ✗ BLOCKED |
-| any | Pause button on | ✗ BLOCKED always |
-
-> **Old Priority 1.3 is removed.** Previously there was a blocking gate (`NOT_LOCKED_TO_CURRENT_CHAT`) that prevented collections with a `lockedToChatIds` field from activating in other chats. This gate is gone — the lock is now purely additive (activation fallback), not restrictive.
-
-### Key files
-- `core/collection-metadata.js` — `shouldCollectionActivate`, `isCollectionEnabled`, `setCollectionEnabled`, `isCollectionLockedToChat`, `setCollectionLock`, `removeCollectionLock`, `getCollectionLocks`
-- `ui/database-browser.js` line ~1055 — card toggle handler (`vectfox-action-toggle`)
-- `ui/database-browser.js` function `saveActivation` — "Active for current chat" save handler
-- `ui/database-browser.js` function `openActivationEditor` — reads lock state to populate checkbox
+For everything else — "Active for current chat" checkbox, WI panel toggle, Auto-Sync toggle, lock badge — see **§14 Lock & Auto-Sync UI Workflow**.
 
 ---
 
@@ -603,3 +567,200 @@ When AgentMode runs successfully, the returned `debug` object gains:
 
 Use these fields in future benchmark / diagnostic tooling.
 
+---
+
+## 14) Lock & Auto-Sync UI Workflow
+
+Single section covering every place in the UI that reflects "this collection is active for the current chat": the lock badge in the listing, the Collection Settings checkbox, the WI panel toggle, and the Chat Auto-Sync toggle. All four read from the same source of truth and write back through a small, scope-aware set of helpers. Updated 2026-05-15.
+
+### Single source of truth — `isCollectionActiveForContext`
+
+Defined in `core/collection-metadata.js`. Every UI element that asks "is this collection active for the current chat?" calls this one function:
+
+```js
+isCollectionActiveForContext(collectionId, { chatId, characterId })
+```
+
+Returns `true` based on the collection's scope:
+- `scope='chat'` → `chatId` is in `lockedToChatIds`
+- `scope='character'` → `characterId` is in `lockedToCharacterIds`
+- anything else → `false`
+
+**Do not duplicate this logic inline.** Every call site that needs the answer should call this helper.
+
+### Scope migration — global is gone
+
+`scope='global'` is no longer a valid choice. The Vectorize Content modal exposes only `Character` (default) and `This Chat`. Existing global collections are auto-migrated **once**, on first read by `loadAllCollections`:
+
+```
+storedMeta.scope === 'global'  →  setCollectionMeta(writeKey, { scope: 'character' })
+```
+
+After migration completes, no code anywhere checks for `'global'`. The only remaining reference is the migration block itself in `core/collection-loader.js`. Do not reintroduce `scope === 'global'` branches elsewhere.
+
+A migrated collection has no character lock by default — it stops auto-activating until the user re-checks "Active for current chat" in Collection Settings (which then calls `setCollectionCharacterLock(currentCharacterId)`).
+
+### DB Browser — lock badge in the listing
+
+In `ui/database-browser.js`, the card rendering function calls `isCollectionActiveForContext` once per card. If `true`, it appends a 🔒 badge with a scope-appropriate tooltip:
+- `scope='chat'` → "Active for current chat" (with chat-count suffix if locked to multiple chats)
+- `scope='character'` → "Active for current chat (locked to current character)"
+
+The badge fires for the same conditions as the Collection Settings checkbox — they share `isCollectionActiveForContext`. No `isGlobalScope`, no separate inline check.
+
+### DB Browser → Collection Settings → "Active for current chat" checkbox
+
+In `ui/database-browser.js`:
+
+| Function | Role |
+|---|---|
+| `openActivationEditor` | Computes `state.alwaysActive` via `isCollectionActiveForContext` |
+| `renderActivationEditor` | Sets `prop('checked', state.alwaysActive)` |
+| `refreshActivationLockButton` | Re-syncs checkbox after Manage Locks dialog — same helper |
+| `saveActivation` | Mutates locks on Save based on scope |
+
+**`saveActivation` lock mutation:**
+
+```
+scope='chat'      + checked   →  setCollectionLock(currentChatId)
+scope='chat'      + unchecked →  removeCollectionLock(currentChatId)
+scope='character' + checked   →  setCollectionCharacterLock(currentCharacterId)
+scope='character' + unchecked →  removeCollectionCharacterLock(currentCharacterId)
+```
+
+Each call only touches the lock for the **current** chat/character. Other chats or characters that have this collection locked keep their entries intact — `removeCollectionLock` filters by id, doesn't wipe the list.
+
+### WI Panel — "Enable Semantic WI Activation" checkbox
+
+In `ui/ui-manager.js`.
+
+**`refreshWIStatus`** (auto-sync from events) fires on:
+- WorldInfo tab click
+- After lorebook vectorization completes
+- `vectfox:collections-updated` custom event
+- `CHAT_CHANGED` event
+- Initial load
+
+It computes `activeIds` by filtering own-persona lorebooks (creatorHandle stamp) through `isCollectionActiveForContext`, then drives the checkbox + status via an inline `_setWIEnabled(bool)` helper:
+
+| Result | Checkbox | LED | Status |
+|---|---|---|---|
+| 0 lorebooks (this persona) | ❎ | 🟡 | "No lorebooks vectorized — vectorize one first" |
+| 0 active | ❎ | 🟡 | "Lorebook vectorized but not active for this chat — lock it…" |
+| ≥1 active | ✅ | 🟢 | "Active for this chat: <names>" |
+
+**Critical:** `_setWIEnabled` calls `prop('checked', enabled)` directly. It does **not** call `.trigger('change')`. This is load-bearing — see "Manual vs auto-sync paths" below.
+
+**Manual change handler** (user clicks the checkbox):
+
+| Action | Behaviour |
+|---|---|
+| ✓ Check + no own lorebooks | Uncheck, redirect to Content Vectorizer (`'lorebook'`) |
+| ✓ Check + no active | Uncheck, redirect to DB Browser |
+| ✓ Check + ≥1 active | Persist `enabled_world_info=true`, show settings panel |
+| ✗ Uncheck | For each currently-active own lorebook, remove the lock making it active (chat or character per scope). Dispatch `vectfox:collections-updated`. Persist `enabled_world_info=false`. |
+
+### Chat Auto-Sync — "Enable Auto-Sync" checkbox
+
+State evaluator: **`getChatAutoSyncStatus(settings)`** in `core/eventbase-workflow.js`. Pure in-memory — no backend probe. Returns one of:
+
+```
+{ state: 'no-chat' }
+{ state: 'no-collection' }
+{ state: 'partial',          collectionId, registryKey }
+{ state: 'fully-vectorized', collectionId, registryKey }
+```
+
+Match logic: walks the registry, picks the first eventbase entry whose ID matches the current chat's UUID via `buildChatSearchPatterns` + `matchesPatterns` (substring on UUID). This handles legacy ID formats and character renames — the UUID is the stable identifier.
+
+"Fully vectorized" is determined by `isChatFullyVectorized(messages, settings, chatUUID)`, which checks whether the last possible window for the current message count is already in `eventbase_extracted_windows[uuid]`. No DB query, just an O(1) Set lookup.
+
+**`refreshAutoSyncCheckbox(settings)`** fires on:
+- AutoSync tab click
+- `CHAT_CHANGED` event
+- Initial load
+- `vectfox:collections-updated` custom event
+- `vectfox:eventbase-synced` custom event (after an ingestion run completes)
+
+Resolution table:
+
+| State | autoSync flag | Lock | Checkbox | LED | Status |
+|---|---|---|---|---|---|
+| `no-chat` | — | — | ❎ | 🟡 | "No chat loaded" |
+| `no-collection` | — | — | ❎ | 🟡 | "Not initialized — vectorize chat first" |
+| has-collection | false OR no lock | — | ❎ | ⚪ | "Auto-sync inactive" |
+| `partial` | true | locked | ✅ | 🟡 | "Locked — will sync to latest history on next auto-sync trigger" |
+| `fully-vectorized` | true | locked | ✅ | 🟢 | "Ready — fully synced" |
+
+**Change handler** (user clicks):
+
+| Action | Behaviour |
+|---|---|
+| ✓ Check + no-chat | Toast warn, uncheck |
+| ✓ Check + no-collection | Open Content Vectorizer (`'chat'`) |
+| ✓ Check + partial | `setCollectionLock(chatId)` + `setCollectionAutoSync(true)` + toast "will catch up" |
+| ✓ Check + fully-vectorized | `setCollectionLock(chatId)` + `setCollectionAutoSync(true)` + toast "fully synced" |
+| ✗ Uncheck | `setCollectionAutoSync(false)` + `removeCollectionLock(chatId)` |
+
+After mutation, dispatches `vectfox:collections-updated` and re-runs `refreshAutoSyncCheckbox` so the LED updates.
+
+### Manual vs auto-sync paths
+
+UI elements that mirror lock state are pulled in two ways. The distinction matters because the manual paths have side effects.
+
+| Trigger | Calls `.trigger('change')` | Lock mutation? |
+|---|---|---|
+| User clicks WI checkbox | (browser-native) | **Yes** — change handler removes/checks locks |
+| User clicks Auto-Sync checkbox | (browser-native) | **Yes** — change handler removes/sets chat lock |
+| User clicks "Active for current chat" in Collection Settings | (via Save button) | **Yes** — `saveActivation` mutates |
+| `refreshWIStatus` auto-uncheck | **No** — `_setWIEnabled` uses `prop()` only | **No** — pure UI mirror |
+| `refreshAutoSyncCheckbox` auto-state | **No** — direct `prop()` | **No** — pure UI mirror |
+| `refreshActivationLockButton` after Manage Locks | **No** — direct `prop()` | **No** — re-reads state set by the dialog |
+
+**Rule:** auto-sync paths must never invoke the change handler. Otherwise, opening the WI panel could trigger lock removal as a side effect of the UI sync.
+
+### Custom events
+
+| Event | Fired by | Listeners |
+|---|---|---|
+| `vectfox:collections-updated` | `saveActivation`, WI uncheck handler, Auto-Sync change handler | `refreshWIStatus`, `refreshAutoSyncCheckbox` |
+| `vectfox:eventbase-synced` | `runEventBaseIngestion` at end of run | `refreshAutoSyncCheckbox` |
+
+Plus ST's `CHAT_CHANGED` — same two refresh handlers re-run.
+
+### Runtime activation chain (`shouldCollectionActivate`)
+
+The runtime priority list in `core/collection-metadata.js`:
+
+```
+1. Pause button (enabled=false)          → BLOCKED
+2. Activation Triggers match             → ACTIVE
+3. Advanced Conditions pass              → ACTIVE
+4. Chat lock match (currentChatId)       → ACTIVE
+4. Character lock match (currentCharId)  → ACTIVE
+5. Nothing matched                       → BLOCKED
+```
+
+There is **no global-scope priority**. That branch (formerly "priority 1.5") was removed when global was unwired. If you find yourself adding a `meta.scope === 'global'` check anywhere, stop — the migration handles legacy data, and there is no path that should produce a new `'global'` value.
+
+### Key files
+
+| File | Role |
+|---|---|
+| `core/collection-metadata.js` | `isCollectionActiveForContext`, `setCollectionLock`, `removeCollectionLock`, `setCollectionCharacterLock`, `removeCollectionCharacterLock`, `setCollectionAutoSync`, `shouldCollectionActivate` |
+| `core/collection-loader.js` | Migration (`scope='global'` → `'character'`), `loadAllCollections` |
+| `core/eventbase-workflow.js` | `getChatAutoSyncStatus`, `isChatFullyVectorized`, dispatches `vectfox:eventbase-synced` |
+| `core/content-vectorization.js` | Default `scope='character'`, no `'global'` fallback |
+| `ui/database-browser.js` | Listing lock badge, `openActivationEditor`, `renderActivationEditor`, `refreshActivationLockButton`, `saveActivation` |
+| `ui/ui-manager.js` | `refreshWIStatus` + `_setWIEnabled`, `refreshAutoSyncCheckbox`, WI checkbox handler, Auto-Sync checkbox handler, event listeners |
+| `ui/content-vectorizer.js` | Scope picker without global, post-vectorization `refreshWIStatus` call |
+
+### Things you should NOT do
+
+- Don't call `.trigger('change')` from any refresh/auto-sync path. Use `prop('checked', x)` directly and persist settings inline.
+- Don't probe the backend for checkbox state. Every state evaluator (`isCollectionActiveForContext`, `getChatAutoSyncStatus`) uses in-memory data only.
+- Don't add `scope === 'global'` checks. The only legitimate reference is the one-time migration block in `loadAllCollections`.
+- Don't duplicate `isCollectionActiveForContext` logic inline. If you need it in a new place, import it.
+- Don't write directly to `lockedToChatIds` / `lockedToCharacterIds`. Use the `setCollectionLock` / `removeCollectionLock` / `setCollectionCharacterLock` / `removeCollectionCharacterLock` helpers — they maintain the `chat_lock_index` reverse map too.
+
+---
