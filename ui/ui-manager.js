@@ -1703,15 +1703,29 @@ export async function refreshWIStatus() {
     const isSuperadmin = settings.superadmin === true;
 
     const registry = getCollectionRegistry();
+    const $wiCheckbox = $('#VectFox_enabled_world_info');
 
-    // Check ownership via creatorHandle stamp (reliable for handles with underscores).
-    // registerCollection() stamps the handle using a substring search (_handle_), which
-    // correctly handles handles containing underscores unlike a split-based approach.
+    // The WI checkbox mirrors the activation state: checked iff at least one own-persona
+    // lorebook is active for the current chat. Two helpers to keep the persist/UI sync identical
+    // across the three exit paths below.
+    const _setWIEnabled = (enabled) => {
+        if (settings.enabled_world_info !== enabled) {
+            settings.enabled_world_info = enabled;
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        }
+        if ($wiCheckbox.length && $wiCheckbox.prop('checked') !== enabled) {
+            $wiCheckbox.prop('checked', enabled);
+            $('#VectFox_world_info_settings').toggle(enabled);
+        }
+    };
+
+    // Ownership check via creatorHandle stamp — robust to handles containing underscores.
     const _isOwnLorebook = (key) => {
         const id = parseRegistryKey(key).collectionId;
         if (!id.startsWith('vf_lorebook_')) return false;
         if (isSuperadmin) return true;
-        registerCollection(key); // no-op if already stamped; stamps handle if missing
+        registerCollection(key); // stamps creatorHandle if missing, no-op otherwise
         const meta = getCollectionMeta(key) || getCollectionMeta(id);
         return String(meta?.creatorHandle || '').toLowerCase() === ownHandle;
     };
@@ -1719,32 +1733,26 @@ export async function refreshWIStatus() {
     const anyLorebook = Array.isArray(registry) && registry.some(_isOwnLorebook);
     if (!anyLorebook) {
         $status.html('<i class="fa-solid fa-circle-exclamation" style="color: var(--warning-color, #f39c12);"></i> No lorebooks vectorized — vectorize one first');
+        _setWIEnabled(false);
         return;
     }
 
     const chatId = getCurrentChatId();
-    const { getChatLockedCollections } = await import('../core/collection-metadata.js');
+    const characterId = getContext()?.characterId;
+    const { isCollectionActiveForContext } = await import('../core/collection-metadata.js');
 
-    // Lorebooks locked to this specific chat
-    const chatLockedIds = getChatLockedCollections(chatId).filter(id => id.startsWith('vf_lorebook_'));
-
-    // Global-scope lorebooks are active in every chat — no lock needed
-    const globalLorebookIds = (Array.isArray(registry) ? registry : [])
-        .filter(key => {
-            if (!_isOwnLorebook(key)) return false;
-            const id = parseRegistryKey(key).collectionId;
-            const meta = getCollectionMeta(key) || getCollectionMeta(id);
-            return (meta?.scope || 'global') === 'global';
-        })
-        .map(key => parseRegistryKey(key).collectionId);
-
-    const activeIds = [...new Set([...chatLockedIds, ...globalLorebookIds])];
+    // Single source of truth — same helper as listing badge and Collection Settings checkbox.
+    const activeIds = registry
+        .filter(_isOwnLorebook)
+        .map(key => parseRegistryKey(key).collectionId)
+        .filter(id => isCollectionActiveForContext(id, { chatId, characterId }));
 
     if (activeIds.length === 0) {
         $status.html(
             '<i class="fa-solid fa-circle-exclamation" style="color: var(--warning-color, #f39c12);"></i> ' +
             'Lorebook vectorized but not active for this chat — lock it in Database Browser → Collection Settings'
         );
+        _setWIEnabled(false);
         return;
     }
 
@@ -1754,10 +1762,7 @@ export async function refreshWIStatus() {
         `<i class="fa-solid fa-circle-check" style="color: var(--success-color, #27ae60);"></i> ` +
         `Active for this chat: ${nameList}`
     );
-    const $wiCheckbox = $('#VectFox_enabled_world_info');
-    if ($wiCheckbox.length && !$wiCheckbox.prop('checked')) {
-        $wiCheckbox.prop('checked', true).trigger('change');
-    }
+    _setWIEnabled(true);
 }
 
 export async function refreshAutoSyncCheckbox(settings) {
@@ -2860,20 +2865,18 @@ function bindSettingsEvents(settings, callbacks) {
                     return;
                 }
 
-                // Lorebook exists for this persona — verify one is active for this chat.
-                // Global-scope lorebooks are active everywhere (no lock needed).
-                // Chat-scoped lorebooks need a chat lock.
+                // Lorebook exists for this persona — verify at least one is active for this chat.
+                // Active = scope='chat' locked to current chat, OR scope='character' locked to current character.
                 const chatId = getCurrentChatId();
-                const { getChatLockedCollections } = await import('../core/collection-metadata.js');
-                const chatLockedLorebooks = getChatLockedCollections(chatId).filter(id => id.startsWith('vf_lorebook_'));
-                const globalLorebooks = Array.isArray(registry) ? registry.filter(key => {
+                const characterId = getContext()?.characterId;
+                const { isCollectionActiveForContext } = await import('../core/collection-metadata.js');
+                const hasActive = Array.isArray(registry) && registry.some(key => {
                     if (!_isOwnLorebook(key)) return false;
                     const id = parseRegistryKey(key).collectionId;
-                    const meta = getCollectionMeta(key) || getCollectionMeta(id);
-                    return (meta?.scope || 'global') === 'global';
-                }) : [];
+                    return isCollectionActiveForContext(id, { chatId, characterId });
+                });
 
-                if (chatLockedLorebooks.length === 0 && globalLorebooks.length === 0) {
+                if (!hasActive) {
                     $checkbox.prop('checked', false);
                     toastr.info('Lock a lorebook to this chat in Database Browser → Collection Settings');
                     openDatabaseBrowser();

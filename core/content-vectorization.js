@@ -98,9 +98,8 @@ export async function vectorizeContent({ contentType, source, settings, abortSig
         progressTracker.updateProgress(3, 'Processing chunks...');
         const collectionId = generateCollectionId(contentType, source, settings);
 
-        // Set the appropriate lock based on scope, registered before embedding starts so the
+        // Set the appropriate lock based on scope. Registered before embedding starts so the
         // index entry exists even if vectorization is interrupted partway through.
-        // Default is 'character' — 'global' is no longer offered in the UI.
         const scope = settings.scope || 'character';
         if (scope === 'chat') {
             const currentChatId = getCurrentChatId();
@@ -109,7 +108,6 @@ export async function vectorizeContent({ contentType, source, settings, abortSig
             const currentCharacterId = getContext()?.characterId;
             if (currentCharacterId) setCollectionCharacterLock(collectionId, String(currentCharacterId));
         }
-        // Legacy 'global' scope (existing collections only) — no lock, active everywhere
 
         // Get full extension settings for keyword extraction (includes custom_stopwords)
         const VectFoxSettings = extension_settings.vectfox;
@@ -799,7 +797,7 @@ function generateCollectionId(contentType, source, settings) {
     }
 
     // Fallback for unknown types or chat fallback
-    const scope = settings.scope || 'global';
+    const scope = settings.scope || 'character';
     const context = getContext();
     const baseName = sourceName;
 

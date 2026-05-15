@@ -737,6 +737,27 @@ export function getCollectionCharacterLockCount(collectionId) {
 }
 
 /**
+ * Single source of truth for "Active for current chat" — the UI checkbox state and the
+ * listing lock badge both derive from this. Scope decides which lock list is consulted:
+ *   - scope='chat'      → chat-lock list, match against current chat
+ *   - scope='character' → character-lock list, match against current character
+ * @param {string} collectionId
+ * @param {{chatId?: string, characterId?: string|number}} context
+ * @returns {boolean}
+ */
+export function isCollectionActiveForContext(collectionId, { chatId, characterId } = {}) {
+    if (!collectionId) return false;
+    const meta = getCollectionMeta(collectionId);
+    if (meta.scope === 'chat') {
+        return Boolean(chatId && isCollectionLockedToChat(collectionId, chatId));
+    }
+    if (meta.scope === 'character') {
+        return Boolean(characterId && isCollectionLockedToCharacter(collectionId, String(characterId)));
+    }
+    return false;
+}
+
+/**
  * Ensures a collection has metadata (creates with defaults if missing)
  * Called when a collection is discovered/created
  * @param {string} collectionId Collection identifier
@@ -923,12 +944,6 @@ export async function shouldCollectionActivate(collectionId, context) {
     if (meta.enabled === false) {
         if (debug) console.log(`[VECTFOX Activation Filter] Collection ${collectionId}: ✗ DISABLED`);
         return false;
-    }
-
-    // Priority 1.5: Global scope — always active in every chat (no lock needed)
-    if (meta.scope === 'global') {
-        if (debug) console.log(`[VECTFOX Activation Filter] Collection ${collectionId}: ✓ GLOBAL_SCOPE`);
-        return true;
     }
 
     const hasTriggers = meta.triggers && meta.triggers.length > 0;

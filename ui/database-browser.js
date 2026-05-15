@@ -56,6 +56,7 @@ import {
   clearCollectionCharacterLocks,
   isCollectionLockedToCharacter,
   getCollectionCharacterLockCount,
+  isCollectionActiveForContext,
 } from "../core/collection-metadata.js";
 import { getContext } from "../../../../extensions.js";
 import {
@@ -113,7 +114,7 @@ let browserState = {
   collections: [],
   selectedCollection: null,
   filters: {
-    scope: "all", // 'all', 'global', 'character', 'chat'
+    scope: "all", // 'all', 'character', 'chat'
     collectionType: "all", // 'all', 'chat', 'file', 'lorebook'
     searchQuery: "",
   },
@@ -255,7 +256,6 @@ function createBrowserModal() {
                         <!-- Scope Filters (V1-style) -->
                         <div class="vectfox-scope-filters">
                             <button class="vectfox-scope-filter active" data-scope="all" title="Show all collections">All</button>
-                            <button class="vectfox-scope-filter" data-scope="global" title="Global = collections set to 'Always Active'">Global</button>
                             <button class="vectfox-scope-filter" data-scope="character" title="Character = collections locked to at least one character">Character</button>
                             <button class="vectfox-scope-filter" data-scope="chat" title="Chat = collections locked to at least one chat">Chat</button>
 
@@ -824,20 +824,13 @@ export function renderCollections() {
 
         // Scope filter:
         // - 'all' => no filter
-        // - 'global' => show collections explicitly set to alwaysActive
         // - 'chat' => show collections locked to at least one chat
         // - 'character' => show collections locked to at least one character
-        // - otherwise: preserve legacy behavior (compare c.scope)
         if (scopeFilter !== 'all') {
-            if (scopeFilter === 'global') {
-                const meta = getCollectionMeta(c.id);
-                if (!meta || meta.alwaysActive !== true) return false;
-            } else if (scopeFilter === 'chat') {
+            if (scopeFilter === 'chat') {
                 if (getCollectionLockCount(c.id) <= 0) return false;
             } else if (scopeFilter === 'character') {
                 if (getCollectionCharacterLockCount(c.id) <= 0) return false;
-            } else {
-                if (c.scope !== scopeFilter) return false;
             }
         }
 
@@ -917,8 +910,6 @@ function renderCollectionCard(collection) {
 
   const scopeBadge =
     {
-      global:
-        '<span class="vectfox-badge vectfox-badge-global">Global</span>',
       character:
         '<span class="vectfox-badge vectfox-badge-character">Character</span>',
       chat: '<span class="vectfox-badge vectfox-badge-chat">Chat</span>',
@@ -978,28 +969,23 @@ function renderCollectionCard(collection) {
   // Lock badge — show only when locked to the CURRENT chat. Locks to other chats
   // still exist (visible in the Settings modal as "X lock (other chat)"), but the
   // listing badge would be misleading there since the collection isn't active here.
-  // The "active for current chat" badge fires whenever this collection would
-  // activate in the current chat — chat lock, character lock match, OR global scope.
-  // Matches the runtime logic in shouldCollectionActivate() (priorities 1.5 and 4).
-  const lockCount = getCollectionLockCount(collection.id);
+  // The lock badge mirrors the "Active for current chat" checkbox — same source of truth.
   const currentChatId = getCurrentChatId();
   const currentCharacterId = getContext()?.characterId;
-  const isChatLocked = currentChatId && isCollectionLockedToChat(collection.id, currentChatId);
-  const isCharLocked = currentCharacterId && isCollectionLockedToCharacter(collection.id, String(currentCharacterId));
-  const isGlobalScope = collection.scope === 'global';
+  const isActive = isCollectionActiveForContext(collection.id, {
+    chatId: currentChatId,
+    characterId: currentCharacterId,
+  });
   let lockBadge = "";
-  if (isChatLocked || isCharLocked || isGlobalScope) {
-    let lockTitle;
-    if (isGlobalScope) {
-      lockTitle = "Active (global scope — every chat)";
-    } else if (isChatLocked) {
-      const otherCount = lockCount - 1;
-      lockTitle = otherCount > 0
-        ? `Active for current chat (also locked to ${otherCount} other chat${otherCount !== 1 ? "s" : ""})`
-        : "Active for current chat";
-    } else {
-      lockTitle = "Active for current chat (via character lock)";
-    }
+  if (isActive) {
+    const lockTitle = collection.scope === 'character'
+      ? "Active for current chat (locked to current character)"
+      : (() => {
+          const otherCount = getCollectionLockCount(collection.id) - 1;
+          return otherCount > 0
+            ? `Active for current chat (also locked to ${otherCount} other chat${otherCount !== 1 ? "s" : ""})`
+            : "Active for current chat";
+        })();
     lockBadge = `<span class="vectfox-badge vectfox-badge-lock" title="${lockTitle}">🔒</span>`;
   }
 
@@ -1893,14 +1879,14 @@ function openActivationEditor(collectionId, collectionName) {
   const decaySettings = getCollectionDecaySettings(collectionId);
 
   const currentChatId = getCurrentChatId();
-  const hasChatLockMatch = currentChatId && isCollectionLockedToChat(collectionId, currentChatId);
-  const chatScopedActive = Boolean(hasChatLockMatch);
-  const isGlobalScope = meta.scope === 'global';
-  const resolvedAlwaysActive = chatScopedActive || isGlobalScope;
+  const currentCharacterId = getContext()?.characterId;
+  const resolvedAlwaysActive = isCollectionActiveForContext(collectionId, {
+    chatId: currentChatId,
+    characterId: currentCharacterId,
+  });
   console.log(
     `[VECTFOX DB Browser] Active-for-current-chat resolution for ${collectionId}: ` +
-    `resolved=${resolvedAlwaysActive}, ` +
-    `chatScopedActive=${chatScopedActive}, globalScope=${isGlobalScope}, currentChatId=${currentChatId || 'none'}`
+    `resolved=${resolvedAlwaysActive}, scope=${meta.scope}, chatId=${currentChatId || 'none'}, charId=${currentCharacterId ?? 'none'}`
   );
 
   activationEditorState = {
@@ -2443,12 +2429,10 @@ function refreshActivationLockButton() {
     const isLockedToCurrentChar = charId && isCollectionLockedToCharacter(collId, charId);
     const totalLocks = chatLockCount + charLockCount;
 
-    // Keep the "Active for current chat" checkbox in sync with the actual lock state.
-    // Without this, saveActivation() reads a stale unchecked checkbox and calls
-    // removeCollectionLock(), undoing any lock the user just added via the lock dialog.
-    // Global-scope collections are always active — include them so the checkbox stays checked.
-    const isGlobalScope = getCollectionMeta(collId)?.scope === 'global';
-    const shouldBeActive = Boolean(isLockedToCurrentChat || isLockedToCurrentChar || isGlobalScope);
+    // Keep the "Active for current chat" checkbox in sync with the lock state that matches
+    // the collection's scope. Without this, saveActivation() reads a stale unchecked checkbox
+    // and calls removeCollectionLock(), undoing any lock the user just added via the lock dialog.
+    const shouldBeActive = isCollectionActiveForContext(collId, { chatId, characterId: charId });
     if (activationEditorState.collectionId) {
       activationEditorState.alwaysActive = shouldBeActive;
       $("#vectfox_always_active").prop("checked", shouldBeActive);
@@ -2517,46 +2501,32 @@ function saveActivation() {
   const currentChatId = getCurrentChatId();
   const currentCharacterId = getContext()?.characterId;
   const saveMeta = getCollectionMeta(state.collectionId);
-  const wasGlobalScope = saveMeta.scope === 'global';
-  console.log(`[VectFox] saveActivation: alwaysActive checkbox=${isChecked}, chatId=${currentChatId || 'none'}, charId=${currentCharacterId ?? 'none'}, collection=${state.collectionId}, wasGlobalScope=${wasGlobalScope}`);
+  console.log(`[VectFox] saveActivation: checkbox=${isChecked}, scope=${saveMeta.scope}, chatId=${currentChatId || 'none'}, charId=${currentCharacterId ?? 'none'}, collection=${state.collectionId}`);
 
-  // Uncheck = clean everything: remove chat lock, character lock, and demote legacy global scope.
-  // After saving, shouldCollectionActivate() must return false for this collection.
-  let scopeOverride = null;
-  if (!isChecked) {
-    if (currentChatId) {
+  // The "Active for current chat" checkbox controls a single lock keyed by the collection's scope.
+  //   scope='chat'      → chat lock for currentChatId
+  //   scope='character' → character lock for currentCharacterId
+  if (saveMeta.scope === 'chat') {
+    if (!currentChatId) {
+      toastr.info('No active chat context; "Active for current chat" was not changed');
+    } else if (isChecked) {
+      setCollectionLock(state.collectionId, currentChatId);
+    } else {
       removeCollectionLock(state.collectionId, currentChatId);
     }
-    if (currentCharacterId) {
+  } else if (saveMeta.scope === 'character') {
+    if (!currentCharacterId) {
+      toastr.info('No active character; "Active for current chat" was not changed');
+    } else if (isChecked) {
+      setCollectionCharacterLock(state.collectionId, String(currentCharacterId));
+    } else {
       removeCollectionCharacterLock(state.collectionId, String(currentCharacterId));
     }
-    // Demote legacy global scope so priority 1.5 in shouldCollectionActivate stops returning true.
-    if (wasGlobalScope) {
-      scopeOverride = 'character';
-    }
-  } else {
-    // Check = apply the lock matching the collection's scope.
-    if (saveMeta.scope === 'chat') {
-      if (currentChatId) {
-        setCollectionLock(state.collectionId, currentChatId);
-      } else {
-        toastr.info('No active chat context; "Active for current chat" was not changed');
-      }
-    } else if (saveMeta.scope === 'character') {
-      if (currentCharacterId) {
-        setCollectionCharacterLock(state.collectionId, String(currentCharacterId));
-      } else {
-        toastr.info('No active character; "Active for current chat" was not changed');
-      }
-    }
-    // wasGlobalScope + checked = no-op (collection is already global-active everywhere).
   }
 
-  const alwaysActiveValue = false;
-
   // Update metadata (all in one call)
-  const metaUpdate = {
-    alwaysActive: alwaysActiveValue,
+  setCollectionMeta(state.collectionId, {
+    alwaysActive: false,
     triggers: triggers,
     triggerMatchMode: $("#vectfox_trigger_match_mode").val(),
     triggerScanDepth: parseInt($("#vectfox_trigger_scan_depth").val()) || 5,
@@ -2566,16 +2536,7 @@ function saveActivation() {
     xmlTag: xmlTag,
     position: position,
     depth: depth,
-  };
-  if (scopeOverride) metaUpdate.scope = scopeOverride;
-  setCollectionMeta(state.collectionId, metaUpdate);
-
-  // Sync the cached collection object so renderCollections() reflects the new scope
-  // without a full reload from the registry.
-  if (scopeOverride) {
-    const cached = browserState.collections.find(c => (c.registryKey || c.id) === state.collectionId || c.id === state.collectionId);
-    if (cached) cached.scope = scopeOverride;
-  }
+  });
 
   // Save conditions
   const conditions = {

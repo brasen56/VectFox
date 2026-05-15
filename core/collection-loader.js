@@ -948,6 +948,17 @@ export async function loadAllCollections(settings, autoDiscover = true) {
             const storedMeta = getCollectionMeta(registryKey) || getCollectionMeta(collectionId);
             const parsedMeta = parseCollectionId(collectionId);
 
+            // One-time migration: scope='global' is no longer supported. Rewrite to 'character'
+            // so the rest of the codebase only has to handle 'character' and 'chat'. The collection
+            // will stop auto-activating until the user re-checks "Active for current chat".
+            if (storedMeta.scope === 'global') {
+                const collectionsMap = extension_settings?.vectfox?.collections || {};
+                const writeKey = collectionsMap[registryKey] ? registryKey : collectionId;
+                setCollectionMeta(writeKey, { scope: 'character' });
+                storedMeta.scope = 'character';
+                console.log(`VectFox: Migrated ${collectionId} from scope='global' to scope='character'`);
+            }
+
             // Use stored contentType if available, otherwise fall back to parsed
             const metadata = {
                 type: storedMeta.contentType || parsedMeta.type,

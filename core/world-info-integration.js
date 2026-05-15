@@ -293,7 +293,7 @@ export async function getLorebookVectorStats(lorebookName, settings) {
         createdAt: meta.createdAt,
         enabled: isCollectionEnabled(collectionId, settings),
         strategy: meta.settings?.strategy || 'per_entry',
-        scope: meta.scope || 'global',
+        scope: meta.scope || 'character',
     };
 }
 
