@@ -1660,10 +1660,6 @@ export async function rearrangeChat(chat, settings, type) {
         });
 
         // === STAGE 4: Query all collections and merge results ===
-        if (settings.retrieval_popup_on_start) {
-            toastr.info(`Retrieving context from ${activeCollections.length} collection(s)...`, 'VectFox Retrieval');
-        }
-
         let chunks = await queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData);
 
         if (settings.retrieval_popup_on_result) {
