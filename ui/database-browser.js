@@ -170,7 +170,7 @@ export async function openDatabaseBrowser() {
 
   // Show modal
   $("#vectfox_database_browser_modal").fadeIn(200);
-  console.log("VECTFOX Database Browser: Opened");
+  if (browserState.settings?.eventbase_debug_logging) console.log("VECTFOX Database Browser: Opened");
 }
 
 /**
@@ -193,7 +193,7 @@ export function closeDatabaseBrowser() {
   browserState.isOpen = false;
   // Reset event bound flags for clean rebind on next open
   resetEventFlags();
-  console.log("VECTFOX Database Browser: Closed");
+  if (browserState.settings?.eventbase_debug_logging) console.log("VECTFOX Database Browser: Closed");
 }
 
 /**
@@ -771,7 +771,7 @@ async function refreshCollections() {
 
     if (allCollections.length !== browserState.collections.length) {
       const hidden = allCollections.length - browserState.collections.length;
-      console.log(
+      if (browserState.settings?.eventbase_debug_logging) console.log(
         `VECTFOX DB Browser: Hiding ${hidden} chat-scoped collection(s) from other personas (current: ${_sanitizeHandleForFilter(getContext()?.name1)})`,
       );
     }
@@ -781,7 +781,7 @@ async function refreshCollections() {
     // personas' collections when this persona opens the browser.
     const actualIds = allCollections.map((c) => c.id);
     const cleanupResult = cleanupOrphanedMeta(actualIds);
-    if (cleanupResult.removed > 0) {
+    if (cleanupResult.removed > 0 && browserState.settings?.eventbase_debug_logging) {
       console.log(
         `VectFox: Cleaned up ${cleanupResult.removed} orphaned metadata entries`,
       );

@@ -245,7 +245,7 @@ export function setCollectionMeta(collectionId, data) {
     };
 
     saveSettingsDebounced();
-    console.log(`VectFox: Updated metadata for collection ${collectionId}`);
+    if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Updated metadata for collection ${collectionId}`);
 }
 
 /**
@@ -475,12 +475,12 @@ export function cleanupOrphanedMeta(actualCollectionIds) {
 
     for (const collectionId of orphaned) {
         delete extension_settings.vectfox.collections[collectionId];
-        console.log(`VectFox: Removed orphaned metadata for ${collectionId}`);
+        if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Removed orphaned metadata for ${collectionId}`);
     }
 
     if (orphaned.length > 0) {
         saveSettingsDebounced();
-        console.log(`VectFox: Cleaned up ${orphaned.length} orphaned metadata entries`);
+        if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Cleaned up ${orphaned.length} orphaned metadata entries`);
     }
 
     return { removed: orphaned.length, orphanedIds: orphaned };
