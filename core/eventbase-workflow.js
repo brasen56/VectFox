@@ -542,9 +542,6 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         console.log('[EventBase] Injection preview:', injectionText.slice(0, 300));
     }
 
-    if (settings.retrieval_popup_on_result) {
-        toastr.success(`EventBase: injected ${injectedCount} event(s)`, 'VectFox Retrieval');
-    }
 }
 
 // ---------------------------------------------------------------------------
