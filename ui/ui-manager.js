@@ -373,7 +373,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <input type="range" id="VectFox_eventbase_anchor_boost" class="vectfox-slider" min="0" max="0.5" step="0.05" />
                                 <small class="VectFox_hint">EventBase only. Flat additive bonus when an event's stored keyword appears verbatim in your last message. Rescues historically-distant events the user explicitly asks about. 0 = disabled. Range 0.00-0.50, default 0.20.</small>
 
-                                <div style="margin-top: 12px;">
+                                <div id="VectFox_eventbase_native_rerank_wrapper" style="margin-top: 12px;">
                                     <label class="checkbox_label" for="VectFox_eventbase_native_rerank">
                                         <input id="VectFox_eventbase_native_rerank" type="checkbox" />
                                         <span>Push EventBase re-rank to Qdrant</span>
@@ -2418,7 +2418,7 @@ function bindSettingsEvents(settings, callbacks) {
     // Helper: update visibility of native-hybrid-dependent UI elements
     function updateNativeHybridUI() {
         const backend       = settings.vector_backend || 'standard';
-        const method        = settings.keyword_scoring_method || 'bm25';
+        const method        = settings.keyword_scoring_method || 'hybrid';
         const supportsNative = backend === 'qdrant';
         const preferNative  = settings.hybrid_native_prefer !== false;
         const nativeActive  = supportsNative && preferNative;        // A3
@@ -2439,6 +2439,9 @@ function bindSettingsEvents(settings, callbacks) {
 
         // Query Keyword Budget (lives in ChunkBase tab): visible only in A1
         $('#VectFox_hybrid_keyword_budget_wrapper').toggle(isBM25Mode);
+
+        // Native rerank checkbox: Qdrant only
+        $('#VectFox_eventbase_native_rerank_wrapper').toggle(supportsNative);
     }
 
     // Apply backend-specific hybrid defaults when backend changes or on first load.
@@ -2453,11 +2456,11 @@ function bindSettingsEvents(settings, callbacks) {
         } else {
             // Standard: no native hybrid, BM25 fast re-rank, RRF fusion
             settings.hybrid_native_prefer = false;
-            settings.keyword_scoring_method = settings.keyword_scoring_method || 'bm25';
+            settings.keyword_scoring_method = settings.keyword_scoring_method || 'hybrid';
             settings.hybrid_fusion_method = settings.hybrid_fusion_method || 'rrf';
         }
         // Sync UI controls
-        $('#VectFox_keyword_scoring_method').val(settings.keyword_scoring_method || 'bm25');
+        $('#VectFox_keyword_scoring_method').val(settings.keyword_scoring_method || 'hybrid');
         $('#VectFox_hybrid_fusion_method').val(settings.hybrid_fusion_method || 'rrf');
         Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
@@ -2645,7 +2648,7 @@ function bindSettingsEvents(settings, callbacks) {
 
     // Keyword scoring method (bm25 = A1 fast re-rank; hybrid = A2 client-side hybrid fusion, ANN-bound ≤100)
     $('#VectFox_keyword_scoring_method')
-        .val(settings.keyword_scoring_method || 'bm25')
+        .val(settings.keyword_scoring_method || 'hybrid')
         .on('change', function() {
             settings.keyword_scoring_method = String($(this).val());
             Object.assign(extension_settings.vectfox, settings);
