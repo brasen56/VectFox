@@ -552,6 +552,11 @@ export async function getSavedHashes(collectionId, settings, includeMetadata = f
     // Use unified chunks API to get full metadata (works with all backends)
     try {
         const backendName = settings.vector_backend || 'standard';
+        // Model field is provider-specific; flat settings.model is empty for
+        // all real providers, so this path used to filter against model='' and
+        // miss every chunk.
+        const modelField = getModelField(settings.source);
+        const model = modelField ? (settings[modelField] || '') : '';
         const response = await fetch('/api/plugins/similharity/chunks/list', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -559,7 +564,7 @@ export async function getSavedHashes(collectionId, settings, includeMetadata = f
                 backend: backendName === 'standard' ? 'vectra' : backendName,
                 collectionId: collectionId,
                 source: settings.source || 'transformers',
-                model: settings.model || '',
+                model,
                 limit: 10000
             })
         });

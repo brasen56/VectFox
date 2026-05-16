@@ -33,6 +33,7 @@ import {
     getCollectionRegistry,
 } from './collection-loader.js';
 import { COLLECTION_PREFIXES, getRegistryBackend, parseCollectionId } from './collection-ids.js';
+import { getModelField } from './providers.js';
 import { encodeSparseVector } from './sparse-vector-encoder.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { getStringHash } from '../../../../utils.js';
@@ -129,6 +130,12 @@ function _remapCollectionIdToBackend(collectionId, targetBackend) {
  */
 async function fetchChunksWithVectors(collectionId, settings) {
     const backendName = settings.vector_backend || 'standard';
+    // Model field is provider-specific (openrouter_model, ollama_model, etc.).
+    // Using a flat `settings.model` writes/reads an empty string, which makes
+    // the plugin store chunks under model='' while queries look up under the
+    // real model name — 0-result mismatch.
+    const modelField = getModelField(settings.source);
+    const model = modelField ? (settings[modelField] || '') : '';
     const response = await fetch('/api/plugins/similharity/chunks/list', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -136,7 +143,7 @@ async function fetchChunksWithVectors(collectionId, settings) {
             backend: backendName === 'standard' ? 'vectra' : backendName,
             collectionId: collectionId,
             source: settings.source || 'transformers',
-            model: settings.model || '',
+            model,
             limit: 50000, // High limit to get all chunks
             includeVectors: true, // Include the actual embedding vectors
         }),
@@ -541,6 +548,9 @@ export function validateImportData(data, currentSettings = {}) {
  */
 async function insertChunksWithVectors(collectionId, chunks, settings, onBatchProgress, abortSignal = null) {
     const backendName = settings.vector_backend || 'standard';
+    // Model field is provider-specific. See fetchChunksWithVectors comment.
+    const modelField = getModelField(settings.source);
+    const model = modelField ? (settings[modelField] || '') : '';
     // Batch to avoid 413. Qdrant accepts up to 32 MB per request; live ingestion uses 100
     // (backends/qdrant.js). Per-batch overhead (collection metadata GETs + wait=true index)
     // dominates total time, so larger batches roughly amortize that cost. 100 chunks ≈ 5 MB
@@ -583,7 +593,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings, onBatchPr
                 backend: backendName === 'standard' ? 'vectra' : backendName,
                 collectionId,
                 source: settings.source || 'transformers',
-                model: settings.model || '',
+                model,
                 items: batch,
                 // qdrant requires nativeSparse=true so the collection is created with text_sparse
                 // index (BM25 hybrid search). Without it, hybrid queries fail with "Not existing
