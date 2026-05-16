@@ -301,6 +301,8 @@ export class StandardBackend extends VectorBackend {
                 : {};
             console.log(
                 `VectFox DEBUG: insert body = ${sizeKB} KB (${sizeMB} MB), ` +
+                `source="${payload.source}", model="${payload.model}", ` +
+                `backend="${payload.backend}", ` +
                 `items=${payload.items?.length || 0}, ` +
                 `first item field sizes:`, fieldSizes,
                 `metadata field sizes:`, metadataFieldSizes
