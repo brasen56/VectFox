@@ -533,6 +533,52 @@ export class StandardBackend extends VectorBackend {
      * Uses native ST API
      */
     async purgeVectorIndex(collectionId, settings) {
+        // Prefer the Similharity plugin's purge endpoint when available — it knows
+        // about the `{source}/{collectionId}/{model}/` path layout that ST's
+        // native /api/vector/purge does not. When the DB Browser passes
+        // `_discoveredModels` (from the plugin's collection discovery), iterate
+        // every model subdir so the on-disk dirs are actually deleted; otherwise
+        // the collection re-appears on the next discovery scan.
+        if (this.pluginAvailable) {
+            const source = settings.source || 'transformers';
+            const discoveredModels = Array.isArray(settings._discoveredModels) && settings._discoveredModels.length > 0
+                ? settings._discoveredModels.map(m => m?.path ?? m ?? '')
+                : [getModelFromSettings(settings)];
+
+            const errors = [];
+            for (const model of discoveredModels) {
+                try {
+                    const response = await fetch('/api/plugins/similharity/chunks/purge', {
+                        method: 'POST',
+                        headers: getRequestHeaders(),
+                        body: JSON.stringify({
+                            backend: 'vectra',
+                            collectionId,
+                            source,
+                            model,
+                        }),
+                    });
+                    if (!response.ok) {
+                        const errBody = await response.text().catch(() => 'No response body');
+                        errors.push(`model="${model}": ${response.status} ${errBody}`);
+                    }
+                } catch (e) {
+                    errors.push(`model="${model}": ${e.message}`);
+                }
+            }
+            if (errors.length === discoveredModels.length) {
+                // All purge attempts failed — surface the error
+                throw new Error(`Failed to purge collection via plugin: ${errors.join('; ')}`);
+            }
+            if (errors.length > 0) {
+                console.warn(`VectFox Standard: partial purge of ${collectionId}:`, errors);
+            }
+            return;
+        }
+
+        // Fallback (no plugin): ST's native purge endpoint. Note this does NOT
+        // understand the model subdirectory layout, so it may leave orphan files
+        // when the collection was created by the plugin path.
         const response = await fetch('/api/vector/purge', {
             method: 'POST',
             headers: getRequestHeaders(),

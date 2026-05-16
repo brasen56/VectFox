@@ -1237,11 +1237,16 @@ function bindCollectionCardEvents() {
       if (!confirmed) return;
 
       try {
-        // Use unified delete function - handles vectors, registry, AND metadata
+        // Use unified delete function - handles vectors, registry, AND metadata.
+        // _discoveredModels carries the model subdirectories the plugin actually
+        // found on disk, so the Standard backend purge can target the right
+        // {source}/{collectionId}/{model}/ paths instead of guessing from the
+        // user's current UI setting (which may not match what's on disk).
         const collectionSettings = {
           ...browserState.settings,
           vector_backend: collection.backend,
           source: collection.source,
+          _discoveredModels: collection.models,
         };
 
         const result = await deleteCollection(
@@ -3613,6 +3618,7 @@ function bindBulkEvents() {
             ...browserState.settings,
             vector_backend: collection.backend,
             source: collection.source,
+            _discoveredModels: collection.models,
           };
           const result = await deleteCollection(
             collection.id,
