@@ -514,8 +514,9 @@ export function validateImportData(data, currentSettings = {}) {
  * @param {string} collectionId - Collection to insert into
  * @param {Array} chunks - Chunks with vectors
  * @param {object} settings - VectFox settings
+ * @param {Function} [onBatchProgress] - Called after each batch: (insertedSoFar, total)
  */
-async function insertChunksWithVectors(collectionId, chunks, settings) {
+async function insertChunksWithVectors(collectionId, chunks, settings, onBatchProgress) {
     const backendName = settings.vector_backend || 'standard';
     // Batch to avoid 413 — large vector dimensions (e.g. 4096-dim) make single-shot
     // bodies tens of MBs. 20 chunks ≈ 1 MB per request for 4096-dim vectors.
@@ -528,6 +529,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
         metadata: c.metadata || {},
     }));
 
+    let inserted = 0;
     for (let i = 0; i < items.length; i += BATCH_SIZE) {
         const batch = items.slice(i, i + BATCH_SIZE);
         const response = await fetch('/api/plugins/similharity/chunks/insert', {
@@ -545,6 +547,11 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
         if (!response.ok) {
             const error = await response.text();
             throw new Error(`Failed to insert chunks: ${error}`);
+        }
+
+        inserted += batch.length;
+        if (typeof onBatchProgress === 'function') {
+            onBatchProgress(inserted, items.length);
         }
     }
 }
@@ -629,9 +636,12 @@ export async function importCollection(exportData, settings, options = {}) {
         // Step 3: Insert chunks
         if (canUseVectors) {
             // Direct insert with pre-computed vectors (fast!)
+            progressTracker.updateEmbeddingProgress(0, preparedChunks.length);
             progressTracker.updateProgress(3, `Inserting ${preparedChunks.length} chunks (using existing vectors)...`);
             try {
-                await insertChunksWithVectors(collectionId, preparedChunks, settings);
+                await insertChunksWithVectors(collectionId, preparedChunks, settings, (done, total) => {
+                    progressTracker.updateEmbeddingProgress(done, total);
+                });
                 console.log(`VectFox Import: Inserted ${preparedChunks.length} chunks with pre-computed vectors`);
             } catch (error) {
                 throw new Error(`Failed to insert chunks: ${error.message}`);
