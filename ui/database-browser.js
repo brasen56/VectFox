@@ -986,12 +986,16 @@ function renderCollectionCard(collection, isActiveById = null) {
   // listing badge would be misleading there since the collection isn't active here.
   // The lock badge mirrors the "Active for current chat" checkbox — same source
   // of truth (isCollectionActiveForContext, bundled into getCollectionListing).
+  // Use registry-key form so the metadata layer keys lock state per-backend.
+  // Two collections sharing a bare ID across different backends now report
+  // their lock badges independently.
+  const lockLookupId = collection.registryKey || collection.id;
   let isActive;
   if (isActiveById) {
     const key = collection.registryKey || `${collection.backend}:${collection.id}`;
     isActive = isActiveById.get(key) === true || isActiveById.get(collection.id) === true;
   } else {
-    isActive = isCollectionActiveForContext(collection.id, {
+    isActive = isCollectionActiveForContext(lockLookupId, {
       chatId: getCurrentChatId(),
       characterId: getContext()?.characterId,
     });
@@ -1001,7 +1005,7 @@ function renderCollectionCard(collection, isActiveById = null) {
     const lockTitle = collection.scope === 'character'
       ? "Active for current chat (locked to current character)"
       : (() => {
-          const otherCount = getCollectionLockCount(collection.id) - 1;
+          const otherCount = getCollectionLockCount(lockLookupId) - 1;
           return otherCount > 0
             ? `Active for current chat (also locked to ${otherCount} other chat${otherCount !== 1 ? "s" : ""})`
             : "Active for current chat";
@@ -1543,7 +1547,10 @@ function bindCollectionCardEvents() {
       const collectionKey = $(this).data("collection-key");
       const collection = findCollectionByKey(collectionKey);
       if (collection) {
-        openActivationEditor(collection.id, collection.name);
+        // Pass the registry key form (backend:id) so the metadata layer keys
+        // locks per-backend. Two collections that share a bare ID but live on
+        // different backends now have separate lock state.
+        openActivationEditor(collection.registryKey || collection.id, collection.name);
       }
     });
 

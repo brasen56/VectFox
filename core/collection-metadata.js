@@ -9,7 +9,7 @@
  * - collection-metadata.js = Settings & state (talks to extension_settings)
  */
 
-import { extension_settings } from '../../../../extensions.js';
+import { extension_settings, getContext } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { parseRegistryKey, COLLECTION_PREFIXES } from './collection-ids.js';
 
@@ -144,6 +144,48 @@ function ensureCollectionsObject() {
 }
 
 /**
+ * Canonicalize a collection identifier into the storage key used by the
+ * metadata layer.
+ *
+ *   - Registry-key form ("backend:id")  → kept as-is.
+ *   - Bare collection ID                → auto-qualified to "backend:id" when
+ *                                         exactly one backend in the registry
+ *                                         hosts that bare ID. Ambiguous matches
+ *                                         (multiple backends) log a warning and
+ *                                         return the bare form so the legacy
+ *                                         shared entry stays readable.
+ *
+ * This fixes the cross-backend lock-bleed bug: two collections with the same
+ * bare ID but different backends now resolve to distinct storage keys.
+ * Reads stay backwards compatible via the bare-ID fallback in getCollectionMeta.
+ */
+function _resolveStorageKey(collectionId) {
+    if (!collectionId) return collectionId;
+
+    // Already qualified — accept as-is.
+    if (collectionId.includes(':')) {
+        const parsed = parseRegistryKey(collectionId);
+        if (parsed.backend) return collectionId;
+    }
+
+    // Read registry directly to avoid circular import with collection-loader.js.
+    const registry = extension_settings?.vectfox?.vectfox_collection_registry;
+    if (!Array.isArray(registry) || registry.length === 0) return collectionId;
+
+    const matches = [];
+    for (const key of registry) {
+        const p = parseRegistryKey(key);
+        if (p.backend && p.collectionId === collectionId) matches.push(key);
+    }
+
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+        console.warn(`VectFox: _resolveStorageKey: bare ID "${collectionId}" is hosted by ${matches.length} backends (${matches.map(m => parseRegistryKey(m).backend).join(', ')}). Caller should pass the registry key form to disambiguate.`);
+    }
+    return collectionId;
+}
+
+/**
  * Gets metadata for a collection
  * @param {string} collectionId Collection identifier
  * @returns {object} Collection metadata (with defaults applied)
@@ -154,9 +196,17 @@ export function getCollectionMeta(collectionId) {
         return { ...defaultCollectionMeta };
     }
 
-    let stored = extension_settings.vectfox.collections[collectionId];
+    const storageKey = _resolveStorageKey(collectionId);
+    let stored = extension_settings.vectfox.collections[storageKey];
 
-    // Fallback: Try bare collectionId for entries written before backend: prefix was added
+    // Fallback chain for legacy entries:
+    //   1. Try the exact input (e.g., user passed a registry key but old data
+    //      is at that exact same key).
+    //   2. Try the bare collectionId — entries written before backend: prefix
+    //      was added live here.
+    if (!stored && storageKey !== collectionId) {
+        stored = extension_settings.vectfox.collections[collectionId];
+    }
     if (!stored && collectionId) {
         const parsed = parseRegistryKey(collectionId);
         if (parsed.backend) {
@@ -188,16 +238,23 @@ export function setCollectionMeta(collectionId, data) {
 
     ensureCollectionsObject();
 
-    const existing = extension_settings.vectfox.collections[collectionId] || {};
+    const storageKey = _resolveStorageKey(collectionId);
+    // Preserve any legacy bare-ID data on first write to backend:id (so we
+    // don't lose triggers/conditions etc. that were written before this fix).
+    let existing = extension_settings.vectfox.collections[storageKey];
+    if (!existing && storageKey !== collectionId) {
+        existing = extension_settings.vectfox.collections[collectionId] || {};
+    }
+    if (!existing) existing = {};
 
-    extension_settings.vectfox.collections[collectionId] = {
+    extension_settings.vectfox.collections[storageKey] = {
         ...defaultCollectionMeta,
         ...existing,
         ...data,
     };
 
     saveSettingsDebounced();
-    if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Updated metadata for collection ${collectionId}`);
+    if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Updated metadata for collection ${storageKey}`);
 }
 
 /**
@@ -207,11 +264,21 @@ export function setCollectionMeta(collectionId, data) {
 export function deleteCollectionMeta(collectionId) {
     ensureCollectionsObject();
 
-    if (extension_settings.vectfox.collections[collectionId]) {
+    const storageKey = _resolveStorageKey(collectionId);
+    let deleted = false;
+    if (extension_settings.vectfox.collections[storageKey]) {
+        delete extension_settings.vectfox.collections[storageKey];
+        deleted = true;
+    }
+    // Also clear any legacy bare-ID entry if the caller passed a registry key.
+    if (storageKey !== collectionId && extension_settings.vectfox.collections[collectionId]) {
         delete extension_settings.vectfox.collections[collectionId];
+        deleted = true;
+    }
+    if (deleted) {
         _updateChatLockIndex(collectionId, null, '*');
         saveSettingsDebounced();
-        console.log(`VectFox: Deleted metadata for collection ${collectionId}`);
+        console.log(`VectFox: Deleted metadata for collection ${storageKey}`);
     }
 }
 
@@ -454,21 +521,26 @@ function _updateChatLockIndex(collectionId, addChatId, removeChatId) {
     if (!store.chat_lock_index) store.chat_lock_index = {};
     const idx = store.chat_lock_index;
 
+    // Reverse index uses the same storage key as the forward meta — keeps the
+    // two views consistent and lets `getChatLockedCollections` return registry
+    // keys when available.
+    const storageKey = _resolveStorageKey(collectionId);
+
     if (addChatId) {
         const key = String(addChatId);
         if (!Array.isArray(idx[key])) idx[key] = [];
-        if (!idx[key].includes(collectionId)) idx[key].push(collectionId);
+        if (!idx[key].includes(storageKey)) idx[key].push(storageKey);
     }
 
     if (removeChatId === '*') {
         for (const key of Object.keys(idx)) {
-            idx[key] = idx[key].filter(id => id !== collectionId);
+            idx[key] = idx[key].filter(id => id !== storageKey && id !== collectionId);
             if (idx[key].length === 0) delete idx[key];
         }
     } else if (removeChatId) {
         const key = String(removeChatId);
         if (Array.isArray(idx[key])) {
-            idx[key] = idx[key].filter(id => id !== collectionId);
+            idx[key] = idx[key].filter(id => id !== storageKey && id !== collectionId);
             if (idx[key].length === 0) delete idx[key];
         }
     }
@@ -718,6 +790,159 @@ export function isCollectionActiveForContext(collectionId, { chatId, characterId
         return Boolean(characterId && isCollectionLockedToCharacter(collectionId, String(characterId)));
     }
     return false;
+}
+
+// ============================================================================
+// LOCK FACADE — getLock / setLock
+// ============================================================================
+// Two-function entry point for everything lock-related. Bundles:
+//   1. Backend disambiguation (canonical storage key via _resolveStorageKey)
+//   2. Authorization (superadmin OR creator handle matches current persona)
+//   3. Scope-aware lock list (chat vs character)
+//   4. Current-context active check (locked to current chat/character)
+//
+// New code should call getLock/setLock instead of the 13 lower-level lock
+// primitives (setCollectionLock, isCollectionLockedToChat, etc.). The
+// primitives are kept for backwards compatibility and now route through
+// _resolveStorageKey internally, so call sites that haven't migrated still
+// behave correctly.
+
+/**
+ * Authorization check for lock operations. Returns true when:
+ *   - settings.superadmin === true, OR
+ *   - the collection's creatorHandle matches the current persona handle, OR
+ *   - the collection has no creatorHandle stamp and its bare ID contains the
+ *     current handle (legacy fallback — same logic as getCollectionListing).
+ *
+ * Returns true (allow) when context is unavailable so headless/system code
+ * (collection-export imports, registry registration) isn't blocked.
+ *
+ * @param {object} meta - already-resolved collection metadata
+ * @param {string} collectionId - original ID passed by caller (for legacy fallback)
+ * @param {object} [settings] - extension_settings.vectfox (or partial)
+ * @returns {boolean}
+ */
+function _isLockAuthorized(meta, collectionId, settings) {
+    const store = settings || extension_settings?.vectfox || {};
+    if (store.superadmin === true) return true;
+
+    let currentHandle = '';
+    try {
+        // Dynamic require to avoid circular import with collection-loader.js.
+        // If the context modules aren't ready (early boot), allow the action.
+        const ctx = (typeof getContext === 'function') ? getContext() : null;
+        currentHandle = String(ctx?.name1 || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_');
+    } catch (_) {
+        return true; // permissive when context unavailable
+    }
+    if (!currentHandle || currentHandle === 'user') return true; // permissive when no persona
+
+    const creator = meta?.creatorHandle ? String(meta.creatorHandle).toLowerCase() : '';
+    if (creator) return creator === currentHandle;
+
+    // No creatorHandle stamp — legacy fallback to ID substring match.
+    const bareId = parseRegistryKey(collectionId).collectionId || collectionId || '';
+    return bareId.toLowerCase().includes(`_${currentHandle}_`);
+}
+
+/**
+ * Get the lock state for a collection. One stop for: "is it locked anywhere?",
+ * "is it locked to the current context?", "what chats/characters is it locked
+ * to?", and "can the current user modify these locks?".
+ *
+ * Returns null when the caller is unauthorized (non-superadmin, non-owner).
+ * Use options.ignoreAuth=true for internal/system callers that need the raw state.
+ *
+ * @param {string} collectionId - Bare ID or registry-key form ("backend:id")
+ * @param {object} [options]
+ * @param {string} [options.chatId] - Override current chat ID for the active check
+ * @param {string|number} [options.characterId] - Override current character ID
+ * @param {object} [options.settings] - VectFox settings (for superadmin flag)
+ * @param {boolean} [options.ignoreAuth=false] - Skip authorization gate
+ * @returns {null | {
+ *   storageKey: string,
+ *   scope: 'chat' | 'character' | 'unknown',
+ *   chatLocks: string[],
+ *   characterLocks: string[],
+ *   isLocked: boolean,
+ *   isActiveHere: boolean,
+ *   canModify: boolean,
+ * }}
+ */
+export function getLock(collectionId, options = {}) {
+    if (!collectionId) return null;
+    const { chatId, characterId, settings, ignoreAuth = false } = options;
+
+    const storageKey = _resolveStorageKey(collectionId);
+    const meta = getCollectionMeta(storageKey);
+    const canModify = _isLockAuthorized(meta, collectionId, settings);
+
+    if (!ignoreAuth && !canModify) {
+        return null;
+    }
+
+    const chatLocks = getCollectionLocks(storageKey);
+    const characterLocks = getCollectionCharacterLocks(storageKey);
+    const scope = meta?.scope || 'unknown';
+
+    let isActiveHere = false;
+    if (scope === 'chat') {
+        isActiveHere = Boolean(chatId && chatLocks.some(id => String(id) === String(chatId)));
+    } else if (scope === 'character') {
+        isActiveHere = Boolean(characterId && characterLocks.some(id => String(id) === String(characterId)));
+    }
+
+    return {
+        storageKey,
+        scope,
+        chatLocks,
+        characterLocks,
+        isLocked: chatLocks.length > 0 || characterLocks.length > 0,
+        isActiveHere,
+        canModify,
+    };
+}
+
+/**
+ * Mutate a collection's lock state. Validates authorization first.
+ *
+ * @param {string} collectionId - Bare ID or registry-key form
+ * @param {{ kind: 'chat'|'character', op: 'add'|'remove'|'clear', target?: string }} action
+ *   - kind:   which lock list to modify
+ *   - op:     'add' = include target, 'remove' = drop target, 'clear' = empty the list
+ *   - target: chatId or characterId (required for add/remove; ignored for clear)
+ * @param {object} [options]
+ * @param {object} [options.settings] - VectFox settings (for superadmin)
+ * @param {boolean} [options.ignoreAuth=false] - Skip authorization (system use)
+ * @returns {{ success: boolean, reason?: string }}
+ */
+export function setLock(collectionId, action, options = {}) {
+    if (!collectionId) return { success: false, reason: 'missing collectionId' };
+    if (!action || typeof action !== 'object') return { success: false, reason: 'missing action' };
+    const { kind, op, target } = action;
+    if (kind !== 'chat' && kind !== 'character') return { success: false, reason: 'invalid kind' };
+    if (op !== 'add' && op !== 'remove' && op !== 'clear') return { success: false, reason: 'invalid op' };
+    if ((op === 'add' || op === 'remove') && !target) return { success: false, reason: 'missing target' };
+
+    const { settings, ignoreAuth = false } = options;
+    const storageKey = _resolveStorageKey(collectionId);
+    const meta = getCollectionMeta(storageKey);
+
+    if (!ignoreAuth && !_isLockAuthorized(meta, collectionId, settings)) {
+        console.warn(`VectFox: setLock denied for ${storageKey} (kind=${kind}, op=${op}) — not superadmin and persona handle does not match creatorHandle`);
+        return { success: false, reason: 'unauthorized' };
+    }
+
+    if (kind === 'chat') {
+        if (op === 'add') setCollectionLock(storageKey, target);
+        else if (op === 'remove') removeCollectionLock(storageKey, target);
+        else clearCollectionLock(storageKey);
+    } else {
+        if (op === 'add') setCollectionCharacterLock(storageKey, String(target));
+        else if (op === 'remove') removeCollectionCharacterLock(storageKey, String(target));
+        else clearCollectionCharacterLocks(storageKey);
+    }
+    return { success: true };
 }
 
 /**
