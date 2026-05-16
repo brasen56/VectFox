@@ -538,12 +538,13 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
             console.warn(`[EventBase] Window ${windowIndex}, item ${i}: coercion warnings — ${errors.join('; ')}`);
         }
 
-        // Post-parse language sanity check
+        // Post-parse language sanity check (warn only — retained for visibility,
+        // does not drop the event; retrieval quality may suffer if the summary
+        // language doesn't match the collection's tokenizer mode)
         const summaryScript = _detectScript(event.summary);
         if (excerptScript !== 'empty' && excerptScript !== 'mixed' && summaryScript !== 'empty' && summaryScript !== 'mixed') {
             if (excerptScript !== summaryScript) {
-                console.warn(`[EventBase] Window ${windowIndex}, item ${i}: language mismatch (excerpt=${excerptScript}, summary=${summaryScript}) — dropped`);
-                continue;
+                console.warn(`[EventBase] Window ${windowIndex}, item ${i}: language mismatch (excerpt=${excerptScript}, summary=${summaryScript}) — kept`);
             }
         }
 
