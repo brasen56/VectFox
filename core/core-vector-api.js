@@ -932,12 +932,27 @@ async function scoreResults(resultsForBoost, searchText, topK, settings, collect
 
     // Optional: full-corpus IDF (A/B toggle in Core → Hybrid Search & BM25).
     // Fetches and tokenizes every chunk of the collection on first use, then
-    // caches in-memory for the session. Falls back to local IDF on failure.
-    // Dynamic import keeps the script.js dependency out of unrelated test setups.
+    // caches in-memory for the session.
+    //
+    // Hardening: this is an *enhancement* on top of valid vector results. Any
+    // failure — module load error, network blip, plugin 5xx, tokenizer crash —
+    // must NOT discard the ANN results. We catch every failure mode, log it
+    // clearly, and continue with corpusStats=null (= local-IDF BM25, the
+    // pre-toggle default). Without this, a single ./corpus-stats.js import
+    // error bubbles up through scoreResults → queryCollection →
+    // eventbase-retrieval.js:400 catch, which discards every match.
     let corpusStats = null;
     if (settings?.bm25_use_corpus_idf === true && collectionId) {
-        const { getCorpusStats } = await import('./corpus-stats.js');
-        corpusStats = await getCorpusStats(collectionId, settings);
+        try {
+            const mod = await import('./corpus-stats.js');
+            corpusStats = await mod.getCorpusStats(collectionId, settings);
+            if (!corpusStats && settings.eventbase_debug_logging) {
+                console.warn(`[VectFox] Corpus-IDF disabled for ${collectionId}: getCorpusStats returned null (chunks/list fetch failed). Falling back to local-IDF BM25.`);
+            }
+        } catch (err) {
+            console.warn(`[VectFox] Corpus-IDF unavailable for ${collectionId}, falling back to local-IDF BM25. Reason: ${err?.message || err}`);
+            corpusStats = null;
+        }
     }
 
     const bm25Results = applyBM25Scoring(resultsForBoost, searchText, {

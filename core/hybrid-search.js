@@ -188,10 +188,22 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     //    settings.bm25_use_corpus_idf is ON, IDF is pulled from full-corpus
     //    stats (N + df across every chunk) — same idea as Qdrant A3's global IDF.
     //    Either way, recall is still bounded by what vector ANN returned.
+    //
+    // Hardening: corpus-IDF is an enhancement on top of valid vector results.
+    // Any failure (module load, network, plugin error) must not discard the
+    // ANN candidates — fall back to local-IDF BM25 and continue.
     let corpusStats = null;
     if (settings?.bm25_use_corpus_idf === true) {
-        const { getCorpusStats } = await import('./corpus-stats.js');
-        corpusStats = await getCorpusStats(collectionId, settings);
+        try {
+            const mod = await import('./corpus-stats.js');
+            corpusStats = await mod.getCorpusStats(collectionId, settings);
+            if (!corpusStats && debugLog) {
+                console.warn(`[HybridSearch] Corpus-IDF disabled for ${collectionId}: getCorpusStats returned null. Falling back to local-IDF BM25.`);
+            }
+        } catch (err) {
+            console.warn(`[HybridSearch] Corpus-IDF unavailable for ${collectionId}, falling back to local-IDF BM25. Reason: ${err?.message || err}`);
+            corpusStats = null;
+        }
     }
     if (debugLog) console.log(`[HybridSearch] Computing BM25 scores for ${resultsWithText.length} results (idf=${corpusStats ? 'corpus' : 'local'})...`);
     const bm25Results = performBM25Search(resultsWithText, searchText, {

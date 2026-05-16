@@ -16,7 +16,7 @@
  * collections are re-indexed.
  * ============================================================================
  */
-import { getRequestHeaders } from '../../../../script.js';
+import { getRequestHeaders } from '../../../../../script.js';
 import { tokenize } from './bm25-scorer.js';
 import { getModelFromSettings } from './providers.js';
 

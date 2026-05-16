@@ -81,6 +81,9 @@ Exact constant names:
 - `DEFAULT_MAX_TOKENS`
 - `DEFAULT_TIMEOUT_MS`
 
+### 4) claude memory
+C:\Users\Goten\.claude\projects\h--Github-Dev-VectFox\memory\MEMORY.md
+
 
 ## 5) Card Pause/Resume Button (`enabled` flag)
 
