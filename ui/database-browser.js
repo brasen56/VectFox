@@ -652,6 +652,12 @@ function bindBrowserEvents() {
         await refreshCollections();
       }
     } catch (error) {
+      const isStopped = error?.name === 'AbortError' || String(error?.message || '').toLowerCase().includes('stopped by user');
+      if (isStopped) {
+        toastr.info('Import stopped', 'VectFox');
+        await refreshCollections();
+        return;
+      }
       console.error("VectFox: Import failed", error);
       toastr.error(`Import failed: ${error.message}`, "VectFox");
     }

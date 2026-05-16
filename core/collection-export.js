@@ -513,12 +513,15 @@ export function validateImportData(data, currentSettings = {}) {
  * @param {Array} chunks - Chunks with vectors
  * @param {object} settings - VectFox settings
  * @param {Function} [onBatchProgress] - Called after each batch: (insertedSoFar, total)
+ * @param {AbortSignal} [abortSignal] - Cancel between batches
  */
-async function insertChunksWithVectors(collectionId, chunks, settings, onBatchProgress) {
+async function insertChunksWithVectors(collectionId, chunks, settings, onBatchProgress, abortSignal = null) {
     const backendName = settings.vector_backend || 'standard';
-    // Batch to avoid 413 — large vector dimensions (e.g. 4096-dim) make single-shot
-    // bodies tens of MBs. 20 chunks ≈ 1 MB per request for 4096-dim vectors.
-    const BATCH_SIZE = 20;
+    // Batch to avoid 413. Qdrant accepts up to 32 MB per request; live ingestion uses 100
+    // (backends/qdrant.js). Per-batch overhead (collection metadata GETs + wait=true index)
+    // dominates total time, so larger batches roughly amortize that cost. 100 chunks ≈ 5 MB
+    // for 4096-dim vectors — well under the limit.
+    const BATCH_SIZE = 100;
     const items = chunks.map(c => {
         const item = {
             hash: c.hash,
@@ -545,6 +548,9 @@ async function insertChunksWithVectors(collectionId, chunks, settings, onBatchPr
 
     let inserted = 0;
     for (let i = 0; i < items.length; i += BATCH_SIZE) {
+        if (abortSignal?.aborted) {
+            throw Object.assign(new Error('Import stopped by user'), { name: 'AbortError' });
+        }
         const batch = items.slice(i, i + BATCH_SIZE);
         const response = await fetch('/api/plugins/similharity/chunks/insert', {
             method: 'POST',
@@ -627,6 +633,9 @@ export async function importCollection(exportData, settings, options = {}) {
     progressTracker.updateCurrentItem(collectionId);
     progressTracker.updateChunks(validChunks.length);
 
+    const abortController = new AbortController();
+    progressTracker.setCancelHandler(() => abortController.abort('user-stop'));
+
     const errors = [];
 
     try {
@@ -641,6 +650,10 @@ export async function importCollection(exportData, settings, options = {}) {
                 // Collection might not exist, that's fine - log at debug level
                 console.debug(`VectFox Import: Could not purge ${collectionId} (may not exist):`, e.message);
             }
+        }
+
+        if (abortController.signal.aborted) {
+            throw Object.assign(new Error('Import stopped by user'), { name: 'AbortError' });
         }
 
         // Step 2: Prepare chunks
@@ -662,18 +675,20 @@ export async function importCollection(exportData, settings, options = {}) {
             try {
                 await insertChunksWithVectors(collectionId, preparedChunks, settings, (done, total) => {
                     progressTracker.updateEmbeddingProgress(done, total);
-                });
+                }, abortController.signal);
                 console.log(`VectFox Import: Inserted ${preparedChunks.length} chunks with pre-computed vectors`);
             } catch (error) {
+                if (error?.name === 'AbortError') throw error;
                 throw new Error(`Failed to insert chunks: ${error.message}`);
             }
         } else {
             // Need to embed (slow)
             progressTracker.updateProgress(3, `Embedding ${preparedChunks.length} chunks...`);
             try {
-                await insertVectorItems(collectionId, preparedChunks, settings);
+                await insertVectorItems(collectionId, preparedChunks, settings, null, abortController.signal);
                 console.log(`VectFox Import: Embedded and inserted ${preparedChunks.length} chunks`);
             } catch (error) {
+                if (error?.name === 'AbortError') throw error;
                 throw new Error(`Failed to embed chunks: ${error.message}`);
             }
         }
@@ -752,9 +767,24 @@ export async function importCollection(exportData, settings, options = {}) {
         };
 
     } catch (error) {
-        progressTracker.addError(error.message);
-        progressTracker.complete(false, 'Import failed');
+        const isStopped = error?.name === 'AbortError' || String(error?.message || '').toLowerCase().includes('stopped by user');
+        if (isStopped) {
+            // Best-effort cleanup: the collection was purged in step 1 but a partial
+            // batch may have been written. Purge again so the user doesn't end up with
+            // a half-imported collection.
+            try {
+                await purgeVectorIndex(collectionId, settings);
+            } catch (cleanupErr) {
+                console.debug(`VectFox Import: cleanup purge after stop failed:`, cleanupErr?.message);
+            }
+            progressTracker.complete(false, 'Import stopped');
+        } else {
+            progressTracker.addError(error.message);
+            progressTracker.complete(false, 'Import failed');
+        }
         throw error;
+    } finally {
+        progressTracker.clearCancelHandler();
     }
 }
 
