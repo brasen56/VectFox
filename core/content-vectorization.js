@@ -22,6 +22,7 @@ import {
     buildCharacterCollectionId,
     buildDocumentCollectionId,
     COLLECTION_PREFIXES,
+    getRegistryBackend,
 } from './collection-ids.js';
 import { extractLorebookKeywords, extractTextKeywords, extractChatKeywords, extractBM25Keywords, EXTRACTION_LEVELS, DEFAULT_EXTRACTION_LEVEL, DEFAULT_BASE_WEIGHT } from './keyword-boost.js';
 import { cleanText, cleanMessages } from './text-cleaning.js';
@@ -96,16 +97,19 @@ export async function vectorizeContent({ contentType, source, settings, abortSig
         // Step 3: Enrich and hash
         progressTracker.updateProgress(3, 'Processing chunks...');
         const collectionId = generateCollectionId(contentType, source, settings);
+        // Storage key for all metadata writes — must match the registry-key form
+        // ("backend:id") used by import, loader, and cleanupOrphanedMeta.
+        const registryKey = `${getRegistryBackend(settings.vector_backend)}:${collectionId}`;
 
         // Set the appropriate lock based on scope. Registered before embedding starts so the
         // index entry exists even if vectorization is interrupted partway through.
         const scope = settings.scope || 'character';
         if (scope === 'chat') {
             const currentChatId = getCurrentChatId();
-            if (currentChatId) setCollectionLock(collectionId, currentChatId);
+            if (currentChatId) setCollectionLock(registryKey, currentChatId);
         } else if (scope === 'character') {
             const currentCharacterId = getContext()?.characterId;
-            if (currentCharacterId) setCollectionCharacterLock(collectionId, String(currentCharacterId));
+            if (currentCharacterId) setCollectionCharacterLock(registryKey, String(currentCharacterId));
         }
 
         // Get full extension settings for keyword extraction (includes custom_stopwords)
@@ -237,7 +241,7 @@ export async function vectorizeContent({ contentType, source, settings, abortSig
         }
 
         // Save collection metadata
-        setCollectionMeta(collectionId, {
+        setCollectionMeta(registryKey, {
             contentType,
             sourceName,
             scope: settings.scope || 'character',
@@ -252,8 +256,8 @@ export async function vectorizeContent({ contentType, source, settings, abortSig
         });
 
         // Register collection in the registry so it's discoverable
-        registerCollection(collectionId);
-        console.log(`VectFox: Registered collection ${collectionId}`);
+        registerCollection(registryKey);
+        console.log(`VectFox: Registered collection ${registryKey}`);
 
 
         throwIfAborted();

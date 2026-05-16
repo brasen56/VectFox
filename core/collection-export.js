@@ -720,11 +720,17 @@ export async function importCollection(exportData, settings, options = {}) {
         // Step 4: Save metadata
         progressTracker.updateProgress(4, 'Saving metadata...');
 
+        // Metadata is keyed by the registry-key form ("backend:id") — same key
+        // used by setCollectionLock, cleanupOrphanedMeta, and the loader's
+        // ensureCollectionMeta. Writing at the bare ID would land in a different
+        // bucket that the orphan-cleanup pass would immediately remove.
+        const registryKey = `${getRegistryBackend(settings.vector_backend)}:${collectionId}`;
+
         // Import is treated as a conversion → activation state must start fresh.
         // Clear any chat locks from a prior collection with the same ID first so the
         // chat_lock_index reverse map stays consistent; lockedToCharacterIds + autoSync
         // are zeroed via importedMeta below (no reverse map to maintain).
-        clearCollectionLock(collectionId);
+        clearCollectionLock(registryKey);
 
         // Collection-level metadata
         const importedMeta = {
@@ -763,7 +769,7 @@ export async function importCollection(exportData, settings, options = {}) {
             });
         }
 
-        setCollectionMeta(collectionId, importedMeta);
+        setCollectionMeta(registryKey, importedMeta);
 
         // Per-chunk metadata
         for (const chunk of validChunks) {
@@ -774,7 +780,7 @@ export async function importCollection(exportData, settings, options = {}) {
         }
 
         // Register collection with backend prefix so parseRegistryKey resolves the right backend
-        registerCollection(`${getRegistryBackend(settings.vector_backend)}:${collectionId}`);
+        registerCollection(registryKey);
         saveSettingsDebounced();
 
         const statusMsg = canUseVectors
@@ -917,9 +923,13 @@ async function importCollectionSilent(exportData, settings, options = {}) {
         await insertVectorItems(collectionId, preparedChunks, settings);
     }
 
+    // Metadata is keyed by the registry-key form ("backend:id"). See importCollection
+    // for the rationale; same logic applies here.
+    const registryKey = `${getRegistryBackend(settings.vector_backend)}:${collectionId}`;
+
     // Convert = unchecked: clear prior chat locks (with reverse-map cleanup)
     // before merging metadata; lockedToCharacterIds + autoSync are zeroed via importedMeta.
-    clearCollectionLock(collectionId);
+    clearCollectionLock(registryKey);
 
     // Save metadata
     const importedMeta = {
@@ -951,7 +961,7 @@ async function importCollectionSilent(exportData, settings, options = {}) {
         });
     }
 
-    setCollectionMeta(collectionId, importedMeta);
+    setCollectionMeta(registryKey, importedMeta);
 
     for (const chunk of validChunks) {
         if (chunk.chunkMeta) {
@@ -960,7 +970,7 @@ async function importCollectionSilent(exportData, settings, options = {}) {
         }
     }
 
-    registerCollection(`${getRegistryBackend(settings.vector_backend)}:${collectionId}`);
+    registerCollection(registryKey);
     saveSettingsDebounced();
 
     return {

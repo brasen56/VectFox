@@ -1566,7 +1566,9 @@ function bindCollectionCardEvents() {
       const collectionKey = $(this).data("collection-key");
       const collection = findCollectionByKey(collectionKey);
       if (collection) {
-        openRenameDialog(collection.id, collection.name);
+        // Pass registry-key form so the metadata write lands at the same key
+        // the loader/import/cleanup paths use.
+        openRenameDialog(collection.registryKey || collection.id, collection.name);
       }
     });
 

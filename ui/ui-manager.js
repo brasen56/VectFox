@@ -2046,20 +2046,24 @@ function bindSettingsEvents(settings, callbacks) {
                     return;
                 }
                 // Collection exists (partial or fully-vectorized) — lock + enable.
-                setCollectionLock(status.collectionId, chatId);
-                setCollectionAutoSync(status.collectionId, true);
+                // Use registry-key form ("backend:id") so metadata writes land in the
+                // same bucket as the loader/import path.
+                const lockKey = status.registryKey || status.collectionId;
+                setCollectionLock(lockKey, chatId);
+                setCollectionAutoSync(lockKey, true);
                 const message = status.state === 'fully-vectorized'
                     ? 'Auto-sync enabled — chat is fully synced'
                     : 'Auto-sync enabled — will catch up on next trigger';
                 toastr.success(message);
-                console.log(`VectFox: Chat auto-sync ENABLED for ${status.collectionId} (state=${status.state})`);
+                console.log(`VectFox: Chat auto-sync ENABLED for ${lockKey} (state=${status.state})`);
             } else {
                 // Uncheck — clear the flag and release the chat lock.
                 if (status.state !== 'no-collection') {
-                    setCollectionAutoSync(status.collectionId, false);
-                    if (chatId) removeCollectionLock(status.collectionId, chatId);
+                    const lockKey = status.registryKey || status.collectionId;
+                    setCollectionAutoSync(lockKey, false);
+                    if (chatId) removeCollectionLock(lockKey, chatId);
                     toastr.info('Auto-sync disabled for this chat');
-                    console.log(`VectFox: Chat auto-sync DISABLED for ${status.collectionId}`);
+                    console.log(`VectFox: Chat auto-sync DISABLED for ${lockKey}`);
                 }
             }
 
@@ -2818,11 +2822,12 @@ function bindSettingsEvents(settings, callbacks) {
                 let removed = 0;
                 for (const e of ownLorebookEntries) {
                     if (!e.isActive) continue;
+                    const lockKey = e.registryKey || e.collectionId;
                     if (e.meta.scope === 'chat' && chatId) {
-                        removeCollectionLock(e.collectionId, chatId);
+                        removeCollectionLock(lockKey, chatId);
                         removed++;
                     } else if (e.meta.scope === 'character' && characterId) {
-                        removeCollectionCharacterLock(e.collectionId, String(characterId));
+                        removeCollectionCharacterLock(lockKey, String(characterId));
                         removed++;
                     }
                 }

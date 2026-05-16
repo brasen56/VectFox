@@ -64,10 +64,15 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // Archive collections are excluded — they are locked manually by the user.
     // Stamping scope='chat' is required for isCollectionActiveForContext() to return true:
     // it gates on scope first, so a lock without scope leaves the collection inert.
+    //
+    // Metadata writes go to the registry-key form ("backend:id") to match the
+    // import path, loader, and cleanupOrphanedMeta. Bare-ID writes would land in
+    // a different bucket and get nuked by the orphan-cleanup pass.
     const _startChatId = getCurrentChatId();
     if (_startChatId && !collectionId.startsWith(COLLECTION_PREFIXES.VECTFOX_ARCHIVE_EVENT)) {
-        setCollectionLock(collectionId, _startChatId);
-        setCollectionMeta(collectionId, { scope: 'chat' });
+        const _startRegistryKey = `${getRegistryBackend(settings?.vector_backend)}:${collectionId}`;
+        setCollectionLock(_startRegistryKey, _startChatId);
+        setCollectionMeta(_startRegistryKey, { scope: 'chat' });
     }
 
     const backend = getRegistryBackend(settings?.vector_backend);

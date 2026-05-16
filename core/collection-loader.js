@@ -1050,10 +1050,12 @@ export async function loadAllCollections(settings, autoDiscover = true) {
             const displayName = getCollectionDisplayName(collectionId, metadata);
             if (debugLog) console.log(`VectFox:   Display name: ${displayName}`);
 
-            // Metadata is stored under the bare collectionId (no prefix) so it stays
-            // consistent with setCollectionLock and the cleanupOrphanedMeta check.
+            // Metadata is stored under the registry-key form ("backend:id") so it
+            // stays consistent with setCollectionLock, cleanupOrphanedMeta, and the
+            // import path. Writing at the bare collectionId would land in a different
+            // bucket that the orphan-cleanup pass would immediately remove.
             const enabled = isCollectionEnabled(registryKey);
-            ensureCollectionMeta(collectionId, { scope: metadata.scope });
+            ensureCollectionMeta(registryKey, { scope: metadata.scope });
 
             collections.push({
                 id: collectionId,           // Original collection ID (for API calls)
