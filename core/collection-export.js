@@ -31,7 +31,7 @@ import {
     registerCollection,
     getCollectionRegistry,
 } from './collection-loader.js';
-import { COLLECTION_PREFIXES } from './collection-ids.js';
+import { COLLECTION_PREFIXES, getRegistryBackend } from './collection-ids.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { getStringHash } from '../../../../utils.js';
 
@@ -692,8 +692,8 @@ export async function importCollection(exportData, settings, options = {}) {
             }
         }
 
-        // Register collection
-        registerCollection(collectionId);
+        // Register collection with backend prefix so parseRegistryKey resolves the right backend
+        registerCollection(`${getRegistryBackend(settings.vector_backend)}:${collectionId}`);
         saveSettingsDebounced();
 
         const statusMsg = canUseVectors
@@ -858,7 +858,7 @@ async function importCollectionSilent(exportData, settings, options = {}) {
         }
     }
 
-    registerCollection(collectionId);
+    registerCollection(`${getRegistryBackend(settings.vector_backend)}:${collectionId}`);
     saveSettingsDebounced();
 
     return {
