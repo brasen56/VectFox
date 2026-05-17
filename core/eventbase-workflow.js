@@ -139,6 +139,10 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
         try { toastr.info('Auto-Sync: extracting events...', 'VectFox', { timeOut: 3000 }); } catch (_) {}
     }
 
+    // Always-on trace so the user can confirm auto-sync ran without enabling debugLog.
+    // popupShown=false here means popup was suppressed (e.g. MESSAGE_SENT) — extraction still runs.
+    if (isAutoSync) console.log(`[VectFox AutoSync] running — messages=${messages.length}, popupShown=${popupAllowed}`);
+
     const windows = [];
     for (let start = 0; start < messages.length; start += step) {
         const end = Math.min(start + windowSize - 1, messages.length - 1);
