@@ -270,7 +270,7 @@ export async function testClassifierModel(model) {
  * @returns {Object} Classifier settings
  */
 export function getClassifierSettings() {
-    const vhSettings = extension_settings?.VectFox || {};
+    const vhSettings = extension_settings?.vectfox || {};
     return {
         enabled: vhSettings.emotion_classifier_enabled ?? DEFAULT_CLASSIFIER_SETTINGS.enabled,
         model: vhSettings.emotion_classifier_model ?? DEFAULT_CLASSIFIER_SETTINGS.model,

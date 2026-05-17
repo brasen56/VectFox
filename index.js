@@ -40,7 +40,7 @@ import { CJK_TOKENIZER_MODES, setCjkTokenizerMode, ensureJiebaTokenizerLoaded, e
 // VectFox modules - Cotton-Tales Integration
 import './core/emotion-classifier.js'; // Exposes window.VectFoxEmotionClassifier
 
-// Constants
+// SillyTavern display label — NOT the settings key. For settings, use 'vectfox' (lowercase).
 const MODULE_NAME = 'VectFox';
 
 // Default settings
@@ -258,12 +258,19 @@ const defaultSettings = {
 let settings = { ...defaultSettings };
 
 // Module worker for automatic syncing
-const moduleWorker = new ModuleWorkerWrapper(() => synchronizeChat(settings, getBatchSize()));
+const moduleWorker = new ModuleWorkerWrapper(() => synchronizeChat(settings, getBatchSize(), _lastChatTriggerEvent));
 
 // Batch size based on provider
 const getBatchSize = () => ['transformers', 'ollama'].includes(settings.source) ? 1 : 5;
 
-// Chat event handler (debounced)
+// Most recent SillyTavern event that triggered the debounced chat-event handler.
+// Read by synchronizeChat to suppress the auto-sync popup on MESSAGE_SENT (so the
+// popup only appears after the AI's reply arrives, never mid-generation).
+// If the debounce coalesces SENT+RECEIVED within one window, the later event wins.
+let _lastChatTriggerEvent = null;
+
+// Chat event handler (debounced). Each registration below sets the trigger flag
+// before invoking this, so the debounced fire knows what coalesced into it.
 const onChatEvent = debounce(async () => await moduleWorker.update(), debounce_timeout.relaxed);
 
 /**
@@ -519,14 +526,16 @@ jQuery(async () => {
         }
     })();
 
-    // Register event handlers
-    eventSource.on(event_types.MESSAGE_DELETED, onChatEvent);
-    eventSource.on(event_types.MESSAGE_EDITED, onChatEvent);
-    // Run vector sync tasks on message events
+    // Register event handlers. Each wrapper stamps _lastChatTriggerEvent so that
+    // when the debounce fires, synchronizeChat knows which event coalesced last —
+    // currently only used to suppress the auto-sync popup on MESSAGE_SENT.
+    const trigger = (name) => () => { _lastChatTriggerEvent = name; onChatEvent(); };
+    eventSource.on(event_types.MESSAGE_DELETED, trigger('MESSAGE_DELETED'));
+    eventSource.on(event_types.MESSAGE_EDITED, trigger('MESSAGE_EDITED'));
     // Note: Semantic WI injection happens in the generate_interceptor (rearrangeChat), not here
-    eventSource.on(event_types.MESSAGE_SENT, onChatEvent);
-    eventSource.on(event_types.MESSAGE_RECEIVED, onChatEvent);
-    eventSource.on(event_types.MESSAGE_SWIPED, onChatEvent);
+    eventSource.on(event_types.MESSAGE_SENT, trigger('MESSAGE_SENT'));
+    eventSource.on(event_types.MESSAGE_RECEIVED, trigger('MESSAGE_RECEIVED'));
+    eventSource.on(event_types.MESSAGE_SWIPED, trigger('MESSAGE_SWIPED'));
 
     // When WebLLM extension is loaded, refresh the model list
     eventSource.on(event_types.EXTENSION_SETTINGS_LOADED, async (manifest) => {

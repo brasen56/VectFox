@@ -13,7 +13,7 @@
 import { extension_settings } from '../../../../extensions.js';
 
 function isDebugVectorizingLogEnabled() {
-    return extension_settings?.VectFox?.debug_vectorizing_log === true;
+    return extension_settings?.vectfox?.debug_vectorizing_log === true;
 }
 
 /**

@@ -51,7 +51,7 @@ const EVENTBASE_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_eventbase`;
  * @param {{ strategy?: string, batchSize?: number, totalChunks?: number }|null} [params.progressPlan]
  * @returns {Promise<{ eventsExtracted: number, windowsProcessed: number, windowsSkipped: number }>}
  */
-export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null, parallelWindows = 3, isAutoSync = false }) {
+export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null, parallelWindows = 3, isAutoSync = false, suppressAutoSyncPopup = false }) {
     const debugLog = settings.eventbase_debug_logging;
     const debugVectorizing = settings.debug_vectorizing_log === true;
     const uuid = chatUUID || getChatUUID();
@@ -98,7 +98,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
 
     // If the fingerprint cache says windows were extracted but Qdrant has no data
     // (e.g. collection was deleted externally), reset the cache so we start fresh.
-    const cacheEntries = extension_settings?.VectFox?.eventbase_extracted_windows?.[uuid];
+    const cacheEntries = extension_settings?.vectfox?.eventbase_extracted_windows?.[uuid];
     if (Array.isArray(cacheEntries) && cacheEntries.length > 0) {
         try {
             const existingHashes = collectionId ? await getSavedHashes(collectionId, settings) : [];
@@ -129,10 +129,13 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // Past the quick-exit: at least the last window is new, so real work will happen.
     // Fire the auto-sync popup here so it shows once per ingestion call regardless of
     // whether older windows turn out to be dedup-skipped in the loop below.
+    // suppressAutoSyncPopup is set by synchronizeChat when the trigger was MESSAGE_SENT
+    // (user-send mid-generation) — extraction still runs, only the toast is hidden.
+    const popupAllowed = isAutoSync && !suppressAutoSyncPopup && settings.eventbase_autosync_popup !== false;
     if (debugLog) {
-        console.log(`[EventBase Popup] auto-sync gate: isAutoSync=${isAutoSync}, eventbase_autosync_popup=${settings.eventbase_autosync_popup} → fire=${!!(isAutoSync && settings.eventbase_autosync_popup !== false)}`);
+        console.log(`[EventBase Popup] auto-sync gate: isAutoSync=${isAutoSync}, suppressAutoSyncPopup=${suppressAutoSyncPopup}, eventbase_autosync_popup=${settings.eventbase_autosync_popup} → fire=${popupAllowed}`);
     }
-    if (isAutoSync && settings.eventbase_autosync_popup !== false) {
+    if (popupAllowed) {
         try { toastr.info('Auto-Sync: extracting events...', 'VectFox', { timeOut: 3000 }); } catch (_) {}
     }
 

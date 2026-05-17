@@ -2940,7 +2940,7 @@ function bindSettingsEvents(settings, callbacks) {
             const raw = $('#VectFox_wi_test_input').val() || '';
             const recentMessages = raw.split('\n').map(s => s.trim()).filter(Boolean);
             const activeEntries = [];
-            const cfg = window.extension_settings?.VectFox || settings;
+            const cfg = window.extension_settings?.vectfox || settings;
 
             console.log('VectFox: Running semantic WI test with messages:', recentMessages);
 
@@ -3043,7 +3043,7 @@ function bindSettingsEvents(settings, callbacks) {
         try {
             const raw = $('#VectFox_wi_test_input').val() || '';
             const recentMessages = raw.split('\n').map(s => s.trim()).filter(Boolean);
-            const cfg = window.extension_settings?.VectFox || settings;
+            const cfg = window.extension_settings?.vectfox || settings;
 
             if (!window.VectFox_WorldInfo || !window.VectFox_WorldInfo.getSemanticEntries) {
                 toastr.error('VectFox: WorldInfo hooks not initialized');

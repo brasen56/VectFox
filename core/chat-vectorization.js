@@ -325,9 +325,9 @@ async function rerankWithBananaBread(query, chunks, settings) {
  * @param {number} batchSize Number of messages to process per call
  * @returns {Promise<object>} Progress info
  */
-export async function synchronizeChat(settings, batchSize = 5) {
+export async function synchronizeChat(settings, batchSize = 5, triggerEvent = null) {
     const debugLog = settings?.eventbase_debug_logging;
-    if (debugLog) console.log('[AutoSync] synchronizeChat: invoked');
+    if (debugLog) console.log(`[AutoSync] synchronizeChat: invoked (trigger=${triggerEvent || 'unknown'})`);
 
     const chatId = getCurrentChatId();
     if (!chatId) {
@@ -373,6 +373,10 @@ export async function synchronizeChat(settings, batchSize = 5) {
         chatUUID: uuid,
         settings,
         isAutoSync: true,
+        // Suppress the popup when the trigger was the user sending a message —
+        // the popup should only appear after the AI's reply, not mid-generation.
+        // MESSAGE_RECEIVED (and edits/swipes/deletes) still get the popup.
+        suppressAutoSyncPopup: triggerEvent === 'MESSAGE_SENT',
     });
     if (debugLog) console.log(`[AutoSync] runEventBaseIngestion result:`, result);
 

@@ -27,7 +27,7 @@ import { cleanText } from './text-cleaning.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MAX_TOKENS = 2048;
+const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_TIMEOUT_MS = 60000;
 
