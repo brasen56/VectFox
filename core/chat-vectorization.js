@@ -346,11 +346,13 @@ export async function synchronizeChat(settings, batchSize = 5) {
     const { isCollectionAutoSyncEnabled } = await import('./collection-metadata.js');
     const backend = getRegistryBackend(settings?.vector_backend);
     const eventbaseCollections = findEventBaseCollectionIdsForChat(uuid, backend);
+    // Metadata is keyed by the registry-key form ("backend:id"), matching the
+    // write paths (eventbase-workflow.js, content-vectorization.js, ui-manager.js).
     if (debugLog) {
-        const flagPerCollection = eventbaseCollections.map(({ collectionId }) => `${collectionId}=${isCollectionAutoSyncEnabled(collectionId)}`);
+        const flagPerCollection = eventbaseCollections.map(({ registryKey }) => `${registryKey}=${isCollectionAutoSyncEnabled(registryKey)}`);
         console.log(`[AutoSync] uuid=${uuid}, backend=${backend}, eventbaseCollections=${eventbaseCollections.length}, autoSyncFlags=[${flagPerCollection.join(', ')}]`);
     }
-    const autoSyncEnabled = eventbaseCollections.some(({ collectionId }) => isCollectionAutoSyncEnabled(collectionId));
+    const autoSyncEnabled = eventbaseCollections.some(({ registryKey }) => isCollectionAutoSyncEnabled(registryKey));
 
     if (!autoSyncEnabled) {
         if (debugLog) console.log('[AutoSync] BAIL: no collection has autoSync=true');

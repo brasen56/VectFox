@@ -13,7 +13,7 @@
 
 import { setExtensionPrompt, extension_prompts, getCurrentChatId, substituteParams } from '../../../../../script.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
-import { getChatUUID, parseRegistryKey, COLLECTION_PREFIXES, getRegistryBackend, buildChatSearchPatterns, matchesPatterns } from './collection-ids.js';
+import { getChatUUID, parseRegistryKey, COLLECTION_PREFIXES, buildRegistryKey, buildChatSearchPatterns, matchesPatterns } from './collection-ids.js';
 import { getCollectionRegistry, getCollectionListing } from './collection-loader.js';
 import { queryCollection } from './core-vector-api.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
@@ -70,14 +70,13 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // a different bucket and get nuked by the orphan-cleanup pass.
     const _startChatId = getCurrentChatId();
     if (_startChatId && !collectionId.startsWith(COLLECTION_PREFIXES.VECTFOX_ARCHIVE_EVENT)) {
-        const _startRegistryKey = `${getRegistryBackend(settings?.vector_backend)}:${collectionId}`;
+        const _startRegistryKey = buildRegistryKey(collectionId, settings);
         setCollectionLock(_startRegistryKey, _startChatId);
         setCollectionMeta(_startRegistryKey, { scope: 'chat' });
     }
 
-    const backend = getRegistryBackend(settings?.vector_backend);
     const candidateKeys = [
-        `${backend}:${collectionId}`,
+        buildRegistryKey(collectionId, settings),
         collectionId,  // fallback for bare-ID entries written by older versions
     ].filter(Boolean);
     const disabledKey = candidateKeys.find(key => key && !isCollectionEnabled(key));

@@ -83,6 +83,23 @@ export function getRegistryBackend(vectorBackend) {
     return b === 'standard' ? 'vectra' : b;
 }
 
+/**
+ * Build the canonical registry-key form ("backend:collectionId") used as the
+ * dict key for all collection metadata (locks, autoSync, scope, conditions,
+ * etc.). All write paths must use this form so reads stay consistent with
+ * writes — see the auto-sync key-mismatch bug fixed by introducing this helper.
+ *
+ * @param {string} collectionId Bare collection ID (no backend prefix)
+ * @param {object|string} settingsOrBackend Either a settings object (uses settings.vector_backend) or a pre-normalized backend string
+ * @returns {string} "backend:collectionId"
+ */
+export function buildRegistryKey(collectionId, settingsOrBackend) {
+    const backend = typeof settingsOrBackend === 'string'
+        ? settingsOrBackend
+        : getRegistryBackend(settingsOrBackend?.vector_backend);
+    return `${backend}:${collectionId}`;
+}
+
 // ============================================================================
 // CHAT UUID UTILITIES
 // ============================================================================

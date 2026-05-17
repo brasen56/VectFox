@@ -36,6 +36,7 @@ import {
     parseRegistryKey,
     COLLECTION_PREFIXES,
     getRegistryBackend,
+    buildRegistryKey,
 } from './collection-ids.js';
 
 // Plugin detection state
@@ -545,10 +546,10 @@ async function discoverViaPlugin(settings) {
                 // so DB Browser can show them and the user can delete them)
                 if (!collection.chunkCount) {
                     emptyCount++;
-                    emptyList.push(`${backend}:${collectionId}`);
+                    emptyList.push(buildRegistryKey(collectionId, backend));
                 }
 
-                console.debug(`   - ${backend}:${collectionId} (${collection.chunkCount} chunks)`);
+                console.debug(`   - ${buildRegistryKey(collectionId, backend)} (${collection.chunkCount} chunks)`);
 
                 const collectionData = {
                     chunkCount: collection.chunkCount,
@@ -559,14 +560,14 @@ async function discoverViaPlugin(settings) {
                 };
 
                 // Cache by "backend:id" — embedding source is not part of the key
-                const cacheKey = `${backend}:${collectionId}`;
+                const cacheKey = buildRegistryKey(collectionId, backend);
                 pluginCollectionData[cacheKey] = collectionData;
                 uniqueKeys.push(cacheKey);
 
                 // Also cache by sanitized version (for backend lookups)
                 const sanitized = collectionId.replace(/[^a-zA-Z0-9_.-]/g, '_');
                 if (sanitized !== collectionId) {
-                    pluginCollectionData[`${backend}:${sanitized}`] = collectionData;
+                    pluginCollectionData[buildRegistryKey(sanitized, backend)] = collectionData;
                 }
             }
 

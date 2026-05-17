@@ -566,17 +566,18 @@ Use these fields in future benchmark / diagnostic tooling.
 
 ## 14) Lock & Auto-Sync UI Workflow
 
-Single section covering every place in the UI that reflects "this collection is active for the current chat": the lock badge in the listing, the Collection Settings checkbox, the WI panel toggle, and the Chat Auto-Sync toggle. All four read from the same source of truth and write back through a small, scope-aware set of helpers. Updated 2026-05-15.
+Single section covering every place in the UI that reflects "this collection is active for the current chat": the lock badge in the listing, the Collection Settings checkbox, the WI panel toggle, and the Chat Auto-Sync toggle. All four read from the same source of truth and write back through a small, scope-aware set of helpers. Updated 2026-05-17.
 
 ### ⚠️ Canonical Lock & Listing API — USE THESE, DO NOT REIMPLEMENT
 
-**Read this before writing any lock-related code.** These three functions are the *only* entry points new code should call for collection listing and lock state. They bundle backend disambiguation, persona/handle ownership, and superadmin checks. Re-implementing the logic inline gets it wrong almost every time — the failure mode is silent: locks land in the wrong storage bucket, get nuked by the next orphan-cleanup pass, and the UI shows nothing changed.
+**Read this before writing any lock-related code.** These four functions are the *only* entry points new code should call for collection listing, lock state, and registry-key construction. They bundle backend disambiguation, persona/handle ownership, and superadmin checks. Re-implementing the logic inline gets it wrong almost every time — the failure mode is silent: locks land in the wrong storage bucket, get nuked by the next orphan-cleanup pass, and the UI shows nothing changed.
 
 | Function | File:Line | Use when |
 |---|---|---|
 | **`getCollectionListing(settings)`** | [collection-loader.js:180](../core/collection-loader.js#L180) | You need to iterate every collection (rendering a list, finding matches by pattern, computing aggregate state). |
 | **`getLock(collectionId, options)`** | [collection-metadata.js:792](../core/collection-metadata.js#L792) | You need lock state for *one* collection (badge, tooltip, checkbox state, "is this active right now?"). |
 | **`setLock(collectionId, action, options)`** | [collection-metadata.js:839](../core/collection-metadata.js#L839) | You need to *mutate* lock state for *one* collection (user clicks lock / unlock / clear). |
+| **`buildRegistryKey(collectionId, settings)`** | [collection-ids.js:96](../core/collection-ids.js#L96) | You only have a bare collection ID and need to convert it to the canonical `"backend:id"` storage key (for any metadata read/write). Never hand-roll `` `${backend}:${collectionId}` `` — use this instead. |
 
 #### `getCollectionListing(settings)` — listing iterator
 
@@ -638,6 +639,8 @@ These patterns will look correct but produce broken state:
 | Iterating collections + calling `isCollectionActiveForContext` per card | `getCollectionListing` once → use `entry.isActive` |
 | Reading `extension_settings.vectfox.collections[bare_id]` directly | `getCollectionMeta(registryKey)` (storage now keyed by `backend:id`) |
 | Auto-resolving bare ID → registry-key by scanning the registry | Caller passes the canonical form; pattern was removed deliberately (see §15) |
+| `isCollectionAutoSyncEnabled(collectionId)` — bare ID — silently returns `false` even when the UI shows checked (UI writes via registryKey, this reads from a *different bucket*) — root cause of the 2026-05-17 auto-sync regression | `isCollectionAutoSyncEnabled(registryKey)` — same form the UI + every write path uses |
+| `` `${getRegistryBackend(settings.vector_backend)}:${collectionId}` `` hand-rolled at every call site (drift bait — one site forgets and the bug above surfaces) | `buildRegistryKey(collectionId, settings)` |
 
 #### Older primitives — when you might still need them
 
@@ -777,6 +780,8 @@ It computes `activeIds` by filtering own-persona lorebooks (creatorHandle stamp)
 
 ### Chat Auto-Sync — "Enable Auto-Sync" checkbox
 
+**Key-form parity is load-bearing.** Four sites read or write the per-collection autoSync flag: `refreshAutoSyncCheckbox` (UI mirror), `getChatAutoSyncStatus` (state evaluator), the change handler (writer), and `synchronizeChat` (the engine that actually fires extraction). All four must use the **registry-key form** (`backend:id`) — built via `buildRegistryKey(collectionId, settings)` or pulled from `entry.registryKey`. The 2026-05-17 regression where the popup never fired and extraction never ran was a single site (`synchronizeChat`) reading with the bare collection ID while everyone else wrote with the registry key. The flag was saved correctly; the reader looked in the wrong bucket and saw `undefined`.
+
 State evaluator: **`getChatAutoSyncStatus(settings)`** in `core/eventbase-workflow.js`. Pure in-memory — no backend probe. Returns one of:
 
 ```
@@ -813,11 +818,11 @@ Resolution table:
 |---|---|
 | ✓ Check + no-chat | Toast warn, uncheck |
 | ✓ Check + no-collection | Open Content Vectorizer (`'chat'`) |
-| ✓ Check + partial | `setCollectionLock(chatId)` + `setCollectionAutoSync(true)` + toast "will catch up" |
-| ✓ Check + fully-vectorized | `setCollectionLock(chatId)` + `setCollectionAutoSync(true)` + toast "fully synced" |
-| ✗ Uncheck | `setCollectionAutoSync(false)` + `removeCollectionLock(chatId)` |
+| ✓ Check + partial | `setCollectionLock(registryKey, chatId)` + `setCollectionAutoSync(registryKey, true)` + toast "will catch up" |
+| ✓ Check + fully-vectorized | `setCollectionLock(registryKey, chatId)` + `setCollectionAutoSync(registryKey, true)` + toast "fully synced" |
+| ✗ Uncheck | `setCollectionAutoSync(registryKey, false)` + `removeCollectionLock(registryKey, chatId)` |
 
-After mutation, dispatches `vectfox:collections-updated` and re-runs `refreshAutoSyncCheckbox` so the LED updates.
+`registryKey` here is `status.registryKey` from `getChatAutoSyncStatus` — the canonical `"backend:id"` form. All four metadata read paths (this table, `refreshAutoSyncCheckbox`, `synchronizeChat`, `getChatAutoSyncStatus`) use the same form. After mutation, dispatches `vectfox:collections-updated` and re-runs `refreshAutoSyncCheckbox` so the LED updates.
 
 ### Manual vs auto-sync paths
 

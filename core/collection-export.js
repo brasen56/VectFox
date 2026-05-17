@@ -32,7 +32,7 @@ import {
     registerCollection,
     getCollectionRegistry,
 } from './collection-loader.js';
-import { COLLECTION_PREFIXES, getRegistryBackend, parseCollectionId } from './collection-ids.js';
+import { COLLECTION_PREFIXES, buildRegistryKey, parseCollectionId } from './collection-ids.js';
 import { getModelFromSettings } from './providers.js';
 import { encodeSparseVector } from './sparse-vector-encoder.js';
 import { progressTracker } from '../ui/progress-tracker.js';
@@ -741,7 +741,7 @@ export async function importCollection(exportData, settings, options = {}) {
         // used by setCollectionLock, cleanupOrphanedMeta, and the loader's
         // ensureCollectionMeta. Writing at the bare ID would land in a different
         // bucket that the orphan-cleanup pass would immediately remove.
-        const registryKey = `${getRegistryBackend(settings.vector_backend)}:${collectionId}`;
+        const registryKey = buildRegistryKey(collectionId, settings);
 
         // Import is treated as a conversion → activation state must start fresh.
         // Clear any chat locks from a prior collection with the same ID first so the
@@ -942,7 +942,7 @@ async function importCollectionSilent(exportData, settings, options = {}) {
 
     // Metadata is keyed by the registry-key form ("backend:id"). See importCollection
     // for the rationale; same logic applies here.
-    const registryKey = `${getRegistryBackend(settings.vector_backend)}:${collectionId}`;
+    const registryKey = buildRegistryKey(collectionId, settings);
 
     // Convert = unchecked: clear prior chat locks (with reverse-map cleanup)
     // before merging metadata; lockedToCharacterIds + autoSync are zeroed via importedMeta.

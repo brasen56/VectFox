@@ -22,7 +22,7 @@ import {
     buildCharacterCollectionId,
     buildDocumentCollectionId,
     COLLECTION_PREFIXES,
-    getRegistryBackend,
+    buildRegistryKey,
 } from './collection-ids.js';
 import { extractLorebookKeywords, extractTextKeywords, extractChatKeywords, extractBM25Keywords, EXTRACTION_LEVELS, DEFAULT_EXTRACTION_LEVEL, DEFAULT_BASE_WEIGHT } from './keyword-boost.js';
 import { cleanText, cleanMessages } from './text-cleaning.js';
@@ -99,7 +99,7 @@ export async function vectorizeContent({ contentType, source, settings, abortSig
         const collectionId = generateCollectionId(contentType, source, settings);
         // Storage key for all metadata writes — must match the registry-key form
         // ("backend:id") used by import, loader, and cleanupOrphanedMeta.
-        const registryKey = `${getRegistryBackend(settings.vector_backend)}:${collectionId}`;
+        const registryKey = buildRegistryKey(collectionId, settings);
 
         // Set the appropriate lock based on scope. Registered before embedding starts so the
         // index entry exists even if vectorization is interrupted partway through.
