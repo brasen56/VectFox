@@ -130,6 +130,9 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // Past the quick-exit: at least the last window is new, so real work will happen.
     // Fire the auto-sync popup here so it shows once per ingestion call regardless of
     // whether older windows turn out to be dedup-skipped in the loop below.
+    if (debugLog) {
+        console.log(`[EventBase Popup] auto-sync gate: isAutoSync=${isAutoSync}, eventbase_autosync_popup=${settings.eventbase_autosync_popup} → fire=${!!(isAutoSync && settings.eventbase_autosync_popup !== false)}`);
+    }
     if (isAutoSync && settings.eventbase_autosync_popup !== false) {
         try { toastr.info('Auto-Sync: extracting events...', 'VectFox', { timeOut: 3000 }); } catch (_) {}
     }
@@ -445,7 +448,10 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         console.log(`[EventBase] Phase A: live=${queryEventbase}, archiveCollections=${archiveCollections.length}, searchText length=${searchText?.length}`);
     }
 
-    if (settings.retrieval_popup_on_start && !dryRun) {
+    if (debugLog) {
+        console.log(`[EventBase Popup] on-start gate: retrieval_popup_on_start=${settings.retrieval_popup_on_start}, dryRun=${dryRun} → fire=${!!settings.retrieval_popup_on_start}`);
+    }
+    if (settings.retrieval_popup_on_start) {
         toastr.info('Retrieving context from EventBase...', 'VectFox Retrieval');
     }
 
@@ -512,7 +518,9 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
 
     if (!events?.length) {
         if (debugLog) console.log('[EventBase] No events to inject');
-        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length };
+        if (debugLog) {
+            console.log(`[EventBase Popup] no-events branch gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result} → fire=${!!settings.retrieval_popup_on_result}`);
+        }
         if (settings.retrieval_popup_on_result) {
             const rawCount = debug?.rawCount ?? 0;
             const msg = rawCount > 0
@@ -520,6 +528,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
                 : 'EventBase: no events matched';
             toastr.info(msg, 'VectFox Retrieval');
         }
+        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length };
         setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }
@@ -534,7 +543,10 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         return;
     }
 
-    if (settings.retrieval_popup_on_result && !dryRun) {
+    if (debugLog) {
+        console.log(`[EventBase Popup] success gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result}, dryRun=${dryRun}, injectedCount=${injectedCount} → fire=${!!settings.retrieval_popup_on_result}`);
+    }
+    if (settings.retrieval_popup_on_result) {
         toastr.success(`EventBase: ${injectedCount} event(s) injected`, 'VectFox Retrieval');
     }
 
