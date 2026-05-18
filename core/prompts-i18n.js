@@ -31,8 +31,11 @@ Filterable event fields: event_type, importance (1–10), characters, locations,
 
 Output STRICT JSON with exactly three fields:
 
-  queries    1–4 short search strings (5–15 words). Each query MUST differ on at
-             least one of these axes — not just wording:
+  queries    1–4 short search strings (5–15 words). LANGUAGE: match the recent
+             chat — CHECK the chat's language before writing (English chat →
+             English queries; Chinese chat → Chinese queries; Japanese → Japanese;
+             etc.). Each query MUST differ on at least one of these axes — not
+             just wording:
                • TIME        (early arc vs recent vs aftermath)
                • PERSPECTIVE (character A's view vs character B's view)
                • GRANULARITY (specific event vs general pattern over time)
