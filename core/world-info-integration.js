@@ -13,12 +13,12 @@
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { queryCollection } from './core-vector-api.js';
 import { getCollectionRegistry } from './collection-loader.js';
-import { getCollectionMeta, isCollectionEnabled } from './collection-metadata.js';
+import { getCollectionMeta, isCollectionEnabled, isCollectionLockedToChat, isCollectionLockedToCharacter } from './collection-metadata.js';
 import { parseRegistryKey } from './collection-ids.js';
 // Lorebook collection ID lookup uses registry scan (see _findLorebookRegistryEntry below);
 // the builder is intentionally not imported here because lookups can't reconstruct the
 // exact ID (backend + handle + timestamp segments are not known at lookup time).
-import { setExtensionPrompt, eventSource, event_types, substituteParams } from '../../../../../script.js';
+import { setExtensionPrompt, eventSource, event_types, substituteParams, getCurrentChatId } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 
 // ============================================================================
@@ -136,26 +136,33 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
 async function getEnabledLorebookCollections(settings) {
     const collections = [];
     const collectionRegistry = getCollectionRegistry();
+    const currentChatId = getCurrentChatId() ? String(getCurrentChatId()) : null;
+    const currentCharacterId = getContext().characterId != null ? String(getContext().characterId) : null;
 
     for (const registryKey of collectionRegistry) {
         const collectionId = parseRegistryKey(registryKey).collectionId;
         // Only lorebook collections participate in semantic WI search
-        if (!collectionId.startsWith('vf_lorebook_')) {
-            continue;
-        }
+        if (!collectionId.startsWith('vf_lorebook_')) continue;
 
-        // Skip explicitly disabled collections
-        if (!isCollectionEnabled(collectionId, settings)) {
-            continue;
-        }
+        // Skip explicitly disabled (paused) collections
+        if (!isCollectionEnabled(collectionId, settings)) continue;
 
-        // No keyword-trigger gate here — semantic similarity IS the activation mechanism.
-        // shouldCollectionActivate() returns false for any collection with no triggers set,
-        // which would silently block all semantic lorebook search.
-
+        // Scope check: respect chat/character locks without gating on keyword triggers.
+        // Trigger/condition gates belong to the keyword-activation path, not the semantic path.
+        //
+        // Rule: if the collection has any chat or character locks, it must be locked to the
+        // current chat or character to be included. If it has no locks it's a global lorebook
+        // and is always included (this is the case PR #1 fixed — freshly vectorized lorebooks
+        // with no triggers or locks were silently blocked by shouldCollectionActivate).
         const meta = getCollectionMeta(collectionId);
-        const name = meta?.sourceName || collectionId;
+        const chatLocked = isCollectionLockedToChat(collectionId, currentChatId);
+        const charLocked = isCollectionLockedToCharacter(collectionId, currentCharacterId);
+        const hasAnyLock = (meta.lockedToChatIds?.length > 0) || meta.lockedToChatId ||
+                           (meta.lockedToCharacterIds?.length > 0);
 
+        if (hasAnyLock && !chatLocked && !charLocked) continue;
+
+        const name = meta?.sourceName || collectionId;
         collections.push({ id: collectionId, name });
     }
 
