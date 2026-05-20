@@ -382,39 +382,3 @@ export function initializeWorldInfoIntegration() {
     eventSource.on(event_types.GENERATION_STARTED, handleGenerationStarted);
     console.log('VectFox: World Info integration hooks initialized');
 }
-
-/**
- * Query semantic WI entries and inject them into the prompt extension tag.
- * Intended to be called on MESSAGE_SENT to ensure lorebook semantic hits
- * are available for the subsequent generation.
- * @param {object[]} chat Current chat messages
- * @param {object} settings VectFox settings
- */
-export async function applySemanticEntriesToPrompt(chat, settings) {
-    try {
-        if (!settings || !settings.enabled_world_info) return;
-
-        const recentMessages = chat
-            .filter(m => !m.is_system)
-            .reverse()
-            .slice(0, settings.world_info_query_depth || settings.query || 3)
-            .map(m => (m.mes || '').toString());
-
-        const entries = await getSemanticWorldInfoEntries(recentMessages, [], settings);
-        if (!entries || entries.length === 0) {
-            return;
-        }
-
-        // Build simple injection text from entries (preserve order by score)
-        const text = entries.map(e => e.content || (Array.isArray(e.key) ? e.key.join(' ') : e.key || '')).join('\n\n');
-
-        // Respect global RAG wrappers if configured
-        const fullText = (settings.rag_context ? settings.rag_context + '\n\n' : '') + text;
-
-        // Inject into ST extension prompt tag so generation will include it
-        setExtensionPrompt(EXTENSION_PROMPT_TAG, fullText, settings.position || 0, settings.depth || 2, false);
-        console.log(`VectFox: Injected ${entries.length} semantic WI entries into prompt`);
-    } catch (err) {
-        console.warn('VectFox: Failed to apply semantic WI to prompt', err.message || err);
-    }
-}
