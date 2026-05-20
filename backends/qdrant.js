@@ -764,13 +764,16 @@ export class QdrantBackend extends VectorBackend {
         // they differ.
         let sparseQueryVector;
         try {
-            const { detectTokenizerMismatch, showTokenizerMismatchModal, applyTokenizerRevert } = await import('../core/tokenizer-lock.js');
+            const { detectTokenizerMismatch, showTokenizerMismatchModal, applyTokenizerRevert, openCjkTokenizerSetting } = await import('../core/tokenizer-lock.js');
             const mismatch = await detectTokenizerMismatch(settings, actualCollectionId);
             if (mismatch) {
                 const choice = await showTokenizerMismatchModal(mismatch, actualCollectionId);
                 if (choice === 'revert') {
                     await applyTokenizerRevert(mismatch.saved, settings);
-                } else if (choice === 'settings' || choice === 'cancel') {
+                } else if (choice === 'settings') {
+                    openCjkTokenizerSetting();
+                    return { hashes: [], metadata: [] };
+                } else if (choice === 'cancel') {
                     return { hashes: [], metadata: [] };
                 }
             }
@@ -900,13 +903,16 @@ export class QdrantBackend extends VectorBackend {
         // (matches the legacy behavior).
         let sparseQueryVector;
         try {
-            const { detectTokenizerMismatch, showTokenizerMismatchModal, applyTokenizerRevert } = await import('../core/tokenizer-lock.js');
+            const { detectTokenizerMismatch, showTokenizerMismatchModal, applyTokenizerRevert, openCjkTokenizerSetting } = await import('../core/tokenizer-lock.js');
             const mismatch = await detectTokenizerMismatch(settings, actualCollectionId);
             if (mismatch) {
                 const choice = await showTokenizerMismatchModal(mismatch, actualCollectionId);
                 if (choice === 'revert') {
                     await applyTokenizerRevert(mismatch.saved, settings);
-                } else if (choice === 'settings' || choice === 'cancel') {
+                } else if (choice === 'settings') {
+                    openCjkTokenizerSetting();
+                    return { hashes: [], metadata: [] };
+                } else if (choice === 'cancel') {
                     return { hashes: [], metadata: [] };
                 }
             }

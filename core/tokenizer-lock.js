@@ -185,3 +185,38 @@ export async function applyTokenizerRevert(savedMode, settings) {
         await ensureJiebaTwLoaded();
     }
 }
+
+/**
+ * Handle the "Open Settings" choice from the tokenizer mismatch modal.
+ *
+ * Expands the VectFox inline drawer if collapsed, switches to the Core tab
+ * (which contains the CJK Tokenizer Mode dropdown), scrolls the dropdown
+ * into view, and briefly focuses it so the user can find what they came for.
+ *
+ * Previously this branch only aborted the query, leaving the user nowhere —
+ * the modal said "Open Settings" but nothing actually opened.
+ */
+export function openCjkTokenizerSetting() {
+    try {
+        if (typeof $ === 'undefined') return;
+
+        const $drawerToggle = $('#VectFox_settings .inline-drawer-toggle').first();
+        if ($drawerToggle.length) {
+            const isClosed = $drawerToggle.find('.inline-drawer-icon').hasClass('down');
+            if (isClosed) $drawerToggle.trigger('click');
+        }
+
+        $('#VectFox_settings .vectfox-tab-btn[data-tab="core"]').trigger('click');
+
+        // Defer scroll/focus to next tick so tab content is visible first.
+        setTimeout(() => {
+            const $select = $('#VectFox_cjk_tokenizer_mode');
+            if ($select.length) {
+                $select[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                $select.focus();
+            }
+        }, 50);
+    } catch (error) {
+        console.warn('[TokenizerLock] Failed to navigate to settings:', error.message);
+    }
+}
