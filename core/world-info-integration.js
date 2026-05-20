@@ -335,7 +335,8 @@ export function enhanceWorldInfoEntriesUI(lorebookName, entries, settings) {
  * Known edge case: if a lorebook is renamed after vectorization, sourceName will not
  * match and the entry silently misses activation. Re-vectorizing fixes it.
  */
-async function handleGenerationStarted() {
+async function handleGenerationStarted(type, options, dryRun) {
+    if (dryRun) return;
     const settings = extension_settings.vectfox;
     if (!settings?.enabled_world_info) return;
 
