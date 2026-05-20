@@ -892,12 +892,12 @@ in claiming the legendary treasure that lay within the dragon's mountain fortres
             };
         }
 
-        // Minimal should extract limited keywords (max 3)
-        if (minimalKeywords.length > 3) {
+        // Minimal should extract limited keywords (max 5 per EXTRACTION_LEVELS config)
+        if (minimalKeywords.length > 5) {
             return {
                 name: '[PROD] Keyword Extraction',
                 status: 'fail',
-                message: `Minimal extraction returned ${minimalKeywords.length} keywords (expected max 3)`,
+                message: `Minimal extraction returned ${minimalKeywords.length} keywords (expected max 5)`,
                 category: 'production'
             };
         }
@@ -908,12 +908,12 @@ in claiming the legendary treasure that lay within the dragon's mountain fortres
             baseWeight: 1.5
         });
 
-        // Balanced should extract more keywords (max 8)
-        if (balancedKeywords.length > 8) {
+        // Balanced should extract more keywords (max 12 per EXTRACTION_LEVELS config)
+        if (balancedKeywords.length > 12) {
             return {
                 name: '[PROD] Keyword Extraction',
                 status: 'fail',
-                message: `Balanced extraction returned ${balancedKeywords.length} keywords (expected max 8)`,
+                message: `Balanced extraction returned ${balancedKeywords.length} keywords (expected max 12)`,
                 category: 'production'
             };
         }
@@ -1050,9 +1050,10 @@ export async function testKeywordBoosting(settings) {
             };
         }
 
-        // Verify boost was applied correctly
-        // Expected boost: 1 + (2.0 - 1) + (1.5 - 1) = 2.5x
-        const expectedBoost = 2.5;
+        // Verify boost was applied correctly (with diminishing returns + per-keyword cap)
+        // Per-keyword contributions are capped at 0.5: min(2.0-1, 0.5) + min(1.5-1, 0.5) = 1.0
+        // 2 matches → 60% scaling factor → finalBoost = 1 + (1.0 * 0.6) = 1.6x
+        const expectedBoost = 1.6;
         const actualBoost = doc1Boosted.keywordBoost;
 
         if (Math.abs(actualBoost - expectedBoost) > 0.01) {
@@ -1074,8 +1075,8 @@ export async function testKeywordBoosting(settings) {
             };
         }
 
-        // Verify new score is correct (0.70 * 2.5 = 1.75, but should be capped or not)
-        const expectedNewScore = 0.70 * 2.5;
+        // Verify new score is correct (0.70 * 1.6 = 1.12, clamped to 1.0 by applyKeywordBoost)
+        const expectedNewScore = Math.min(1.0, 0.70 * expectedBoost);
         if (Math.abs(doc1Boosted.score - expectedNewScore) > 0.01) {
             return {
                 name: '[PROD] Keyword Boosting',
@@ -1096,7 +1097,7 @@ export async function testKeywordBoosting(settings) {
         }
 
         // Verify results are re-sorted by boosted score
-        // After boosting, doc1 (0.70 * 2.5 = 1.75) should rank higher than doc2 (0.85)
+        // After boosting, doc1 (0.70 * 1.6 = 1.12, clamped to 1.0) should rank higher than doc2 (0.85)
         if (boosted[0].hash !== 'doc1') {
             return {
                 name: '[PROD] Keyword Boosting',

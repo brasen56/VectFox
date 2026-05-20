@@ -309,7 +309,7 @@ async function _callPlanner({ systemPrompt, userMessage, llmCfg, timeoutMs }) {
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userMessage },
         ],
-        max_tokens: 400,
+        max_tokens: 2000,
         temperature: 0.2,
         response_format: { type: 'json_object' },
     };
