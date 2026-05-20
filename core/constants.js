@@ -17,6 +17,9 @@
 /** Extension prompt tag for SillyTavern's prompt system */
 export const EXTENSION_PROMPT_TAG = '3_vectfox';
 
+/** Extension prompt tag for lorebook semantic WI injection */
+export const LOREBOOK_PROMPT_TAG = '3_vectfox_lorebook';
+
 /** Extension name for logging and UI */
 export const EXTENSION_NAME = 'VectFox';
 

@@ -405,12 +405,14 @@ function gatherCollectionsToQuery(settings) {
     // Workflow isolation:
     //   vf_eventbase_*     → always excluded (EventBase pipeline owns them)
     //   vf_archiveevent_*  → always excluded (EventBase pipeline owns them)
+    //   vf_lorebook_*      → always excluded (Lorebook WI pipeline owns them, injects to <VectFoxLorebook>)
     for (const registryKey of registry) {
         const parsedKey = parseRegistryKey(registryKey);
         const collectionId = parsedKey.collectionId;
 
         if (collectionId?.startsWith(COLLECTION_PREFIXES.VECTFOX_EVENTBASE) ||
-            collectionId?.startsWith(COLLECTION_PREFIXES.VECTFOX_ARCHIVE_EVENT)) {
+            collectionId?.startsWith(COLLECTION_PREFIXES.VECTFOX_ARCHIVE_EVENT) ||
+            collectionId?.startsWith(COLLECTION_PREFIXES.VECTFOX_LOREBOOK)) {
             continue;
         }
 

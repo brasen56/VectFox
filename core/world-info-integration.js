@@ -15,10 +15,11 @@ import { queryCollection } from './core-vector-api.js';
 import { getCollectionListing } from './collection-loader.js';
 import { getCollectionMeta, shouldCollectionActivate } from './collection-metadata.js';
 import { parseRegistryKey } from './collection-ids.js';
+import { LOREBOOK_PROMPT_TAG } from './constants.js';
 // Lorebook collection ID lookup uses registry scan (see _findLorebookRegistryEntry below);
 // the builder is intentionally not imported here because lookups can't reconstruct the
 // exact ID (backend + handle + timestamp segments are not known at lookup time).
-import { eventSource, event_types, substituteParams, getCurrentChatId } from '../../../../../script.js';
+import { eventSource, event_types, setExtensionPrompt, substituteParams, getCurrentChatId } from '../../../../../script.js';
 
 // ============================================================================
 // WORLD INFO ACTIVATION HOOKS
@@ -357,6 +358,9 @@ async function handleGenerationStarted(type, options, dryRun) {
     const settings = extension_settings.vectfox;
     if (!settings?.enabled_world_info) return;
 
+    // Always clear the previous lorebook injection first
+    setExtensionPrompt(LOREBOOK_PROMPT_TAG, '', settings.position, settings.depth, false);
+
     try {
         const context = getContext();
         const chat = context.chat || [];
@@ -376,16 +380,21 @@ async function handleGenerationStarted(type, options, dryRun) {
         const semanticEntries = await getSemanticWorldInfoEntries(recentMessages, [], settings, keywordQuery);
         if (!semanticEntries.length) return;
 
-        const toActivate = semanticEntries
-            .filter(e => e.metadata?.entryUid != null && e.metadata?.sourceName)
-            .map(e => ({ world: e.metadata.sourceName, uid: e.metadata.entryUid }));
+        // Format entries into direct prompt injection under <VectFoxLorebook>
+        const entryTexts = semanticEntries
+            .filter(e => e.content?.trim())
+            .map(e => e.content.trim());
 
-        if (!toActivate.length) return;
+        if (!entryTexts.length) return;
 
-        await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, toActivate);
-        console.log(`VectFox: Force-activated ${toActivate.length} semantic WI entries`);
+        const xmlTag = settings.lorebook_xml_tag || 'VectFoxLorebook';
+        const injectionContent = entryTexts.join('\n\n');
+        const injectionText = `<${xmlTag}>\n${injectionContent}\n</${xmlTag}>`;
+
+        setExtensionPrompt(LOREBOOK_PROMPT_TAG, injectionText, settings.position, settings.depth, false);
+        console.log(`VectFox: Injected ${entryTexts.length} lorebook entries to <${xmlTag}>`);
     } catch (err) {
-        console.warn('VectFox: Semantic WI activation failed', err.message || err);
+        console.warn('VectFox: Lorebook WI injection failed', err.message || err);
     }
 }
 
