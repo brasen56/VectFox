@@ -26,6 +26,7 @@ import {
 } from './collection-ids.js';
 import { extractLorebookKeywords, extractTextKeywords, extractChatKeywords, extractBM25Keywords, EXTRACTION_LEVELS, DEFAULT_EXTRACTION_LEVEL, DEFAULT_BASE_WEIGHT } from './keyword-boost.js';
 import { cleanText, cleanMessages } from './text-cleaning.js';
+import { prepareLorebookContent } from './lorebook-content-preparer.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getCurrentChatId } from '../../../../../script.js';
@@ -474,51 +475,7 @@ async function prepareContent(contentType, rawContent, settings, startFromMessag
     }
 }
 
-/**
- * Prepares lorebook content
- * For per_entry: each entry.content becomes one chunk
- * For other strategies: concatenate all entries, then chunk by that strategy
- */
-function prepareLorebookContent(rawContent, settings) {
-    // Handle both array (from Object.values) and object (raw entries)
-    let entries = rawContent.entries || rawContent.content;
-
-    // If entries is an object (not array), convert to array
-    if (entries && typeof entries === 'object' && !Array.isArray(entries)) {
-        entries = Object.values(entries);
-    }
-
-    if (!entries || !Array.isArray(entries) || entries.length === 0) {
-        return { text: '', type: 'empty' };
-    }
-
-    // Filter to entries that have content, and apply text cleaning
-    const validEntries = entries
-        .filter(e => e && e.content)
-        .map(e => ({ ...e, content: cleanText(e.content) }));
-
-    if (settings.strategy === 'per_entry') {
-        // Each entry becomes its own chunk - return array of content strings
-        // Also pass entries so enrichChunks can attach keywords
-        return {
-            text: validEntries.map(e => {
-                const header = e.comment || e.name || e.key?.[0] || '';
-                return header ? `# ${header}\n${e.content}` : e.content;
-            }),
-            type: 'per_entry',
-            entries: validEntries,
-            entryCount: validEntries.length,
-        };
-    }
-
-    // For other strategies, concatenate all entries with separators
-    const combined = validEntries.map(e => {
-        const header = e.comment || e.name || e.key?.[0] || '';
-        return header ? `# ${header}\n${e.content}` : e.content;
-    }).join('\n\n---\n\n');
-
-    return { text: combined, type: 'combined', entryCount: validEntries.length };
-}
+// prepareLorebookContent imported from ./lorebook-content-preparer.js
 
 /**
  * Prepares character content

@@ -423,6 +423,41 @@ async function handleGenerationStarted(type, options, dryRun) {
 }
 
 /**
+ * Dry-run the Lorebook WI pipeline for the query tester.
+ * Reuses getEnabledLorebookCollections + getSemanticWorldInfoEntries — same path as
+ * handleGenerationStarted, but skips rename detection and setExtensionPrompt.
+ *
+ * @param {{ chat: object[], testMessage: string|null, settings: object }} opts
+ * @returns {Promise<{ injectionText: string|null, entryCount: number, disabled?: boolean, noCollections?: boolean }>}
+ */
+export async function runLorebookWIDryRun({ chat, testMessage, settings }) {
+    if (!settings?.enabled_world_info) return { injectionText: null, entryCount: 0, disabled: true };
+
+    const recentMessages = [...chat]
+        .filter(m => !m.is_system)
+        .reverse()
+        .slice(0, settings.world_info_query_depth || settings.query || 3)
+        .map(m => substituteParams((m.mes || '').toString()));
+
+    if (!recentMessages.length) return { injectionText: null, entryCount: 0 };
+
+    const lorebookCollections = await getEnabledLorebookCollections(settings);
+    if (!lorebookCollections.length) return { injectionText: null, entryCount: 0, noCollections: true };
+
+    const semanticEntries = await getSemanticWorldInfoEntries(recentMessages, [], settings, testMessage || null, lorebookCollections);
+    if (!semanticEntries.length) return { injectionText: null, entryCount: 0 };
+
+    const entryTexts = semanticEntries.filter(e => e.content?.trim()).map(e => e.content.trim());
+    if (!entryTexts.length) return { injectionText: null, entryCount: 0 };
+
+    const xmlTag = settings.lorebook_xml_tag || 'VectFoxLorebook';
+    return {
+        injectionText: `<${xmlTag}>\n${entryTexts.join('\n\n')}\n</${xmlTag}>`,
+        entryCount: entryTexts.length,
+    };
+}
+
+/**
  * Initialize world info integration hooks
  * This should be called when VectFox loads
  */

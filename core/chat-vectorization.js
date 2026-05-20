@@ -1195,42 +1195,41 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
  * @param {object} settings VECTFOX settings
  * @param {string} type Generation type
  */
-export async function rearrangeChat(chat, settings, type) {
-    console.log(`🐰 VectFox: rearrangeChat called (type: ${type}, chat length: ${chat?.length || 0})`);
+export async function rearrangeChat(chat, settings, type, { dryRun = false, testMessage = null } = {}) {
+    console.log(`🐰 VectFox: rearrangeChat called (type: ${type}, chat length: ${chat?.length || 0}${dryRun ? ', dryRun=true' : ''})`);
 
     try {
         // === EARLY EXITS ===
-        if (type === 'quiet') {
+        if (!dryRun && type === 'quiet') {
             console.debug('VectFox: Skipping quiet prompt');
             return;
         }
 
         // Clear extension prompts (main + any position-specific tags from previous run)
-        setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, false);
-        // Clear position-specific tags (max 10 should be more than enough)
-        for (let i = 0; i < 10; i++) {
-            const posTag = `${EXTENSION_PROMPT_TAG}_pos${i}`;
-            if (extension_prompts[posTag]) {
-                setExtensionPrompt(posTag, '', 0, 0, false);
+        if (!dryRun) {
+            setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, false);
+            for (let i = 0; i < 10; i++) {
+                const posTag = `${EXTENSION_PROMPT_TAG}_pos${i}`;
+                if (extension_prompts[posTag]) {
+                    setExtensionPrompt(posTag, '', 0, 0, false);
+                }
             }
         }
 
         if (!getCurrentChatId() || !Array.isArray(chat)) {
             console.debug('VectFox: No chat selected');
-            return;
+            return dryRun ? { injectionText: null, chunkCount: 0 } : undefined;
         }
 
         const minChatLength = settings.min_chat_length ?? 0;
-        if (minChatLength > 0 && chat.length < minChatLength) {
+        if (!dryRun && minChatLength > 0 && chat.length < minChatLength) {
             console.warn(`⚠️ VectFox: Not enough messages to inject chunks (${chat.length} < ${minChatLength})`);
             console.log(`   💡 You need at least ${minChatLength} messages before chunk injection starts`);
             return;
         }
 
-        // EventBase workflow: Phase A — structured event retrieval.
-        // Does NOT return — falls through to Phase B below so chunk-based collections
-        // (lorebooks, characters, URLs, etc.) are still queried on the same turn.
-        {
+        // EventBase workflow: Phase A — skipped in dryRun (EventBase has its own dry-run path).
+        if (!dryRun) {
             const queryText = buildSearchQuery(chat, settings);
             if (queryText) {
                 const { runEventBaseRetrieval } = await import('./eventbase-workflow.js');
@@ -1246,23 +1245,18 @@ export async function rearrangeChat(chat, settings, type) {
                 const { EXTENSION_PROMPT_TAG } = await import('./constants.js');
                 setExtensionPrompt(`${EXTENSION_PROMPT_TAG}_eventbase`, '', settings.position, settings.depth, false);
             }
-        }
+        } // end if (!dryRun) EventBase block
 
         // === STAGE 1: Gather collections to query ===
         const collectionsToQuery = gatherCollectionsToQuery(settings);
-        // Allow continuing with WI-only mode if enabled_world_info is set
         const hasCollections = collectionsToQuery.length > 0;
         const canQueryWI = settings.enabled_world_info;
 
         if (!hasCollections && !canQueryWI) {
-            // EventBase-only users always hit this — they have no ChunkBase collections
-            // by design. EventBase injection happens on its own path above, so this is
-            // a normal skip, not an error. Match the gentler log at the activeCollections
-            // check below (it already does the same thing for the post-activation case).
             if (settings.eventbase_debug_logging) {
                 console.log('[VECTFOX ChunkBase] No enabled ChunkBase collections and World Info disabled — skipping non-chat chunk injection (this is normal if you only use EventBase).');
             }
-            return;
+            return dryRun ? { injectionText: null, chunkCount: 0, noCollections: true } : undefined;
         }
         if (hasCollections) {
             console.log(`VectFox: Will query ${collectionsToQuery.length} collections:`, collectionsToQuery);
@@ -1271,10 +1265,10 @@ export async function rearrangeChat(chat, settings, type) {
         }
 
         // === STAGE 2: Build search query ===
-        const queryText = buildSearchQuery(chat, settings);
+        const queryText = testMessage || buildSearchQuery(chat, settings);
         if (queryText.length === 0) {
             console.debug('VectFox: No text to query');
-            return;
+            return dryRun ? { injectionText: null, chunkCount: 0 } : undefined;
         }
 
         // === STAGE 2.5: Extract keywords from query message ===
@@ -1320,7 +1314,7 @@ export async function rearrangeChat(chat, settings, type) {
             if (settings.eventbase_debug_logging) {
                 console.log('[VECTFOX ChunkBase] No active Standard/ChunkBase collections and World Info disabled — skipping non-chat chunk injection (this is normal if you only use EventBase).');
             }
-            return;
+            return dryRun ? { injectionText: null, chunkCount: 0, noActive: true } : undefined;
         }
         if (activeCollections.length > 0) {
             console.log(`✅ VectFox: ${activeCollections.length} collections passed activation filters:`, activeCollections);
@@ -1485,12 +1479,18 @@ export async function rearrangeChat(chat, settings, type) {
                 skippedCount: skippedDuplicates.length
             });
             setLastSearchDebug(debugData);
-            return;
+            return dryRun ? { injectionText: null, chunkCount: 0, allDuplicates: true } : undefined;
         }
 
         console.log(`[VECTFOX Deduplication] ✅ ${chunksToInject.length} chunks will proceed to injection`);
 
-        // === STAGE 10: Inject into prompt ===
+        // === STAGE 10: Inject into prompt (or return dry-run result) ===
+        if (dryRun) {
+            const injectionText = buildNestedInjectionText(chunksToInject, settings);
+            setLastSearchDebug(debugData);
+            return { injectionText, chunkCount: chunksToInject.length };
+        }
+
         const injection = injectChunksIntoPrompt(chunksToInject, settings, debugData);
 
         console.log(`\n✅ VectFox: Successfully injected ${chunksToInject.length} chunk(s) into prompt`);

@@ -1546,19 +1546,20 @@ function bindEvents() {
 export function openQueryTestModal() {
     $('#VectFox_query_tester_modal').remove();
 
+    const sectionStyle = 'display:flex; flex-direction:column; gap:4px; border-left:3px solid; padding-left:8px;';
+
     const html = `
         <div id="VectFox_query_tester_modal" class="vectfox-modal" style="display:none;">
             <div class="vectfox-modal-overlay"></div>
-            <div class="vectfox-modal-content" style="max-width:660px; max-height:88vh; display:flex; flex-direction:column;">
+            <div class="vectfox-modal-content" style="max-width:700px; max-height:92vh; display:flex; flex-direction:column;">
                 <div class="vectfox-modal-header">
-                    <h3><i class="fa-solid fa-flask"></i> EventBase Query Tester</h3>
+                    <h3><i class="fa-solid fa-flask"></i> VectFox Query Tester</h3>
                     <button class="vectfox-modal-close" id="VectFox_qtester_close">✕</button>
                 </div>
                 <div class="vectfox-modal-body" style="padding:16px; display:flex; flex-direction:column; gap:10px; overflow-y:auto; flex:1 1 auto;">
                     <small style="color:var(--SmartThemeQuoteColor,#999);">
-                        Type a test message to preview which EventBase memories would be retrieved.
-                        Uses all current settings — agentic mode, planner filters, locked collections.
-                        The real prompt injection is <b>not</b> affected.
+                        Dry-run all three pipelines (EventBase, ChunkBase, Lorebook WI) against a test message.
+                        Uses your current settings and locked collections. Prompt injection is <b>not</b> affected.
                     </small>
                     <textarea id="VectFox_qtester_input"
                         class="text_pole"
@@ -1566,17 +1567,27 @@ export function openQueryTestModal() {
                         rows="3"
                         style="resize:vertical; width:100%; box-sizing:border-box;"></textarea>
                     <button id="VectFox_qtester_run" class="menu_button" style="align-self:flex-start;">
-                        <i class="fa-solid fa-play"></i>&nbsp;Run Retrieval
+                        <i class="fa-solid fa-play"></i>&nbsp;Run All Pipelines
                     </button>
                     <div id="VectFox_qtester_status" style="display:none; color:var(--SmartThemeQuoteColor,#999); font-size:0.85em;">
                         <i class="fa-solid fa-spinner fa-spin"></i>&nbsp;Running retrieval…
                     </div>
-                    <div id="VectFox_qtester_result" style="display:none; flex-direction:column; gap:6px;">
-                        <small id="VectFox_qtester_meta" style="color:var(--SmartThemeQuoteColor,#999);"></small>
-                        <textarea id="VectFox_qtester_output"
-                            readonly
-                            rows="20"
-                            style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre;"></textarea>
+                    <div id="VectFox_qtester_result" style="display:none; flex-direction:column; gap:14px;">
+                        <div style="${sectionStyle} border-color:#4a9eff;">
+                            <small style="font-weight:bold; color:#4a9eff;">EventBase <span id="VectFox_qtester_meta_eb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
+                            <textarea id="VectFox_qtester_output_eb" readonly rows="8"
+                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre;"></textarea>
+                        </div>
+                        <div style="${sectionStyle} border-color:#4dbb6e;">
+                            <small style="font-weight:bold; color:#4dbb6e;">ChunkBase <span id="VectFox_qtester_meta_cb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
+                            <textarea id="VectFox_qtester_output_cb" readonly rows="8"
+                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre;"></textarea>
+                        </div>
+                        <div style="${sectionStyle} border-color:#b06fff;">
+                            <small style="font-weight:bold; color:#b06fff;">Lorebook WI <span id="VectFox_qtester_meta_lb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
+                            <textarea id="VectFox_qtester_output_lb" readonly rows="8"
+                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre;"></textarea>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1585,16 +1596,12 @@ export function openQueryTestModal() {
 
     $('body').append(html);
 
-    // Prevent SillyTavern from closing drawers on mousedown inside modal
     $('#VectFox_query_tester_modal').on('mousedown touchstart', e => e.stopPropagation());
-
-    // Close on ✕ button or backdrop click
     $('#VectFox_qtester_close').on('click', _closeQueryTester);
     $('#VectFox_query_tester_modal').on('click', function (e) {
         if (e.target === this) _closeQueryTester();
     });
 
-    // Run button
     $('#VectFox_qtester_run').on('click', async function () {
         const testMessage = $('#VectFox_qtester_input').val().trim();
         if (!testMessage) {
@@ -1607,43 +1614,68 @@ export function openQueryTestModal() {
         $('#VectFox_qtester_result').hide().css('display', 'none');
 
         try {
-            const [{ extension_settings, getContext }, { runEventBaseRetrieval }] = await Promise.all([
+            const [
+                { extension_settings, getContext },
+                { runEventBaseRetrieval },
+                { rearrangeChat },
+                { runLorebookWIDryRun },
+            ] = await Promise.all([
                 import('../../../../extensions.js'),
                 import('../core/eventbase-workflow.js'),
+                import('../core/chat-vectorization.js'),
+                import('../core/world-info-integration.js'),
             ]);
 
             const settings = extension_settings.vectfox;
             const { chat } = getContext();
 
-            const result = await runEventBaseRetrieval({
-                chat,
-                searchText: testMessage,
-                settings,
-                dryRun: true,
-                testMessage,
-            });
+            const [ebResult, cbResult, lbResult] = await Promise.all([
+                runEventBaseRetrieval({ chat, searchText: testMessage, settings, dryRun: true, testMessage }),
+                rearrangeChat(chat, settings, 'normal', { dryRun: true, testMessage }),
+                runLorebookWIDryRun({ chat, testMessage, settings }),
+            ]);
 
             $('#VectFox_qtester_status').hide();
 
-            if (result?.injectionText) {
-                $('#VectFox_qtester_meta').text(`${result.eventCount ?? '?'} event(s) retrieved`);
-                $('#VectFox_qtester_output').val(result.injectionText);
+            // --- EventBase ---
+            if (ebResult?.injectionText) {
+                $('#VectFox_qtester_meta_eb').text(`— ${ebResult.eventCount ?? '?'} event(s) retrieved`);
+                $('#VectFox_qtester_output_eb').val(ebResult.injectionText);
             } else {
-                // Distinguish "no locks" from "locks exist but query returned nothing"
-                // so the user can troubleshoot the right thing (lock the collection
-                // vs. fix threshold/model/query terms).
-                const lockedCount = (result?.lockedCollectionsCount ?? 0) + (result?.archiveCollectionsCount ?? 0);
-                $('#VectFox_qtester_meta').text('No events retrieved');
-                if (lockedCount === 0) {
-                    $('#VectFox_qtester_output').val(
-                        '(no collections are locked to this chat — open Database Browser → Settings on a collection → check "Active for current chat")'
-                    );
-                } else {
-                    $('#VectFox_qtester_output').val(
-                        `(searched ${lockedCount} locked collection(s) — 0 events matched the query "${testMessage}". Try a longer/more specific query, lower the score threshold, or check that the collection's embedding model matches your current setting.)`
-                    );
-                }
+                const locked = (ebResult?.lockedCollectionsCount ?? 0) + (ebResult?.archiveCollectionsCount ?? 0);
+                $('#VectFox_qtester_meta_eb').text('— no results');
+                $('#VectFox_qtester_output_eb').val(
+                    locked === 0
+                        ? '(no EventBase collections are locked to this chat)'
+                        : `(searched ${locked} collection(s) — 0 events matched. Try a more specific query or lower the score threshold.)`
+                );
             }
+
+            // --- ChunkBase ---
+            if (cbResult?.injectionText) {
+                $('#VectFox_qtester_meta_cb').text(`— ${cbResult.chunkCount ?? '?'} chunk(s) retrieved`);
+                $('#VectFox_qtester_output_cb').val(cbResult.injectionText);
+            } else {
+                const reason = cbResult?.noCollections ? 'no ChunkBase collections are enabled'
+                    : cbResult?.noActive ? 'no collections passed activation filters'
+                    : cbResult?.allDuplicates ? 'all chunks already in context (dedup)'
+                    : '0 chunks matched the query';
+                $('#VectFox_qtester_meta_cb').text('— no results');
+                $('#VectFox_qtester_output_cb').val(`(${reason})`);
+            }
+
+            // --- Lorebook WI ---
+            if (lbResult?.injectionText) {
+                $('#VectFox_qtester_meta_lb').text(`— ${lbResult.entryCount ?? '?'} entry/entries retrieved`);
+                $('#VectFox_qtester_output_lb').val(lbResult.injectionText);
+            } else {
+                const reason = lbResult?.disabled ? 'Lorebook WI is disabled in settings'
+                    : lbResult?.noCollections ? 'no vectorized lorebook collections found'
+                    : '0 entries matched the query';
+                $('#VectFox_qtester_meta_lb').text('— no results');
+                $('#VectFox_qtester_output_lb').val(`(${reason})`);
+            }
+
             $('#VectFox_qtester_result').css('display', 'flex').show();
         } catch (err) {
             $('#VectFox_qtester_status').hide();

@@ -922,7 +922,7 @@ There is **no global-scope priority**. That branch (formerly "priority 1.5") was
 
 ## 15) Known Pending Cleanups
 
-### 15.1 ChunkBase phase early-gate — broaden vs current
+### 15.1 ChunkBase phase early-gate — broaden vs current  (mainly performance issue, spending 20ms unnecessarily)
 
 **Status**: Deferred — investigated 2026-05-17, no code change yet.
 
@@ -940,3 +940,17 @@ EventBase-only users (the typical case) hit gate 1 and short-circuit — debug l
 **Caller count**: 1 — `rearrangeChat` is the only place running the EventBase→ChunkBase ordered workflow ([index.js:273](../index.js#L273) is its sole caller via ST's `generate_interceptor`). No util-extraction is needed if/when we change the gate.
 
 **Search tag in code**: none yet. When acted on, target [core/chat-vectorization.js:1247](../core/chat-vectorization.js#L1247) (the `if (!hasCollections && !canQueryWI)` block).
+
+---
+
+### 15.2 Pre-existing test failures (18 tests across 4 files)
+
+**Status**: Deferred — confirmed pre-existing on `main` before the lorebook WI branch. Not introduced by our changes.
+
+**Bucket 1 — `tests/backends.test.js` (18 tests)**
+
+`vi.mock('../core/providers.js')` in that file doesn't include `getModelFromSettings` in its factory. The function was added to `providers.js` after the mock was written, so any test path that reaches `getModelFromSettings(settings)` throws `[vitest] No "getModelFromSettings" export is defined on the mock`. Fix: add `getModelFromSettings: vi.fn(() => 'mock-model')` to the mock factory.
+
+**Bucket 2 — `tests/backend-manager.test.js`, `tests/hybrid-search.test.js`, `tests/world-info-integration.test.js`**
+
+Vitest tries to resolve ST relative paths (e.g. `../../../../extensions.js`) that live outside the project root, causing module-load failures. Fix options: (a) add `resolve.alias` entries in `vitest.config.js` pointing to stub files, or (b) extract tested logic into ST-free modules the way `lorebook-content-preparer.js` was extracted for the `content-vectorization` tests.
