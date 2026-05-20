@@ -1267,7 +1267,7 @@ export async function rearrangeChat(chat, settings, type) {
         if (hasCollections) {
             console.log(`VectFox: Will query ${collectionsToQuery.length} collections:`, collectionsToQuery);
         } else {
-            console.log('VectFox: No regular collections enabled, but World Info is enabled - will query lorebooks only');
+            console.log('VectFox: No ChunkBase collections enabled (lorebooks are handled by the Lorebook WI pipeline)');
         }
 
         // === STAGE 2: Build search query ===

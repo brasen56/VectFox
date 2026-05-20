@@ -16,6 +16,7 @@ import { getCollectionListing } from './collection-loader.js';
 import { getCollectionMeta, shouldCollectionActivate } from './collection-metadata.js';
 import { parseRegistryKey } from './collection-ids.js';
 import { LOREBOOK_PROMPT_TAG } from './constants.js';
+import { detectLorebookRenames, showLorebookRenameModal, openDatabaseBrowserForRename } from './lorebook-rename-detector.js';
 // Lorebook collection ID lookup uses registry scan (see _findLorebookRegistryEntry below);
 // the builder is intentionally not imported here because lookups can't reconstruct the
 // exact ID (backend + handle + timestamp segments are not known at lookup time).
@@ -34,7 +35,7 @@ import { eventSource, event_types, setExtensionPrompt, substituteParams, getCurr
  * @param {object} settings - VectFox settings
  * @returns {Promise<object[]>} Array of WI entries to activate { uid, key, content, score }
  */
-export async function getSemanticWorldInfoEntries(recentMessages, activeEntries, settings, keywordQuery = null) {
+export async function getSemanticWorldInfoEntries(recentMessages, activeEntries, settings, keywordQuery = null, preloadedCollections = null) {
     if (!settings.enabled_world_info) {
         return [];
     }
@@ -64,8 +65,8 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
     const threshold = hybridActive ? baseThreshold * 0.8 : baseThreshold;
     const topK = settings.world_info_top_k || 3;
 
-    // Get all enabled lorebook collections
-    const lorebookCollections = await getEnabledLorebookCollections(settings);
+    // Use pre-fetched collections if provided (avoids double call from handleGenerationStarted)
+    const lorebookCollections = preloadedCollections ?? await getEnabledLorebookCollections(settings);
 
     for (const collection of lorebookCollections) {
         try {
@@ -173,8 +174,9 @@ async function getEnabledLorebookCollections(settings) {
         // even without a chat lock; one with neither triggers nor a lock is out of scope.
         if (!(await shouldCollectionActivate(entry.registryKey, context))) continue;
 
-        const name = entry.meta?.sourceName || entry.collectionId;
-        collections.push({ id: entry.registryKey, name });
+        const sourceName = entry.meta?.sourceName || null;
+        const name = sourceName || entry.collectionId;
+        collections.push({ id: entry.registryKey, name, sourceName });
     }
 
     console.log(`VectFox WI: ${collections.length} lorebook collection(s) available for semantic search`);
@@ -377,7 +379,29 @@ async function handleGenerationStarted(type, options, dryRun) {
         const lastUserMessage = [...chat].reverse().find(m => !m.is_system && m.is_user);
         const keywordQuery = lastUserMessage?.mes?.trim() || null;
 
-        const semanticEntries = await getSemanticWorldInfoEntries(recentMessages, [], settings, keywordQuery);
+        // Fetch collections once — used for rename detection and passed to the query.
+        const lorebookCollections = await getEnabledLorebookCollections(settings);
+
+        // Rename detection: if a lorebook was renamed after vectorization, its
+        // sourceName won't match any entry in world_names. Show a blocking popup.
+        const mismatches = await detectLorebookRenames(lorebookCollections);
+        if (mismatches.length) {
+            console.warn(`VectFox: Lorebook rename detected — ${mismatches.map(m => m.sourceName).join(', ')}`);
+            const choice = await showLorebookRenameModal(mismatches);
+            if (choice === 'open_browser') {
+                try {
+                    const { stopGeneration } = await import('../../../../../script.js');
+                    stopGeneration();
+                } catch (e) {
+                    console.warn('[LorebookRename] stopGeneration() failed:', e?.message);
+                }
+                openDatabaseBrowserForRename(); // async fade-wait + open; don't await here
+                return;
+            }
+            // 'continue' — user acknowledged stale content, proceed
+        }
+
+        const semanticEntries = await getSemanticWorldInfoEntries(recentMessages, [], settings, keywordQuery, lorebookCollections);
         if (!semanticEntries.length) return;
 
         // Format entries into direct prompt injection under <VectFoxLorebook>
