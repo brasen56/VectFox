@@ -80,6 +80,7 @@ import {
   convertToPNG,
   isVectFoxPNG,
 } from "../core/png-export.js";
+import { renderSizeInspectorTab } from "./size-inspector.js";
 
 // Plugin availability cache
 let pluginAvailable = null;
@@ -245,6 +246,9 @@ function createBrowserModal() {
                     </button>
                     <button class="vectfox-tab-btn" data-tab="bulk">
                         ${icons.listChecks(16)} Bulk Operations
+                    </button>
+                    <button class="vectfox-tab-btn" data-tab="size" title="Diagnose oversized collections / runaway injection">
+                        ${icons.layers(16)} Size Inspector
                     </button>
                 </div>
 
@@ -427,6 +431,11 @@ function createBrowserModal() {
                                 <div class="vectfox-loading">Loading collections...</div>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Size Inspector Tab -->
+                    <div id="vectfox_tab_size" class="vectfox-tab-content">
+                        <!-- Populated lazily by renderSizeInspectorTab() in switchTab() -->
                     </div>
                 </div>
             </div>
@@ -682,6 +691,8 @@ function switchTab(tabName) {
     bindBulkEvents();
   } else if (tabName === "search") {
     bindSearchEvents();
+  } else if (tabName === "size") {
+    renderSizeInspectorTab(document.getElementById("vectfox_tab_size"));
   }
 }
 

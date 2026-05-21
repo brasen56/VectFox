@@ -1,0 +1,79 @@
+const { getRequestHeaders } = await import('/script.js');
+
+const cid = 'vf_eventbase_qdrant_kritblade_artificrealm_67d28099-167f-4c07-a7cb-1b62e33f43d0';
+
+const r = await fetch('/api/plugins/similharity/chunks/list', {
+  method: 'POST',
+  headers: getRequestHeaders(),
+  body: JSON.stringify({ backend: 'qdrant', collectionId: cid, limit: 1000 })
+}).then(r => r.json());
+
+console.log('items returned:', r.items?.length);
+
+const sizes = (r.items || []).map(it => {
+  const m = it.metadata || {};
+  return {
+    id: m.event_id,
+    type: m.event_type,
+    summary: (m.text || '').split('\n')[0].slice(0, 60),
+    totalChars: JSON.stringify(m).length,
+    causeLen: (m.cause || '').length,
+    resultLen: (m.result || '').length,
+    textLen: (m.text || '').length,
+  };
+}).sort((a, b) => b.totalChars - a.totalChars).slice(0, 15);
+
+console.table(sizes);
+
+---------------
+
+const { getRequestHeaders } = await import('/script.js');
+
+const list = await fetch('/api/plugins/similharity/collections', {
+  method: 'GET',
+  headers: getRequestHeaders(),
+}).then(r => r.json());
+
+console.log('Found', list.collections?.length, 'collections, qdrantScanned:', list.qdrantScanned);
+
+const perCollection = [];
+for (const c of (list.collections || [])) {
+  // collection entries may be strings or objects; normalize
+  const cid = typeof c === 'string' ? c : (c.collectionId || c.id || c.name);
+  const backend = (typeof c === 'object' && c.backend) ? c.backend : 'qdrant';
+  if (!cid) continue;
+
+  try {
+    const r = await fetch('/api/plugins/similharity/chunks/list', {
+      method: 'POST',
+      headers: getRequestHeaders(),
+      body: JSON.stringify({ backend, collectionId: cid, limit: 2000 })
+    }).then(r => r.json());
+
+    const items = r.items || [];
+    if (!items.length) {
+      perCollection.push({ collection: cid.slice(0, 60), backend, count: 0, maxChars: 0, avgChars: 0, totalKB: 0 });
+      continue;
+    }
+
+    const sizes = items.map(it => JSON.stringify(it.metadata || {}).length);
+    const total = sizes.reduce((a, b) => a + b, 0);
+    const max = Math.max(...sizes);
+    const maxIdx = sizes.indexOf(max);
+
+    perCollection.push({
+      collection: cid.slice(0, 60),
+      backend,
+      count: items.length,
+      maxChars: max,
+      avgChars: Math.round(total / items.length),
+      totalKB: Math.round(total / 1024),
+      worstPreview: (items[maxIdx].metadata?.text || items[maxIdx].metadata?.summary || '').slice(0, 60),
+    });
+  } catch (e) {
+    console.warn('failed', cid, e.message);
+  }
+}
+
+perCollection.sort((a, b) => b.maxChars - a.maxChars);
+console.table(perCollection);

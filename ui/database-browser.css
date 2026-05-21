@@ -1340,3 +1340,127 @@
     gap: 12px;
 }
 
+
+
+/* ============================================================================
+   Size Inspector Tab
+   ============================================================================ */
+.vectfox-size-inspector {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    padding: 16px 24px;
+    gap: 12px;
+    overflow: auto;
+}
+
+.vectfox-size-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.vectfox-size-hint {
+    font-size: 12px;
+    opacity: 0.75;
+}
+
+.vectfox-size-status {
+    font-size: 13px;
+    opacity: 0.85;
+    min-height: 18px;
+}
+
+.vectfox-size-status.error {
+    color: var(--SmartThemeQuoteColor, #c44);
+}
+
+.vectfox-size-summary-wrap h4,
+.vectfox-size-detail-header h4 {
+    margin: 6px 0;
+    font-size: 14px;
+}
+
+.vectfox-size-sort-hint {
+    font-weight: normal;
+    opacity: 0.65;
+    font-size: 12px;
+    margin-left: 6px;
+}
+
+.vectfox-size-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.vectfox-size-table-scroll {
+    overflow: auto;
+    max-height: 60vh;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 12%, transparent);
+    border-radius: 6px;
+}
+
+.vectfox-size-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.vectfox-size-table th,
+.vectfox-size-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+    white-space: nowrap;
+}
+
+.vectfox-size-table th {
+    position: sticky;
+    top: 0;
+    background: var(--SmartThemeBlurTintColor, #1a1a1a);
+    z-index: 1;
+    font-weight: 600;
+}
+
+.vectfox-size-table td.num,
+.vectfox-size-table th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.vectfox-size-table td.collection-cell {
+    max-width: 380px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--monoFontFamily, monospace);
+    font-size: 11px;
+}
+
+.vectfox-size-table td.preview-cell {
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.8;
+}
+
+.vectfox-size-table td.hash-cell {
+    font-family: var(--monoFontFamily, monospace);
+    font-size: 11px;
+    opacity: 0.85;
+}
+
+.vectfox-size-table tr.clickable {
+    cursor: pointer;
+}
+
+.vectfox-size-table tr.clickable:hover {
+    background: color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+}
+
+.vectfox-size-table tr.error td {
+    color: var(--SmartThemeQuoteColor, #c44);
+}
