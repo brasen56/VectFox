@@ -934,6 +934,8 @@ function bindEvents() {
 
     // Chunk selection - bind to container, not document (because modal stops propagation)
     $('#VectFox_visualizer_modal').on('click', '.vectfox-chunk-item', function(e) {
+        // Let the checkbox handle its own click/change — e.preventDefault() below would cancel the toggle
+        if ($(e.target).hasClass('vectfox-bulk-checkbox')) return;
         e.preventDefault();
         e.stopPropagation();
         const uid = $(this).attr('data-uid');
