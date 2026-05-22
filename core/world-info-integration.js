@@ -13,14 +13,14 @@
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { queryCollection } from './core-vector-api.js';
 import { getCollectionListing } from './collection-loader.js';
-import { getCollectionMeta } from './collection-metadata.js';
+import { getCollectionMeta, shouldCollectionActivate } from './collection-metadata.js';
 import { parseRegistryKey } from './collection-ids.js';
 import { LOREBOOK_PROMPT_TAG } from './constants.js';
 import { detectLorebookRenames, showLorebookRenameModal, openDatabaseBrowserForRename } from './lorebook-rename-detector.js';
 // Lorebook collection ID lookup uses registry scan (see _findLorebookRegistryEntry below);
 // the builder is intentionally not imported here because lookups can't reconstruct the
 // exact ID (backend + handle + timestamp segments are not known at lookup time).
-import { eventSource, event_types, setExtensionPrompt, substituteParams } from '../../../../../script.js';
+import { eventSource, event_types, setExtensionPrompt, substituteParams, getCurrentChatId } from '../../../../../script.js';
 
 // ============================================================================
 // WORLD INFO ACTIVATION HOOKS
@@ -158,10 +158,14 @@ async function getEnabledLorebookCollections(settings) {
     const listing = getCollectionListing(settings);
     const collections = [];
 
+    const currentChatId = getCurrentChatId() ? String(getCurrentChatId()) : null;
+    const currentCharacterId = getContext().characterId != null ? String(getContext().characterId) : null;
+    const context = { currentChatId, currentCharacterId };
+
     for (const entry of listing) {
         if (!entry.collectionId.startsWith('vf_lorebook_')) continue;
-        // Skip explicitly paused collections (meta.enabled === false).
         if (entry.meta.enabled === false) continue;
+        if (!(await shouldCollectionActivate(entry.registryKey, context))) continue;
 
         const sourceName = entry.meta?.sourceName || null;
         const name = sourceName || entry.collectionId;
