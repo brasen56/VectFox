@@ -1083,13 +1083,6 @@ function renderCollectionCard(collection, isActiveById = null) {
                 `
                     : ""
                 }
-                <button class="vectfox-btn-sm vectfox-action-open-folder"
-                        data-collection-key="${uniqueKey}"
-                        data-backend="${collection.backend}"
-                        data-source="${collection.source || "transformers"}"
-                        title="Open in file explorer">
-                    ${icons.folderOpen(16)} Open Folder
-                </button>
                 <button class="vectfox-btn-sm vectfox-action-visualize"
                         data-collection-key="${uniqueKey}"
                         data-backend="${collection.backend}"
@@ -1308,38 +1301,6 @@ function bindCollectionCardEvents() {
       } catch (error) {
         console.error("VectFox: Failed to delete collection", error);
         toastr.error(`Failed to delete collection: ${error.message}`, "VectFox");
-      }
-    });
-
-  // Open folder
-  $(".vectfox-action-open-folder")
-    .off("click")
-    .on("click", async function (e) {
-      e.stopPropagation();
-      const collectionKey = $(this).data("collection-key");
-      const collection = findCollectionByKey(collectionKey);
-
-      if (!collection) return;
-
-      try {
-        const response = await fetch("/api/plugins/similharity/open-folder", {
-          method: "POST",
-          headers: getRequestHeaders(),
-          body: JSON.stringify({
-            collectionId: collection.id,
-            backend: collection.backend,
-            source: collection.source,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to open folder: ${response.statusText}`);
-        }
-
-        toastr.success("Opened collection folder", "VectFox");
-      } catch (error) {
-        console.error("VectFox: Failed to open folder", error);
-        toastr.error(`Failed to open folder: ${error.message}`, "VectFox");
       }
     });
 
