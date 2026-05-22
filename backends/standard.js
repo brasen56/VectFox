@@ -1,9 +1,8 @@
 /**
  * ============================================================================
- * STANDARD BACKEND (Vectra - ST Native + Plugin)
+ * STANDARD BACKEND (Vectra - ST Native)
  * ============================================================================
- * Uses ST's native /api/vector/* endpoints as the primary method.
- * Falls back to Similharity plugin endpoints if available for extended features.
+ * Uses ST's native /api/vector/* endpoints exclusively.
  *
  * This is the default backend - no setup required.
  *
@@ -98,31 +97,10 @@ function getProviderSpecificParams(settings, isQuery = false) {
 export class StandardBackend extends VectorBackend {
     constructor() {
         super();
-        this.pluginAvailable = false;
     }
 
     async initialize(settings) {
-        // Check if plugin is available
-        console.log('VectFox DEBUG: Checking plugin availability...');
-        try {
-            const response = await fetch('/api/plugins/similharity/health');
-            console.log('VectFox DEBUG: Plugin health check response:', response.status, response.ok);
-            this.pluginAvailable = response.ok;
-
-            if (this.pluginAvailable) {
-                await fetch('/api/plugins/similharity/backend/init/vectra', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                });
-                console.log('VectFox: Standard backend initialized (plugin available)');
-            } else {
-                console.log('VectFox: Standard backend initialized (native ST API only - health check failed)');
-            }
-        } catch (e) {
-            console.log('VectFox: Standard backend initialized (native ST API only - error:', e.message, ')');
-            this.pluginAvailable = false;
-        }
-        
+        console.log('VectFox: Standard backend initialized (native ST API)');
     }
 
     async healthCheck() {
@@ -181,7 +159,7 @@ export class StandardBackend extends VectorBackend {
 
     /**
      * Insert vector items into a collection
-     * Uses plugin API if available (for metadata support), falls back to native ST API
+     * Uses native ST API
      */
     async insertVectorItems(collectionId, items, settings, abortSignal = null) {
         if (items.length === 0) return;
@@ -213,47 +191,7 @@ export class StandardBackend extends VectorBackend {
         }
 
         try {
-            // Try plugin API first (supports metadata) - fallback to native API if unavailable
-            console.log('VectFox DEBUG: this.pluginAvailable =', this.pluginAvailable);
-            let usePluginApi = this.pluginAvailable;
-            let endpoint = usePluginApi ? '/api/plugins/similharity/chunks/insert' : '/api/vector/insert';
-
-            console.log(`VectFox DEBUG: Using ${usePluginApi ? 'PLUGIN' : 'NATIVE'} API for insertion (${endpoint})`);
-            
-            // Warn if keywords will be lost
-            if (!usePluginApi && chunksWithKeywords > 0) {
-                console.warn(`⚠️ VectFox: ${chunksWithKeywords} chunks have keywords, but native ST API doesn't support metadata!`);
-                console.warn(`⚠️ VectFox: Install the Similharity plugin to save keywords: https://github.com/SillyTavern/SillyTavern-Extras-Similharity-plugin`);
-            }
-
-            const payload = usePluginApi ? {
-                backend: 'vectra',
-                collectionId: collectionId,
-                items: items.map(item => {
-                    const mappedItem = {
-                        hash: item.hash,
-                        text: item.text || '',
-                        index: item.index ?? 0,
-                        vector: item.vector,
-                        metadata: {
-                            ...item.metadata,
-                            keywords: item.keywords || [],
-                            importance: item.importance,
-                            conditions: item.conditions,
-                            isSummaryChunk: item.isSummaryChunk,
-                            parentHash: item.parentHash,
-                        },
-                    };
-                    // Debug: Log first item's metadata
-                    if (item === items[0] && item.keywords?.length > 0) {
-                        console.log(`VectFox DEBUG: First item metadata being sent:`, mappedItem.metadata);
-                    }
-                    return mappedItem;
-                }),
-                source: settings.source || 'transformers',
-                model: model,
-                ...providerParams,
-            } : {
+            const payload = {
                 collectionId: collectionId,
                 items: items.map(item => ({
                     hash: item.hash,
@@ -304,7 +242,7 @@ export class StandardBackend extends VectorBackend {
                 console.warn(`VectFox DEBUG: ⚠️ insert body exceeds 500 KB — dumping first 1000 chars: ${bodyJson.slice(0, 1000)}`);
             }
 
-            const response = await fetch(endpoint, {
+            const response = await fetch('/api/vector/insert', {
                 method: 'POST',
                 headers: getRequestHeaders(),
                 signal: abortSignal
@@ -351,31 +289,10 @@ export class StandardBackend extends VectorBackend {
             bareCollectionId = parts.slice(1).join(':');
         }
 
-        // Storage path is vectors/{source}/{collectionId}/{model}/. Both the plugin
-        // and ST's native /api/vector/delete honor `model` when it's in the body —
-        // mirror the insertVectorItems/getSavedHashes payload shape so delete lands
-        // in the same partition the insert wrote to.
-        if (this.pluginAvailable) {
-            const response = await fetch('/api/plugins/similharity/chunks/delete', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    backend: 'vectra',
-                    collectionId: bareCollectionId,
-                    hashes,
-                    source,
-                    model,
-                }),
-            });
-
-            if (!response.ok) {
-                const errorBody = await response.text().catch(() => 'No response body');
-                throw new Error(`Failed to delete vectors (plugin): ${response.status} ${response.statusText} - ${errorBody}`);
-            }
-            return;
-        }
-
-        // Fallback: native ST API
+        // Storage path is vectors/{source}/{collectionId}/{model}/. ST's native
+        // /api/vector/delete honors `model` when it's in the body — mirror the
+        // insertVectorItems/getSavedHashes payload shape so delete lands in the
+        // same partition the insert wrote to.
         const providerParams = getProviderSpecificParams(settings, false);
         const response = await fetch('/api/vector/delete', {
             method: 'POST',
@@ -405,7 +322,7 @@ export class StandardBackend extends VectorBackend {
         const threshold = settings.score_threshold || 0.0;
 
         // Registry keys arrive as "backend:collectionId". Strip the backend prefix
-        // to get the bare ID the Similharity plugin expects.
+        // to get the bare collection ID.
         const knownBackends = ['standard', 'vectra', 'qdrant'];
         const parts = collectionId.split(':');
         let bareCollectionId = collectionId;
@@ -413,62 +330,6 @@ export class StandardBackend extends VectorBackend {
             bareCollectionId = parts.slice(1).join(':');
         }
 
-        // When the Similharity plugin is available, data was inserted via the plugin's
-        // path: vectors/{source}/{collectionId}/{model}/
-        // The native ST /api/vector/query does NOT include the model subfolder, so it
-        // looks at the wrong path and always returns 0 results.
-        // Route queries through the plugin so they use the same storage path.
-        if (this.pluginAvailable) {
-            const pluginBody = {
-                backend: 'vectra',
-                collectionId: bareCollectionId,
-                topK,
-                threshold,
-                source,
-                model,
-            };
-            // Pass pre-computed vector when available; otherwise let the plugin generate it
-            if (queryVector) {
-                pluginBody.queryVector = queryVector;
-            } else {
-                pluginBody.searchText = searchText;
-            }
-
-            console.log(`[VectFox] queryCollection via plugin: collectionId=${bareCollectionId}, source=${source}, model=${model}, topK=${topK}, threshold=${threshold}, hasQueryVector=${!!queryVector}`);
-
-            const response = await fetch('/api/plugins/similharity/chunks/query', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify(pluginBody),
-            });
-
-            console.log(`[VectFox] plugin query response: status=${response.status} ok=${response.ok}`);
-
-            if (!response.ok) {
-                const errorBody = await response.text().catch(() => 'No response body');
-                console.error(`[VectFox] plugin query failed: ${errorBody}`);
-                throw new Error(`Failed to query collection (plugin): ${response.status} ${response.statusText} - ${errorBody}`);
-            }
-
-            const data = await response.json();
-            console.log(`[VectFox] plugin query result: count=${data.count}, results.length=${data.results?.length}, error=${data.error || 'none'}`);
-
-            // Plugin returns { success, results: [{ hash, score, text, metadata }] }
-            const results = data.results || [];
-            return {
-                hashes: results.map(r => r.hash),
-                metadata: results.map(r => ({
-                    ...r.metadata,
-                    hash: r.hash,
-                    text: r.text ?? r.metadata?.text,
-                    score: r.score || 0,
-                })),
-            };
-        }
-
-        // Fallback: native ST API (used when plugin is not available)
-        // Note: does NOT include model subfolder — only works for collections
-        // vectorized via the native API.
         const providerParams = getProviderSpecificParams(settings, true);
         const requestBody = {
             collectionId: bareCollectionId,
@@ -565,57 +426,23 @@ export class StandardBackend extends VectorBackend {
      * Uses native ST API
      */
     async purgeVectorIndex(collectionId, settings) {
-        // Prefer the Similharity plugin's purge endpoint when available — it knows
-        // about the `{source}/{collectionId}/{model}/` path layout that ST's
-        // native /api/vector/purge does not. When the DB Browser passes
-        // `_discoveredModels` (from the plugin's collection discovery), iterate
-        // every model subdir so the on-disk dirs are actually deleted; otherwise
-        // the collection re-appears on the next discovery scan.
-        if (this.pluginAvailable) {
-            const source = settings.source || 'transformers';
-            const discoveredModels = Array.isArray(settings._discoveredModels) && settings._discoveredModels.length > 0
-                ? settings._discoveredModels.map(m => m?.path ?? m ?? '')
-                : [getModelFromSettings(settings)];
+        const source = settings.source || 'transformers';
+        const model = getModelFromSettings(settings);
 
-            const errors = [];
-            for (const model of discoveredModels) {
-                try {
-                    const response = await fetch('/api/plugins/similharity/chunks/purge', {
-                        method: 'POST',
-                        headers: getRequestHeaders(),
-                        body: JSON.stringify({
-                            backend: 'vectra',
-                            collectionId,
-                            source,
-                            model,
-                        }),
-                    });
-                    if (!response.ok) {
-                        const errBody = await response.text().catch(() => 'No response body');
-                        errors.push(`model="${model}": ${response.status} ${errBody}`);
-                    }
-                } catch (e) {
-                    errors.push(`model="${model}": ${e.message}`);
-                }
-            }
-            if (errors.length === discoveredModels.length) {
-                // All purge attempts failed — surface the error
-                throw new Error(`Failed to purge collection via plugin: ${errors.join('; ')}`);
-            }
-            if (errors.length > 0) {
-                console.warn(`VectFox Standard: partial purge of ${collectionId}:`, errors);
-            }
-            return;
+        const knownBackends = ['standard', 'vectra', 'qdrant'];
+        const parts = collectionId.split(':');
+        let bareCollectionId = collectionId;
+        if (parts.length >= 2 && knownBackends.includes(parts[0])) {
+            bareCollectionId = parts.slice(1).join(':');
         }
 
-        // Fallback (no plugin): ST's native purge endpoint. Note this does NOT
-        // understand the model subdirectory layout, so it may leave orphan files
-        // when the collection was created by the plugin path.
         const response = await fetch('/api/vector/purge', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({
-                collectionId: collectionId,
+                collectionId: bareCollectionId,
+                source,
+                model,
             }),
         });
 
@@ -646,39 +473,14 @@ export class StandardBackend extends VectorBackend {
     }
 
     // ========================================================================
-    // EXTENDED API METHODS (plugin-only, graceful fallback)
+    // EXTENDED API METHODS (native ST API stubs)
     // ========================================================================
 
     /**
-     * List chunks with pagination (plugin-only feature)
-     * Falls back to basic hash list if plugin unavailable
+     * List chunks with pagination
+     * Native ST API returns hashes only
      */
     async listChunks(collectionId, settings, options = {}) {
-        if (this.pluginAvailable) {
-            try {
-                const response = await fetch('/api/plugins/similharity/chunks/list', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        backend: 'vectra',
-                        collectionId: collectionId,
-                        source: settings.source || 'transformers',
-                        model: getModelFromSettings(settings),
-                        offset: options.offset || 0,
-                        limit: options.limit || 100,
-                        includeVectors: options.includeVectors || false,
-                    }),
-                });
-
-                if (response.ok) {
-                    return await response.json();
-                }
-            } catch (e) {
-                console.warn('VectFox: Plugin listChunks failed, using native fallback');
-            }
-        }
-
-        // Fallback: use native list (hashes only)
         const hashes = await this.getSavedHashes(collectionId, settings);
         return {
             items: hashes.map(hash => ({ hash, text: '', metadata: {} })),
@@ -687,117 +489,31 @@ export class StandardBackend extends VectorBackend {
     }
 
     /**
-     * Get a single chunk by hash (plugin-only feature)
-     * Returns null if plugin unavailable
+     * Get a single chunk by hash — no native ST API for this
      */
     async getChunk(collectionId, hash, settings) {
-        if (!this.pluginAvailable) return null;
-
-        try {
-            const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}?` + new URLSearchParams({
-                backend: 'vectra',
-                collectionId: collectionId,
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-            }), {
-                headers: getRequestHeaders(),
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                return data.chunk;
-            }
-        } catch (e) {
-            console.warn('VectFox: Plugin getChunk failed');
-        }
-
         return null;
     }
 
     /**
-     * Update chunk text (plugin-only feature)
+     * Update chunk text — no native ST API for this
      */
     async updateChunkText(collectionId, hash, newText, settings) {
-        if (!this.pluginAvailable) {
-            throw new Error('Chunk text editing requires the Similharity plugin');
-        }
-
-        const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}/text`, {
-            method: 'PATCH',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: 'vectra',
-                collectionId: collectionId,
-                text: newText,
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`Failed to update chunk text: ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        return await response.json();
+        throw new Error('Chunk text editing is not supported by the native ST API');
     }
 
     /**
-     * Update chunk metadata (plugin-only feature)
+     * Update chunk metadata — no native ST API for this
      */
     async updateChunkMetadata(collectionId, hash, metadata, settings) {
-        if (!this.pluginAvailable) {
-            throw new Error('Chunk metadata editing requires the Similharity plugin');
-        }
-
-        const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}/metadata`, {
-            method: 'PATCH',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: 'vectra',
-                collectionId: collectionId,
-                metadata: metadata,
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`Failed to update chunk metadata: ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        return await response.json();
+        throw new Error('Chunk metadata editing is not supported by the native ST API');
     }
 
     /**
-     * Get collection statistics (plugin-only feature)
-     * Falls back to basic count if plugin unavailable
+     * Get collection statistics
+     * Native ST API: hash count only
      */
     async getStats(collectionId, settings) {
-        if (this.pluginAvailable) {
-            try {
-                const response = await fetch('/api/plugins/similharity/chunks/stats', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        backend: 'vectra',
-                        collectionId: collectionId,
-                        source: settings.source || 'transformers',
-                        model: getModelFromSettings(settings),
-                    }),
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    return data.stats;
-                }
-            } catch (e) {
-                console.warn('VectFox: Plugin getStats failed, using native fallback');
-            }
-        }
-
-        // Fallback: just return count from hash list
         const hashes = await this.getSavedHashes(collectionId, settings);
         return {
             count: hashes.length,
@@ -806,32 +522,9 @@ export class StandardBackend extends VectorBackend {
     }
 
     /**
-     * Discover all collections on disk
-     * Plugin provides this; native API requires probing
+     * Discover all collections on disk — no native ST API for this
      */
     async discoverCollections(settings) {
-        if (this.pluginAvailable) {
-            try {
-                const response = await fetch('/api/plugins/similharity/collections', {
-                    headers: getRequestHeaders(),
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    return (data.collections || []).map(c => ({
-                        id: c.id,
-                        source: c.source,
-                        chunkCount: c.chunkCount || 0,
-                        backend: c.backend || 'vectra',
-                    }));
-                }
-            } catch (e) {
-                console.warn('VectFox: Plugin discoverCollections failed');
-            }
-        }
-
-        // No native way to list collections - return empty
-        // Discovery will be handled by collection-loader probing known patterns
         return null;
     }
 }
