@@ -400,7 +400,11 @@ async function handleGenerationStarted(type, options, dryRun) {
         // Format entries into direct prompt injection under <VectFoxLorebook>
         const entryTexts = semanticEntries
             .filter(e => e.content?.trim())
-            .map(e => e.content.trim());
+            .map(e => {
+                const title = e.metadata?.entryName || (Array.isArray(e.key) ? e.key.slice(0, 3).join(', ') : String(e.key || ''));
+                const content = e.content.trim();
+                return title ? `# ${title}\n${content}` : content;
+            });
 
         if (!entryTexts.length) return;
 
@@ -440,7 +444,11 @@ export async function runLorebookWIDryRun({ chat, testMessage, settings }) {
     const semanticEntries = await getSemanticWorldInfoEntries(recentMessages, [], settings, testMessage || null, lorebookCollections);
     if (!semanticEntries.length) return { injectionText: null, entryCount: 0 };
 
-    const entryTexts = semanticEntries.filter(e => e.content?.trim()).map(e => e.content.trim());
+    const entryTexts = semanticEntries.filter(e => e.content?.trim()).map(e => {
+        const title = e.metadata?.entryName || (Array.isArray(e.key) ? e.key.slice(0, 3).join(', ') : String(e.key || ''));
+        const content = e.content.trim();
+        return title ? `# ${title}\n${content}` : content;
+    });
     if (!entryTexts.length) return { injectionText: null, entryCount: 0 };
 
     const xmlTag = settings.lorebook_xml_tag || 'VectFoxLorebook';
