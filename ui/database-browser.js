@@ -19,6 +19,7 @@ import {
   deleteCollection,
   sanitizeHandleId,
   getCollectionListing,
+  checkPluginAvailable,
 } from "../core/collection-loader.js";
 import { COLLECTION_PREFIXES } from "../core/collection-ids.js";
 import {
@@ -82,29 +83,9 @@ import {
 } from "../core/png-export.js";
 import { renderSizeInspectorTab } from "./size-inspector.js";
 
-// Plugin availability cache
-let pluginAvailable = null;
-
-/**
- * Check if the Similharity plugin is available
- * @returns {Promise<boolean>}
- */
-async function checkPluginAvailable() {
-  if (pluginAvailable !== null) return pluginAvailable;
-
-  try {
-    const response = await fetch("/api/plugins/similharity/health", {
-      method: "GET",
-      headers: getRequestHeaders(),
-    });
-    pluginAvailable = response.ok;
-  } catch {
-    pluginAvailable = false;
-  }
-  return pluginAvailable;
-}
-
 // Browser state
+// checkPluginAvailable() is imported from ../core/collection-loader.js —
+// that is the canonical implementation shared across the UI layer.
 let browserState = {
   isOpen: false,
   pluginAvailable: null,

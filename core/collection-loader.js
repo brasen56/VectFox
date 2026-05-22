@@ -446,10 +446,18 @@ function getCollectionDisplayName(collectionId, metadata) {
 }
 
 /**
- * Checks if VECTFOX server plugin is available
+ * Checks if the Similharity plugin is available.
+ * This is the canonical implementation — shared with ui/database-browser.js via export.
+ *
+ * !! SYNC WARNING !!
+ * backends/standard.js has an INDEPENDENT copy of this check (this.pluginAvailable
+ * set in initialize()) because it cannot import from here without a circular
+ * dependency. If you change the health endpoint, response parsing, or caching
+ * logic here, you MUST make the same change in StandardBackend.initialize().
+ *
  * @returns {Promise<boolean>} True if plugin is available
  */
-async function checkPluginAvailable() {
+export async function checkPluginAvailable() {
     if (pluginAvailable !== null) {
         return pluginAvailable;
     }

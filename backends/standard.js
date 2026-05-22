@@ -115,7 +115,14 @@ export class StandardBackend extends VectorBackend {
     }
 
     async initialize(settings) {
-        // Check if plugin is available
+        // Check if plugin is available.
+        // !! SYNC WARNING !!
+        // This is an INDEPENDENT copy of checkPluginAvailable() from
+        // core/collection-loader.js. We cannot import from there because
+        // collection-loader → core-vector-api → (dynamic import) → standard.js
+        // would create a circular dependency.
+        // If you change the health endpoint or response parsing here,
+        // make the same change in collection-loader.js::checkPluginAvailable().
         console.log('VectFox DEBUG: Checking plugin availability...');
         try {
             const response = await fetch('/api/plugins/similharity/health');
