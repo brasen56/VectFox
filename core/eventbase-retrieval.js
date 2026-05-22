@@ -181,7 +181,10 @@ async function _runOneLiveQuery({
                             return { ...m, _hash: h, _jsFinal: _jsFinalScore(m, rerankWeights, chatLength, anchorText, anchorBoostAmount) };
                         });
                         // Filter by min-importance to mirror the server-side filter.
-                        const jsFiltered = jsCandidates.filter(m => (m.importance ?? 0) >= rerankParams.minImportance);
+                        const jsFiltered = jsCandidates.filter(m => {
+                            const imp = m.importance ?? m.metadata?.importance;
+                            return imp == null || imp >= rerankParams.minImportance;
+                        });
                         jsFiltered.sort((a, b) => b._jsFinal - a._jsFinal);
 
                         // Apples-to-apples: the JS final score includes anchor boost
@@ -437,9 +440,15 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     // candidates via the outer range filter in the formula query, so they pass
     // through unconditionally. Non-rerank candidates (archive events or fallback
     // path results) still go through the JS filter.
+    //
+    // Native ST backend (Vectra) cannot store arbitrary metadata, so importance
+    // is never persisted for native-inserted events. When importance is absent,
+    // default to minImportance (i.e. just-pass) rather than 0 so native users
+    // still get results. Plugin/Qdrant data always carries the field.
     const importanceFiltered = allCandidates.filter(m => {
         if (m._rerankApplied) return true;
-        const imp = m.importance ?? m.metadata?.importance ?? 0;
+        const imp = m.importance ?? m.metadata?.importance;
+        if (imp == null) return true;   // missing importance → pass (native backend)
         return imp >= minImportance;
     });
 
