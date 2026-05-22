@@ -388,7 +388,19 @@ Use **Qdrant vector database** for any ultra fast and accurate delopment — A3 
 
 That's it! VectFox will be downloaded and enabled automatically.
 
-### Step 2: (Needed for Qdrant backends ONLY, can skip if you on A1 or A2 path) Install Similharity Plugin
+### Step 2: Install Similharity Plugin (Required for Qdrant — Optional but recommended for Standard)
+
+**Required if using Qdrant backend.** Optional if using the Standard backend, but installing it unlocks additional functionality even there:
+
+| Feature | Standard without plugin | Standard with plugin |
+|---|---|---|
+| Event search & injection | ✅ Full functionality | ✅ Full functionality |
+| Embedding & vectorization | ✅ Works | ✅ Works |
+| Rich metadata (keywords, importance) | ❌ Not stored | ✅ Stored & used in search |
+| View Chunks in Database Browser | ❌ Not available | ✅ Available |
+| Edit individual chunks | ❌ Not available | ✅ Available |
+
+If you are on the Standard backend and do not install the plugin, event search and injection still work correctly — you just won't have chunk inspection or keyword metadata.
 
 ```bash
 Open Command prompt on Windows or Terminal on Linux/Mac or Get into Console if you are on docker
