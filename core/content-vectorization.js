@@ -46,11 +46,7 @@ import { getStringHash } from '../../../../utils.js';
  * @returns {object} merged settings — globals first, overrides win
  */
 export function resolveEffectiveSettings(callerSettings) {
-    const merged = { ...(extension_settings.vectfox || {}), ...(callerSettings || {}) };
-    // TEMP probe (delete after diagnosing TEST 004): proves the fix is actually loaded
-    // in the browser, not a stale cached copy. Shows which backend wins the merge.
-    console.log('[VectFox PROBE] resolveEffectiveSettings → vector_backend=', merged.vector_backend);
-    return merged;
+    return { ...(extension_settings.vectfox || {}), ...(callerSettings || {}) };
 }
 
 /**
