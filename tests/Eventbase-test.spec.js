@@ -177,8 +177,9 @@ test.beforeAll(async ({ browser }) => {
         const { deleteCollectionMeta } = await import(base + 'core/collection-metadata.js');
         const { deleteContentCollection } = await import(base + 'core/content-vectorization.js');
         const { extension_settings } = await import('/scripts/extensions.js');
+        const { saveSettingsDebounced } = await import('/script.js');
         const vf = extension_settings?.vectfox;
-        if (!vf) return { leftover: [] };
+        if (!vf) return { leftover: [], indexOrphans: 0, indexChatsScanned: 0 };
 
         const listing = getCollectionListing(vf);
         const leftover = [];
@@ -201,7 +202,52 @@ test.beforeAll(async ({ browser }) => {
             try { unregisterCollection(cid); } catch {}
         }
 
-        return { leftover };
+        // ─── chat_lock_index orphan sweep ────────────────────────────────
+        //
+        // The registry pass above catches collections still in
+        // `vf.collection_registry`. But the per-chat reverse map
+        // `vf.chat_lock_index[chatId] = [registryKey, …]` is maintained
+        // separately. Older tests (001-013) call vectorizeContent with
+        // scope='chat' which auto-locks → writes to the reverse index,
+        // then cleanup calls deleteContentCollection + deleteCollectionMeta
+        // + unregisterCollection but never removeCollectionLock. The result:
+        // the registry entry vanishes but the reverse-index entry orphans
+        // and accumulates across runs (caught 2026-05-24 — TEST 019
+        // baseline snapshot found 15 stale playwright_test entries in one
+        // chat's lock index).
+        //
+        // Functionally harmless (lookups go forward via meta.lockedToChatIds,
+        // not reverse) but it grows unbounded. Fixing in beforeAll rather
+        // than patching every old test means one place to maintain, and
+        // it also defends future tests that forget removeCollectionLock.
+        //
+        // Production user data is never touched — we only filter entries
+        // whose registryKey contains the unmistakable `playwright_test`
+        // substring. A real user collection name would never include it.
+        let indexOrphans = 0;
+        let indexChatsScanned = 0;
+        const idx = vf.chat_lock_index;
+        if (idx && typeof idx === 'object') {
+            for (const chatId of Object.keys(idx)) {
+                const arr = idx[chatId];
+                if (!Array.isArray(arr) || arr.length === 0) continue;
+                indexChatsScanned++;
+                const kept = arr.filter(rk => !isTestMarker(rk));
+                if (kept.length !== arr.length) {
+                    indexOrphans += (arr.length - kept.length);
+                    if (kept.length === 0) {
+                        delete idx[chatId];
+                    } else {
+                        idx[chatId] = kept;
+                    }
+                }
+            }
+            if (indexOrphans > 0) {
+                saveSettingsDebounced();
+            }
+        }
+
+        return { leftover, indexOrphans, indexChatsScanned };
     });
 
     if (cleanupReport.leftover.length) {
@@ -209,6 +255,10 @@ test.beforeAll(async ({ browser }) => {
         cleanupReport.leftover.forEach(e => console.log(`  ${e.cid}`));
     } else {
         console.log('[setup] Nothing to clean up ✓');
+    }
+
+    if (cleanupReport.indexOrphans > 0) {
+        console.log(`[setup] Pruned ${cleanupReport.indexOrphans} stale playwright_test entries from chat_lock_index across ${cleanupReport.indexChatsScanned} chat(s)`);
     }
 
     console.log('[setup] Chat open — running tests ✓');

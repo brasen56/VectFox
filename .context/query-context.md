@@ -1,45 +1,35 @@
 # SigMap Query Context
-Generated: 2026-05-23T23:14:28.604Z
+Generated: 2026-05-24T01:29:11.771Z
 
-## core\collection-export.js
+## backends\qdrant.js
 ```
-export async function exportCollection(collectionId, settings, collectionInfo = {}) → Promise<object>
-export async function exportMultipleCollections(collectionIds, settings) → Promise<object>
-export function downloadExport(exportData, filename = null)
-export function validateImportData(data, currentSettings = {}) → { valid: boolean, errors:
-export async function importCollection(exportData, settings, options = {}) → Promise<{ success: boolea
-export async function importMultipleCollections(multiExportData, settings, options = {}) → Promise<{ success: boolea
-export async function readImportFile(file) → Promise<object>
-export function getExportInfo(data) → object
-function _inferScope(storedScope, collectionId)
-async function fetchChunksWithVectors(collectionId, settings) → Promise<Array>
-async function insertChunksWithVectors(collectionId, chunks, settings, onBatchProgress, abortSignal = null)
-async function importCollectionSilent(exportData, settings, options = {})
-function detectContentType(collectionId) → string
+export class QdrantBackend
+async initialize(settings)
+if(settings.qdrant_use_cloud)
+if(!response.ok)
+async healthCheck()
+if(!collectionId || typeof collectionId !== 'string')
+if(!collectionId || typeof collectionId !== 'string')
+if(parts.length >= 3 && parts[0] === 'vf')
+async getSavedHashes(collectionId, settings)
+function _isDimensionMismatch(errorBody)
+function _warnDimensionMismatch(errorBody)
+function getPluginProviderParams(settings)
+function getActualCollectionId(collectionId, settings) → string
 ```
 
-## core\collection-metadata.js
+## backends\standard.js
 ```
-export function getCollectionMeta(collectionId) → object
-export function setCollectionMeta(collectionId, data)
-export function deleteCollectionMeta(collectionId)
-export function getAllCollectionMeta() → object
-export function setCollectionEnabled(collectionId, enabled)
-export function isCollectionEnabled(collectionId) → boolean
-export function setCollectionAutoSync(collectionId, autoSync)
-export function isCollectionAutoSyncEnabled(collectionId) → boolean
-export function getChunkMetadata(hash) → object|null
-export function saveChunkMetadata(hash, metadata)
-export function deleteChunkMetadata(hash)
-export function getAllChunkMetadata() → object
-export function migrateOldEnabledKeys()
-export function cleanupOrphanedMeta(actualCollectionIds) → object
-export function getChatLockedCollections(chatId) → string[]
-export function setCollectionLock(collectionId, chatId)
-export function removeCollectionLock(collectionId, chatId)
-export function clearCollectionLock(collectionId)
-export function getCollectionLocks(collectionId) → string[]
-export function getCollectionLock(collectionId) → string|null
+export class StandardBackend
+constructor()
+async initialize(settings)
+if(this.pluginAvailable)
+async healthCheck()
+async getSavedHashes(collectionId, settings) → object
+if(!response.ok)
+if(response.status === 500)
+async insertVectorItems(collectionId, items, settings, abortSignal = null)
+function getProviderSpecificParams(settings, isQuery = false) → object
 ```
 
 ## core\core-vector-api.js
@@ -66,39 +56,44 @@ export async function listChunks(collectionId, settings, options = {}) → Promi
 export async function updateChunkText(collectionId, hash, newText, settings)
 ```
 
-## core\eventbase-retrieval.js
+## diagnostics\infrastructure.js
 ```
-export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false }) → Promise<{ events: object[
-function _characterOverlap(a, b) → number
-function _recencyBonus(event, chatLength) → number
-function _normalizeWeights(w) → object
-function _resolveAnchorBoostAmount(settings)
-function _anchorBoostFor(meta, anchorText, anchorAmount)
-function _jsFinalScore(meta, weights, chatLength, anchorText, anchorAmount)
-async function _runOneLiveQuery({ colId, queryText, topK, ebSettings, settings, useNativeRerank, rerankParams, compareMode, comparisonLog, chatLength, anchorText, anchorBoostAmount, rerankWeights, }) → Promise<Array<object>>
-function _logRerankComparison(colId, queryText, native, js, nativeMs, jsMs, settings, comparisonLog)
+export async function checkVectorsExtension()
+export async function checkBackendEndpoints(settings)
+export async function checkServerPlugin()
+export async function checkPluginEndpoints()
+export async function checkQdrantBackend(settings)
+export async function checkQdrantDimensionMatch(settings)
+export async function checkEmbeddingProvider(settings)
+export function checkTransformersMemoryLimits(settings)
+export function checkApiKeys(settings)
+export function checkApiUrls(settings)
+export async function checkProviderConnectivity(settings)
+export function checkWebLlmExtension(settings)
+export async function checkBananaBreadConnection(settings)
+function getPluginProviderParams(settings) → object
 ```
 
-## ui\chunk-visualizer.js
+## core\collection-loader.js
 ```
-export function openVisualizer(results, collectionId, settings, onReload = null)
-export function closeVisualizer()
-export function initializeVisualizer()
-function getCollectionIcon()
-function isEventBaseCollection()
-function normalizeKeywords(keywords)
-function getChunkData(chunk)
-function updateChunkData(hash, updates)
-async function saveAllChanges()
-function discardAllChanges()
-async function _loadAndRenderCollectionMetaFooter(collectionId, settings)
-function applyFilters()
-function createModal()
-function renderChunkList()
-function renderChunkItem(chunk, listIndex)
-function updateStatusBar()
-function renderDetailPanel()
-function formatConditionRule(rule)
-function bindEvents()
-function bindDetailEvents()
+export function getCollectionFilterReason(collectionId) → string|null
+export function getCollectionRegistry() → string[]
+export function sanitizeHandleId(name)
+export function registerCollection(collectionId)
+export function getCollectionListing(settings) → Array<{ * registryKey: st
+export function unregisterCollection(collectionId)
+export async function deleteCollection(collectionId, settings, registryKey = null) → Promise<{success: boolean
+export function clearCollectionRegistry()
+export function cleanupCollectionRegistry()
+export function cleanupTestCollections() → number
+export async function checkPluginAvailable() → Promise<boolean>
+export async function cleanupCorruptedCollections() → Promise<{purged: Array<{k
+export async function discoverExistingCollections(settings) → Promise<string[]>
+export async function doesChatHaveVectors(settings, overrideChatId, overrideUUID) → Promise<{hasVectors: bool
+export async function loadAllCollections(settings, autoDiscover = true) → Promise<object[]>
+export function isCollectionEmpty(registryKey) → boolean
+function _sanitizeHandleId(name)
+function getCollectionDisplayName(collectionId, metadata) → string
+async function discoverViaPlugin(settings) → Promise<string[]>
+async function probeCollection(collectionId, settings) → Promise<{exists: boolean,
 ```
