@@ -69,7 +69,7 @@ const defaultSettings = {
     openai_model: 'text-embedding-ada-002',
     electronhub_model: 'text-embedding-3-small',
     openrouter_model: 'openai/text-embedding-3-large',
-    openrouter_api_key: '', // Legacy plaintext slot. Post-2026-05-24 H-1 phase 2: writes go to ST secret_state slot SECRET_KEYS.OPENROUTER (ST's shared OpenRouter slot — same key ST itself uses for chat completion). migrateLegacyApiKeys() moves existing plaintext to SECRET_KEYS.OPENROUTER on first load (only if that slot is empty — won't clobber an existing ST-side value) and always clears this field. Reader: core/api-keys.js::getEmbeddingOpenRouterKey
+    openrouter_api_key: '', // Legacy plaintext slot — DRAINED by migrateLegacyApiKeys() into ST's well-known SECRET_KEYS.OPENROUTER slot. Per 2026-05-25 architecture pivot: ONE OpenRouter key shared across embedding/summarize/agentic (no separate keys). Custom secret_state slots don't round-trip; reuse ST's shared slot. Reader: core/api-keys.js::getOpenRouterApiKey
     cohere_model: 'embed-english-v3.0',
     ollama_model: 'mxbai-embed-large',
     ollama_keep: false,
@@ -131,10 +131,10 @@ const defaultSettings = {
 
     // Summarization before vectorization
     summarize_provider: 'openrouter', // 'openrouter', 'vllm'
-    summarize_openrouter_api_key: '',  // Legacy plaintext slot. Pre-2026-05-24 default; new saves go to ST secret_state (slot 'summarize_openrouter_api_key'). migrateLegacyApiKeys() in init moves any existing plaintext value to secrets and clears this field. Reader: core/api-keys.js::getSummarizeOpenRouterKey
+    summarize_openrouter_api_key: '',  // Legacy plaintext slot — DRAINED by migrateLegacyApiKeys() into SECRET_KEYS.OPENROUTER. Per 2026-05-25 pivot: ONE shared OpenRouter key. Reader: core/api-keys.js::getOpenRouterApiKey
     summarize_model: '',              // Model ID for summarization (e.g. 'google/gemini-flash-1.5-8b')
     summarize_vllm_url: '',           // vLLM base URL for summarization (e.g. 'http://localhost:8000')
-    summarize_vllm_api_key: '',       // Legacy plaintext slot. Pre-2026-05-24 default; new saves go to ST secret_state (slot 'summarize_vllm_api_key'). migrateLegacyApiKeys() in init moves any existing plaintext value to secrets and clears this field. Reader: core/api-keys.js::getSummarizeVllmKey
+    summarize_vllm_api_key: '',       // Legacy plaintext slot — DRAINED by migrateLegacyApiKeys() into the canonical settings.vllm_api_key. Per 2026-05-25 pivot: ONE shared vLLM key. Reader: core/api-keys.js::getVllmApiKey
     summarize_prompt: '',             // Custom prompt template (empty = use built-in default)
 
     // Hybrid Search fusion settings.
@@ -246,9 +246,9 @@ const defaultSettings = {
     agentic_retrieval_enabled: false,                  // Master toggle (default OFF)
     agentic_retrieval_provider: '',                    // '' → inherit summarize_provider
     agentic_retrieval_model: '',                       // '' → inherit summarize_model
-    agentic_retrieval_openrouter_api_key: '',          // Legacy plaintext slot (post-2026-05-24 H-1 fix: new saves go to ST secret_state slot 'agentic_retrieval_openrouter_api_key'; migrateLegacyApiKeys moves existing plaintext on first load and clears this field). Empty → inherits summarize key via getSummarizeOpenRouterKey. Reader: core/api-keys.js::getAgenticOpenRouterKey
+    agentic_retrieval_openrouter_api_key: '',          // Legacy plaintext slot — DRAINED by migrateLegacyApiKeys() into SECRET_KEYS.OPENROUTER. Per 2026-05-25 pivot: ONE shared OpenRouter key everywhere. Reader: core/api-keys.js::getOpenRouterApiKey
     agentic_retrieval_vllm_url: '',                    // '' → inherit summarize_vllm_url
-    agentic_retrieval_vllm_api_key: '',                // Legacy plaintext slot (post-2026-05-24 H-1 fix: new saves go to ST secret_state slot 'agentic_retrieval_vllm_api_key'; migrateLegacyApiKeys moves existing plaintext on first load and clears this field). Empty → inherits summarize key via getSummarizeVllmKey. Reader: core/api-keys.js::getAgenticVllmKey
+    agentic_retrieval_vllm_api_key: '',                // Legacy plaintext slot — DRAINED by migrateLegacyApiKeys() into the canonical settings.vllm_api_key. Per 2026-05-25 pivot: ONE shared vLLM key. Reader: core/api-keys.js::getVllmApiKey
     agentic_retrieval_chat_depth: 3,                   // # of past chat turns sent to planner (slider 1-10)
     agentic_retrieval_candidates_to_show: 12,          // Pre-search slice shown to planner (slider 5-20)
     agentic_retrieval_max_queries: 4,                  // Hard ceiling on planner output (slider 1-4)

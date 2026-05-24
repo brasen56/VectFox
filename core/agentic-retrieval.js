@@ -23,12 +23,7 @@ import { getContext } from '../../../../extensions.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { queryCollection } from './core-vector-api.js';
 import { buildPlannerUserMessage, getAgenticPlannerPrompt } from './prompts-i18n.js';
-import {
-    getSummarizeOpenRouterKey,
-    getSummarizeVllmKey,
-    getAgenticOpenRouterKey,
-    getAgenticVllmKey,
-} from './api-keys.js';
+import { getOpenRouterApiKey, getVllmApiKey } from './api-keys.js';
 
 // ============================================================================
 // Public API
@@ -285,11 +280,14 @@ export function _resolveAgenticLLMConfig(settings = {}) {
     }
 
     if (provider === 'openrouter') {
-        // Override-or-inherit chain. Both layers go through api-keys.js so
-        // secret_state and legacy plaintext are both checked uniformly.
-        // Empty agentic override → inherit summarize key (the "(empty →
-        // inherit summarize key)" UX in the AgentMode settings panel).
-        const apiKey = getAgenticOpenRouterKey(settings) || getSummarizeOpenRouterKey(settings);
+        // Single shared OpenRouter key (SECRET_KEYS.OPENROUTER). The
+        // AgentMode-specific "override" slot was removed when the
+        // architecture pivoted to one key per provider — see
+        // core/api-keys.js docstring for rationale. The UI's
+        // "(empty → inherit summarize key)" placeholder is now a
+        // no-op visual hint; all three inputs (embedding/summarize/
+        // agentic) write the same SECRET_KEYS.OPENROUTER slot.
+        const apiKey = getOpenRouterApiKey(settings);
         if (!apiKey) {
             return { ok: false, reason: 'missing_openrouter_api_key' };
         }
@@ -301,7 +299,8 @@ export function _resolveAgenticLLMConfig(settings = {}) {
         if (!vllmUrl) {
             return { ok: false, reason: 'missing_vllm_url' };
         }
-        const apiKey = getAgenticVllmKey(settings) || getSummarizeVllmKey(settings);
+        // Single shared vLLM key (settings.vllm_api_key plaintext).
+        const apiKey = getVllmApiKey(settings);
         return { ok: true, provider, model, vllmUrl, apiKey };
     }
 

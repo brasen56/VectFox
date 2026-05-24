@@ -14,21 +14,10 @@ import { saveSettingsDebounced, getCurrentChatId, eventSource, event_types } fro
 import { extension_settings, openThirdPartyExtensionMenu, getContext } from '../../../../extensions.js';
 import { writeSecret, SECRET_KEYS, secret_state, readSecretState } from '../../../../secrets.js';
 import {
-    getSummarizeOpenRouterKey,
-    getSummarizeVllmKey,
-    getAgenticOpenRouterKey,
-    getAgenticVllmKey,
-    getEmbeddingOpenRouterKey,
+    getOpenRouterApiKey,
+    getVllmApiKey,
     getQdrantApiKey,
     getOllamaApiKey,
-    getVllmApiKey,
-    SUMMARIZE_OPENROUTER_SECRET_SLOT,
-    SUMMARIZE_VLLM_SECRET_SLOT,
-    AGENTIC_OPENROUTER_SECRET_SLOT,
-    AGENTIC_VLLM_SECRET_SLOT,
-    QDRANT_API_KEY_SECRET_SLOT,
-    OLLAMA_API_KEY_SECRET_SLOT,
-    VLLM_API_KEY_SECRET_SLOT,
 } from '../core/api-keys.js';
 import { getWebLlmProvider as getSharedWebLlmProvider } from '../providers/webllm.js';
 import { openVisualizer } from './chunk-visualizer.js';
@@ -2211,7 +2200,7 @@ function bindSettingsEvents(settings, callbacks) {
                     return;
                 }
                 const headers = {};
-                const apiKey = getSummarizeVllmKey(settings);
+                const apiKey = getVllmApiKey(settings);
                 if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
                 const resp = await fetch(`${baseUrl}/v1/models`, { method: 'GET', headers });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -2261,54 +2250,50 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // vLLM summarization API key — stored in ST secret_state (H-1 fix 2026-05-24)
-    // Mirrors the embedding OpenRouter pattern; legacy plaintext at
-    // settings.summarize_vllm_api_key is migrated to the dedicated secret
-    // slot on next load via migrateLegacyApiKeys (core/api-keys.js).
+    // vLLM API key (summarize input) — writes to canonical settings.vllm_api_key
+    // 2026-05-25 architecture pivot: ONE vLLM key shared across
+    // embedding/summarize/agentic (no ST shared SECRET_KEYS slot for vLLM,
+    // and custom slots don't round-trip). All three UI inputs read/write
+    // the same settings.vllm_api_key plaintext field.
     const updateSummarizeVllmKeyDisplay = () => {
-        const savedKey = getSummarizeVllmKey(settings);
+        const savedKey = getVllmApiKey(settings);
         if (savedKey) {
             const masked = savedKey.length > 4
                 ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
                 : '*'.repeat(savedKey.length);
-            $('#VectFox_summarize_vllm_apikey').attr('placeholder', `Key saved: ${masked}`);
+            $('#VectFox_summarize_vllm_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + AgentMode)`);
         } else {
-            $('#VectFox_summarize_vllm_apikey').attr('placeholder', 'Paste key here to save...');
+            $('#VectFox_summarize_vllm_apikey').attr('placeholder', 'Paste vLLM key (shared with Embedding + AgentMode)');
         }
     };
     updateSummarizeVllmKeyDisplay();
-    $('#VectFox_summarize_vllm_apikey').on('change', async function() {
+    $('#VectFox_summarize_vllm_apikey').on('change', function() {
         const value = String($(this).val()).trim();
         if (value) {
-            try {
-                await writeSecret(SUMMARIZE_VLLM_SECRET_SLOT, value);
-                await readSecretState(); // Refresh in-memory secret_state
-                toastr.success('vLLM summarization API key saved (ST secrets)');
-            } catch (err) {
-                console.error('[VectFox] writeSecret(SUMMARIZE_VLLM_SECRET_SLOT) failed:', err);
-                toastr.error('Failed to save vLLM key — see console');
-                return;
-            }
+            settings.vllm_api_key = value;
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+            toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
             $(this).val('');
             updateSummarizeVllmKeyDisplay();
         }
     });
 
-    // OpenRouter summarization API key — stored in ST secret_state (H-1 fix 2026-05-24)
-    // Separate dedicated slot from the embedding section's SECRET_KEYS.OPENROUTER
-    // so the user can run different keys for embedding vs summarization
-    // (different rate-limit tiers, different accounts). The reader at
-    // getSummarizeOpenRouterKey falls through to the embedding slot if the
-    // user only set one — preserving the pre-H-1 inheritance UX.
+    // OpenRouter API key (summarize input) — writes to SECRET_KEYS.OPENROUTER
+    // 2026-05-25 architecture pivot: ONE OpenRouter key shared across
+    // embedding/summarize/agentic. Custom secret_state slots don't
+    // round-trip (BananaBread comment was right), so we reuse ST's
+    // well-known SECRET_KEYS.OPENROUTER which DOES round-trip. All three
+    // UI inputs (Embedding, Summarize, AgentMode) read/write this slot.
     const updateSummarizeORKeyDisplay = () => {
-        const savedKey = getSummarizeOpenRouterKey(settings);
+        const savedKey = getOpenRouterApiKey(settings);
         if (savedKey) {
             const masked = savedKey.length > 4
                 ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
                 : '*'.repeat(savedKey.length);
-            $('#VectFox_summarize_openrouter_apikey').attr('placeholder', `Key saved: ${masked}`);
+            $('#VectFox_summarize_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + AgentMode)`);
         } else {
-            $('#VectFox_summarize_openrouter_apikey').attr('placeholder', 'Paste key here to save...');
+            $('#VectFox_summarize_openrouter_apikey').attr('placeholder', 'Paste OpenRouter key (shared with Embedding + AgentMode)');
         }
     };
     updateSummarizeORKeyDisplay();
@@ -2316,11 +2301,11 @@ function bindSettingsEvents(settings, callbacks) {
         const value = String($(this).val()).trim();
         if (value) {
             try {
-                await writeSecret(SUMMARIZE_OPENROUTER_SECRET_SLOT, value);
-                await readSecretState(); // Refresh in-memory secret_state
-                toastr.success('OpenRouter summarization API key saved (ST secrets)');
+                await writeSecret(SECRET_KEYS.OPENROUTER, value);
+                await readSecretState();
+                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
             } catch (err) {
-                console.error('[VectFox] writeSecret(SUMMARIZE_OPENROUTER_SECRET_SLOT) failed:', err);
+                console.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
                 toastr.error('Failed to save OpenRouter key — see console');
                 return;
             }
@@ -2365,19 +2350,19 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // AgentMode OpenRouter API key — stored in ST secret_state (H-1 fix 2026-05-24)
-    // Override slot — empty means inherit from the summarize key. Reading
-    // via getAgenticOpenRouterKey returns only the override (no inheritance);
-    // the empty state correctly displays as "inherit summarize key".
+    // AgentMode OpenRouter input — writes to SECRET_KEYS.OPENROUTER
+    // (same shared slot as Embedding + Summarize inputs). Per the 2026-05-25
+    // architecture pivot, the "override" semantics are gone — there's now
+    // ONE OpenRouter key everywhere.
     const updateAgenticORKeyDisplay = () => {
-        const savedKey = getAgenticOpenRouterKey(settings);
+        const savedKey = getOpenRouterApiKey(settings);
         if (savedKey) {
             const masked = savedKey.length > 4
                 ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
                 : '*'.repeat(savedKey.length);
-            $('#VectFox_agentic_openrouter_apikey').attr('placeholder', `Key saved: ${masked}`);
+            $('#VectFox_agentic_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + Summarize)`);
         } else {
-            $('#VectFox_agentic_openrouter_apikey').attr('placeholder', '(empty → inherit summarize key)');
+            $('#VectFox_agentic_openrouter_apikey').attr('placeholder', 'Paste OpenRouter key (shared with Embedding + Summarize)');
         }
     };
     updateAgenticORKeyDisplay();
@@ -2385,12 +2370,12 @@ function bindSettingsEvents(settings, callbacks) {
         const value = String($(this).val()).trim();
         if (value) {
             try {
-                await writeSecret(AGENTIC_OPENROUTER_SECRET_SLOT, value);
+                await writeSecret(SECRET_KEYS.OPENROUTER, value);
                 await readSecretState();
-                toastr.success('AgentMode OpenRouter key saved (ST secrets)');
+                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
             } catch (err) {
-                console.error('[VectFox] writeSecret(AGENTIC_OPENROUTER_SECRET_SLOT) failed:', err);
-                toastr.error('Failed to save AgentMode OpenRouter key — see console');
+                console.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
+                toastr.error('Failed to save OpenRouter key — see console');
                 return;
             }
             $(this).val('');
@@ -2406,32 +2391,28 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // AgentMode vLLM API key — stored in ST secret_state (H-1 fix 2026-05-24)
-    // Same override-slot semantics as the AgentMode OpenRouter key above.
+    // AgentMode vLLM input — writes to settings.vllm_api_key plaintext
+    // (same shared field as Embedding + Summarize inputs). Per the
+    // 2026-05-25 architecture pivot: ONE vLLM key everywhere.
     const updateAgenticVllmKeyDisplay = () => {
-        const savedKey = getAgenticVllmKey(settings);
+        const savedKey = getVllmApiKey(settings);
         if (savedKey) {
             const masked = savedKey.length > 4
                 ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
                 : '*'.repeat(savedKey.length);
-            $('#VectFox_agentic_vllm_apikey').attr('placeholder', `Key saved: ${masked}`);
+            $('#VectFox_agentic_vllm_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + Summarize)`);
         } else {
-            $('#VectFox_agentic_vllm_apikey').attr('placeholder', '(empty → inherit summarize key)');
+            $('#VectFox_agentic_vllm_apikey').attr('placeholder', 'Paste vLLM key (shared with Embedding + Summarize)');
         }
     };
     updateAgenticVllmKeyDisplay();
-    $('#VectFox_agentic_vllm_apikey').on('change', async function() {
+    $('#VectFox_agentic_vllm_apikey').on('change', function() {
         const value = String($(this).val()).trim();
         if (value) {
-            try {
-                await writeSecret(AGENTIC_VLLM_SECRET_SLOT, value);
-                await readSecretState();
-                toastr.success('AgentMode vLLM key saved (ST secrets)');
-            } catch (err) {
-                console.error('[VectFox] writeSecret(AGENTIC_VLLM_SECRET_SLOT) failed:', err);
-                toastr.error('Failed to save AgentMode vLLM key — see console');
-                return;
-            }
+            settings.vllm_api_key = value;
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+            toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
             $(this).val('');
             updateAgenticVllmKeyDisplay();
         }
@@ -2624,12 +2605,11 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // Qdrant API key — stored in ST secret_state (H-1 phase 2 — 2026-05-24).
-    // Converted from the per-keystroke `on('input')` save pattern to the
-    // masked-paste pattern (same as OpenRouter/vLLM keys): user pastes,
-    // we writeSecret on blur (`change`), clear the input, show masked
-    // placeholder. Per-keystroke writes to ST secrets would hammer the
-    // disk; one write per key entry is enough.
+    // Qdrant API key — plaintext in settings.qdrant_api_key
+    // 2026-05-25: reverted from the custom-slot secret_state approach
+    // (those don't round-trip). Plaintext is justified by the personal/LAN
+    // deployment scope — see Doc/dev_helper.md §15. Masked-paste UX:
+    // user pastes, we save on blur (`change`), clear input, show mask.
     const updateQdrantKeyDisplay = () => {
         const savedKey = getQdrantApiKey(settings);
         if (savedKey) {
@@ -2642,18 +2622,13 @@ function bindSettingsEvents(settings, callbacks) {
         }
     };
     updateQdrantKeyDisplay();
-    $('#VectFox_qdrant_api_key').on('change', async function() {
+    $('#VectFox_qdrant_api_key').on('change', function() {
         const value = String($(this).val()).trim();
         if (value) {
-            try {
-                await writeSecret(QDRANT_API_KEY_SECRET_SLOT, value);
-                await readSecretState();
-                toastr.success('Qdrant API key saved (ST secrets)');
-            } catch (err) {
-                console.error('[VectFox] writeSecret(QDRANT_API_KEY_SECRET_SLOT) failed:', err);
-                toastr.error('Failed to save Qdrant key — see console');
-                return;
-            }
+            settings.qdrant_api_key = value;
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+            toastr.success('Qdrant API key saved');
             $(this).val('');
             updateQdrantKeyDisplay();
         }
@@ -3332,7 +3307,9 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // Ollama API key — stored in ST secret_state (H-1 phase 2 — 2026-05-24)
+    // Ollama API key — plaintext in settings.ollama_api_key
+    // 2026-05-25: reverted from custom-slot approach (doesn't round-trip).
+    // Plaintext per personal/LAN deployment scope.
     const updateOllamaKeyDisplay = () => {
         const savedKey = getOllamaApiKey(settings);
         if (savedKey) {
@@ -3345,18 +3322,13 @@ function bindSettingsEvents(settings, callbacks) {
         }
     };
     updateOllamaKeyDisplay();
-    $('#VectFox_ollama_api_key').on('change', async function() {
+    $('#VectFox_ollama_api_key').on('change', function() {
         const value = String($(this).val()).trim();
         if (value) {
-            try {
-                await writeSecret(OLLAMA_API_KEY_SECRET_SLOT, value);
-                await readSecretState();
-                toastr.success('Ollama API key saved (ST secrets)');
-            } catch (err) {
-                console.error('[VectFox] writeSecret(OLLAMA_API_KEY_SECRET_SLOT) failed:', err);
-                toastr.error('Failed to save Ollama key — see console');
-                return;
-            }
+            settings.ollama_api_key = value;
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+            toastr.success('Ollama API key saved');
             $(this).val('');
             updateOllamaKeyDisplay();
         }
@@ -3704,32 +3676,28 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // vLLM API key (embedding side) — stored in ST secret_state (H-1 phase 2 — 2026-05-24)
-    // Distinct from the SUMMARIZE vLLM key (separate dedicated slot).
+    // vLLM API key (embedding input) — plaintext in settings.vllm_api_key
+    // Same shared field as Summarize + AgentMode vLLM inputs. One key
+    // across all three uses. Per personal/LAN deployment scope.
     const updateVllmKeyDisplay = () => {
         const savedKey = getVllmApiKey(settings);
         if (savedKey) {
             const masked = savedKey.length > 4
                 ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
                 : '*'.repeat(savedKey.length);
-            $('#VectFox_vllm_api_key').attr('placeholder', `Key saved: ${masked}`);
+            $('#VectFox_vllm_api_key').attr('placeholder', `Key saved: ${masked} (shared with Summarize + AgentMode)`);
         } else {
-            $('#VectFox_vllm_api_key').attr('placeholder', 'Leave blank for local / no-auth deployments');
+            $('#VectFox_vllm_api_key').attr('placeholder', 'Leave blank for local / no-auth (shared with Summarize + AgentMode)');
         }
     };
     updateVllmKeyDisplay();
-    $('#VectFox_vllm_api_key').on('change', async function() {
+    $('#VectFox_vllm_api_key').on('change', function() {
         const value = String($(this).val()).trim();
         if (value) {
-            try {
-                await writeSecret(VLLM_API_KEY_SECRET_SLOT, value);
-                await readSecretState();
-                toastr.success('vLLM API key saved (ST secrets)');
-            } catch (err) {
-                console.error('[VectFox] writeSecret(VLLM_API_KEY_SECRET_SLOT) failed:', err);
-                toastr.error('Failed to save vLLM key — see console');
-                return;
-            }
+            settings.vllm_api_key = value;
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+            toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
             $(this).val('');
             updateVllmKeyDisplay();
         }
@@ -3767,12 +3735,9 @@ function bindSettingsEvents(settings, callbacks) {
         try {
             if (!_openrouterModelCache) {
                 const headers = { 'Content-Type': 'application/json' };
-                // Reads from secret_state[SECRET_KEYS.OPENROUTER] (canonical)
-                // with legacy-plaintext fallback. Post H-1 phase 2 fix —
-                // the embedding write path no longer dual-stores to
-                // settings.openrouter_api_key, so reading from settings
-                // directly here would silently lose auth for fresh saves.
-                const apiKey = getEmbeddingOpenRouterKey(settings);
+                // ONE OpenRouter key — same getOpenRouterApiKey helper as
+                // the embedding/summarize/agentic readers all use.
+                const apiKey = getOpenRouterApiKey(settings);
                 if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
                 // Embedding models use output_modalities=embeddings — not in the standard list
                 const [embResp, allResp] = await Promise.all([

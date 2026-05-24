@@ -15,7 +15,7 @@
  * ============================================================================
  */
 
-import { getSummarizeOpenRouterKey, getSummarizeVllmKey } from './api-keys.js';
+import { getOpenRouterApiKey, getVllmApiKey } from './api-keys.js';
 import { getDefaultSummarizePrompt } from './prompts-i18n.js';
 
 /**
@@ -95,7 +95,7 @@ export function getSummarizationConfigFingerprint(settings = {}) {
 
     if (provider === 'vllm') {
         const url = (settings?.summarize_vllm_url || '').trim();
-        const key = getSummarizeVllmKey(settings);
+        const key = getVllmApiKey(settings);
         const keySig = key ? `${key.length}:${key.slice(0, 2)}:${key.slice(-2)}` : 'missing';
         return `vllm|${url}|${keySig}`;
     }
@@ -196,11 +196,11 @@ function _extractReply(data) {
     return data?.choices?.[0]?.message?.content?.trim() || null;
 }
 
-// _getOpenRouterApiKey was inlined here pre-H-1; the resolution logic now
-// lives in core/api-keys.js::getSummarizeOpenRouterKey (single source of
-// truth shared with eventbase-extractor + agentic-retrieval). Kept as a
-// thin local alias so the existing internal call sites below stay terse.
-const _getOpenRouterApiKey = getSummarizeOpenRouterKey;
+// _getOpenRouterApiKey was inlined here pre-H-1; now an alias for the
+// canonical single-key helper. ONE OpenRouter key shared across
+// embedding/summarize/agentic — see core/api-keys.js docstring for the
+// architecture pivot rationale (custom secret_state slots don't round-trip).
+const _getOpenRouterApiKey = getOpenRouterApiKey;
 
 async function _callOpenRouter(prompt, model, settings, originalLength, maxTokens = DEFAULT_MAX_TOKENS, timeoutMs = DEFAULT_TIMEOUT_MS) {
     const apiKey = _getOpenRouterApiKey(settings);
@@ -255,7 +255,7 @@ async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS
     }
 
     const headers = { 'Content-Type': 'application/json' };
-    const apiKey = getSummarizeVllmKey(settings);
+    const apiKey = getVllmApiKey(settings);
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {

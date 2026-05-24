@@ -11,7 +11,7 @@
  * ============================================================================
  */
 
-import { getSummarizeOpenRouterKey, getSummarizeVllmKey } from './api-keys.js';
+import { getOpenRouterApiKey, getVllmApiKey } from './api-keys.js';
 import {
     EVENT_TYPES,
     EventBaseExtractionError,
@@ -40,11 +40,10 @@ const DEFAULT_TIMEOUT_MS = 60000;
  * @param {object} settings
  * @returns {string}
  */
-// _getOpenRouterApiKey lived inline here pre-H-1; the resolution logic now
-// lives in core/api-keys.js::getSummarizeOpenRouterKey (single source of
-// truth shared with summarizer + agentic-retrieval). Thin local alias so
-// existing call sites stay terse.
-const _getOpenRouterApiKey = getSummarizeOpenRouterKey;
+// _getOpenRouterApiKey lived inline here pre-H-1; now an alias for the
+// canonical single-key helper. ONE OpenRouter key shared across
+// embedding/summarize/agentic — see core/api-keys.js docstring.
+const _getOpenRouterApiKey = getOpenRouterApiKey;
 
 // ---------------------------------------------------------------------------
 // Response body builder
@@ -378,7 +377,7 @@ async function _callVLLM(prompt, settings, windowIndex) {
     const timeoutMs = settings.eventbase_timeout_ms || DEFAULT_TIMEOUT_MS;
 
     const headers = { 'Content-Type': 'application/json' };
-    const apiKey = getSummarizeVllmKey(settings);
+    const apiKey = getVllmApiKey(settings);
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {

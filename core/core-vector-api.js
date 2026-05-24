@@ -26,6 +26,9 @@ import { getRequestHeaders } from '../../../../../script.js';
 import { extension_settings, modules } from '../../../../extensions.js';
 import { secret_state } from '../../../../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
+// One vLLM key for embedding + summarize + agentic — getVllmApiKey reads
+// the canonical settings.vllm_api_key. getOllamaApiKey reads its
+// canonical settings.ollama_api_key. Both plaintext per personal-use scope.
 import { getOllamaApiKey, getVllmApiKey } from './api-keys.js';
 import { oai_settings } from '../../../../openai.js';
 import { isWebLlmSupported } from '../../../shared.js';
