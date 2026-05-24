@@ -50,7 +50,7 @@ import { existsSync } from 'fs';
 // This override only affects THIS test file — it doesn't mutate the config
 // for any other suite.
 // ---------------------------------------------------------------------------
-const TEST_TARGET_URL = 'http://localhost:8000';
+const TEST_TARGET_URL = null;
 
 if (TEST_TARGET_URL) {
     test.use({ baseURL: TEST_TARGET_URL });
@@ -284,37 +284,130 @@ let _pluginAvailableCache = null;
 async function isSimilharityPluginAvailable() {
     if (_pluginAvailableCache !== null) return _pluginAvailableCache;
     try {
-        _pluginAvailableCache = await sharedPage.evaluate(async () => {
+        const probe = await sharedPage.evaluate(async () => {
             try {
-                const resp = await fetch('/api/plugins/similharity/probe', { method: 'GET' });
-                // ST's generic 404 page (route not registered = plugin not
-                // installed/enabled) is text/html. Any other content-type
-                // means the request reached the plugin route table — even a
-                // 404 JSON inside the plugin counts as "plugin installed".
+                // Hit the plugin's `/health` endpoint — a real route the
+                // plugin registers (similharity/index.js:526) that returns
+                // `{ status: 'ok', plugin, version, backends: [...] }`.
+                const resp = await fetch('/api/plugins/similharity/health', { method: 'GET' });
+                const status = resp.status;
                 const ct = resp.headers.get('content-type') || '';
-                return !ct.includes('text/html');
-            } catch { return false; }
+                if (!resp.ok) return { ok: false, status, contentType: ct, body: null };
+                const data = await resp.json().catch(() => null);
+                return { ok: data?.status === 'ok', status, contentType: ct, body: data };
+            } catch (e) { return { ok: false, error: e.message }; }
         });
-    } catch { _pluginAvailableCache = false; }
+        _pluginAvailableCache = !!probe?.ok;
+        console.log(`[probe] plugin: status=${probe.status ?? 'n/a'}, available=${_pluginAvailableCache}, body=${JSON.stringify(probe.body)}${probe.error ? `, error=${probe.error}` : ''}`);
+    } catch (e) {
+        _pluginAvailableCache = false;
+        console.log(`[probe] plugin: probe threw at page-eval level: ${e.message}`);
+    }
     return !!_pluginAvailableCache;
 }
 
+let _qdrantConfigCache = null;
 async function hasQdrantConfig() {
+    if (_qdrantConfigCache !== null) return _qdrantConfigCache;
     try {
-        return await sharedPage.evaluate(async () => {
+        const result = await sharedPage.evaluate(async () => {
             const { extension_settings } = await import('/scripts/extensions.js');
             const vf = extension_settings?.vectfox;
-            return !!(vf?.qdrant_url || vf?.qdrant_host);
+            return {
+                hasConfig: !!(vf?.qdrant_url || vf?.qdrant_host),
+                qdrant_url: vf?.qdrant_url || null,
+                qdrant_host: vf?.qdrant_host || null,
+                qdrant_port: vf?.qdrant_port || null,
+                qdrant_use_cloud: vf?.qdrant_use_cloud || false,
+            };
         });
-    } catch { return false; }
+        console.log(`[probe] qdrant config: hasConfig=${result.hasConfig}, url=${result.qdrant_url || '(unset)'}, host=${result.qdrant_host || '(unset)'}, port=${result.qdrant_port || '(default 6333)'}, useCloud=${result.qdrant_use_cloud}`);
+        _qdrantConfigCache = result.hasConfig;
+    } catch (e) {
+        console.log(`[probe] qdrant config: probe threw: ${e.message}`);
+        _qdrantConfigCache = false;
+    }
+    return !!_qdrantConfigCache;
+}
+
+/**
+ * Probe whether qdrant is actually reachable. Sends the user's qdrant
+ * config (URL/host/port from VectFox settings) to the plugin's
+ * `/backend/init/qdrant` route — this is the same init flow QdrantBackend
+ * uses on every fresh page load. If init succeeds, qdrant is reachable.
+ * If it fails (qdrant server down, wrong port, container not running),
+ * the test caller treats this as "user has config but isn't actively
+ * using qdrant" and skips with a WARNING — not a hard failure.
+ *
+ * Why not just let the test fail loudly when qdrant is down? Because
+ * users in case 2 (plugin installed, qdrant config present but not used)
+ * shouldn't see test FAILURES when they don't even care about qdrant.
+ * A common scenario: user set up qdrant once, took it down, kept the
+ * config in VectFox settings. They're now a pure standard-backend user.
+ * Hard-failing on qdrant tests would be confusing UX.
+ *
+ * Cached per page like the plugin probe.
+ */
+let _qdrantReachableCache = null;
+async function isQdrantReachable() {
+    if (_qdrantReachableCache !== null) return _qdrantReachableCache;
+    try {
+        const probe = await sharedPage.evaluate(async () => {
+            try {
+                const { extension_settings } = await import('/scripts/extensions.js');
+                const vf = extension_settings?.vectfox;
+                if (!vf) return { ok: false, reason: 'no_settings' };
+                // Use ST's getRequestHeaders — it includes the CSRF token that
+                // ST's auth middleware requires for POST. Without this, the
+                // probe gets 403 Forbidden from Express's CSRF guard and
+                // misclassifies qdrant as "unreachable" even when it's up.
+                // This is the same header-source every other VectFox plugin
+                // call uses (qdrant.js, standard.js, collection-export.js...).
+                const { getRequestHeaders } = await import('/script.js');
+                // Mirror QdrantBackend.initialize's config-building logic.
+                const config = vf.qdrant_use_cloud
+                    ? { url: vf.qdrant_url || null, apiKey: vf.qdrant_api_key || null, host: null, port: null }
+                    : { host: vf.qdrant_host || 'localhost', port: vf.qdrant_port || 6333, url: null, apiKey: null };
+                const resp = await fetch('/api/plugins/similharity/backend/init/qdrant', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify(config),
+                });
+                const status = resp.status;
+                if (!resp.ok) {
+                    const errBody = await resp.text().catch(() => '<no body>');
+                    return { ok: false, status, sentConfig: config, errBody: errBody.slice(0, 200) };
+                }
+                const data = await resp.json().catch(() => null);
+                return { ok: data?.success === true, status, sentConfig: config, body: data };
+            } catch (e) { return { ok: false, error: e.message }; }
+        });
+        _qdrantReachableCache = !!probe?.ok;
+        if (probe?.ok) {
+            console.log(`[probe] qdrant reachable: status=${probe.status}, sentConfig=${JSON.stringify(probe.sentConfig)}, response=${JSON.stringify(probe.body)}`);
+        } else {
+            console.log(`[probe] qdrant NOT reachable: status=${probe.status ?? 'n/a'}, sentConfig=${JSON.stringify(probe.sentConfig)}, errBody="${probe.errBody || ''}"${probe.error ? `, error=${probe.error}` : ''}`);
+        }
+    } catch (e) {
+        _qdrantReachableCache = false;
+        console.log(`[probe] qdrant reachable: probe threw at page-eval level: ${e.message}`);
+    }
+    return !!_qdrantReachableCache;
 }
 
 /**
  * Soft-skip helper for tests that require the qdrant pipeline. Skips cleanly
- * (test marked ⏭️ in report, not failed) when either:
- *   1. The Similharity plugin isn't installed (qdrant requires it — see
- *      Doc/dev_helper.md §15 plugin-dependency policy).
- *   2. VectFox settings have no `qdrant_url` / `qdrant_host` configured.
+ * (test marked ⏭️ in report, not failed) when ANY of these are true:
+ *
+ *   1. The Similharity plugin isn't installed — qdrant requires it
+ *      (see Doc/dev_helper.md §15 plugin-dependency policy).
+ *   2. VectFox settings have no `qdrant_url` / `qdrant_host` configured —
+ *      this is case 2 in §15's 3-environment matrix (plugin installed but
+ *      user runs standard backend only).
+ *   3. Qdrant config is present but qdrant is not reachable — user had
+ *      qdrant at some point but isn't actively using it now. Emits a
+ *      WARNING (not a failure) because nothing is "wrong" — the user
+ *      just doesn't use qdrant.
  *
  * Use at the very top of any qdrant-requiring test body.
  */
@@ -323,7 +416,10 @@ async function skipIfQdrantUnavailable() {
         test.skip(true, 'Similharity plugin not installed — qdrant requires it. See Doc/dev_helper.md §15.');
     }
     if (!(await hasQdrantConfig())) {
-        test.skip(true, 'Qdrant URL/host not configured in VectFox settings.');
+        test.skip(true, 'Qdrant URL/host not configured in VectFox settings (case 2: plugin-only standard backend usage).');
+    }
+    if (!(await isQdrantReachable())) {
+        test.skip(true, 'WARNING: Qdrant config present but server is unreachable — user not actively running qdrant. Skipping qdrant tests cleanly so the rest of the suite continues. If you DO want qdrant tests to run, check that your qdrant container/server is up.');
     }
 }
 
@@ -998,28 +1094,37 @@ test('TEST 006 — Standard EventBase: insert + parseEmbedText recovery', async 
             console.log(`${TEST} Query: ${items.length} result(s)`);
 
             // For the standard (vectra) backend, structured event fields live INSIDE the
-            // embed text — they have to be recovered via parseEmbedText. Verify both of
-            // our inserted events come back AND their event_type parses out cleanly.
-            const expectedIds = new Set(testEvents.map(e => e.event_id));
-            const foundIds = new Set();
+            // embed text — they have to be recovered via parseEmbedText. Match by
+            // `summary` (which IS in the embed text and round-trips via parseEmbedText)
+            // rather than `event_id` (which is a metadata-only field — not in the embed
+            // text, and stripped by native ST API on no-plugin standard backend).
+            //
+            // The no-plugin path is the strictest contract: only fields that survive
+            // the embed-text round-trip are guaranteed. event_id, importance, persist,
+            // chat_uuid etc. all need plugin-side metadata storage. The test's purpose
+            // is "parseEmbedText recovery" — so we verify the embed-text contract.
+            const expectedSummaries = new Set(testEvents.map(e => e.summary));
+            const foundSummaries = new Set();
             let recoveredCount = 0;
             for (const m of items) {
                 const r = parseEmbedText(m.text || '');
-                if (m.event_id && expectedIds.has(m.event_id)) foundIds.add(m.event_id);
+                if (r.summary && expectedSummaries.has(r.summary)) {
+                    foundSummaries.add(r.summary);
+                }
                 if (r.event_type) {
                     recoveredCount++;
-                    console.log(`  ✓ ${m.event_id || '(no event_id)'}  type="${r.event_type}"  summary="${(r.summary||'').slice(0,50)}"`);
+                    console.log(`  ✓ ${m.event_id || '(no event_id — plugin metadata not available)'}  type="${r.event_type}"  summary="${(r.summary||'').slice(0,50)}"`);
                 }
             }
 
-            const missing = [...expectedIds].filter(id => !foundIds.has(id));
-            if (missing.length) { console.error(`${TEST} [FAIL] ${missing.length} inserted event(s) not retrieved: ${missing.join(', ')}`); return; }
-            if (recoveredCount < expectedIds.size) {
-                console.error(`${TEST} [FAIL] parseEmbedText recovered event_type for only ${recoveredCount}/${expectedIds.size} inserted events`);
+            const missing = [...expectedSummaries].filter(s => !foundSummaries.has(s));
+            if (missing.length) { console.error(`${TEST} [FAIL] ${missing.length} inserted event summary/summaries not recovered by parseEmbedText: ${missing.map(s => s.slice(0,60)).join(' | ')}`); return; }
+            if (recoveredCount < expectedSummaries.size) {
+                console.error(`${TEST} [FAIL] parseEmbedText recovered event_type for only ${recoveredCount}/${expectedSummaries.size} inserted events`);
                 return;
             }
 
-            console.log(`${TEST} [PASS] All ${expectedIds.size} inserted event(s) retrieved, parseEmbedText recovered event_type cleanly`);
+            console.log(`${TEST} [PASS] All ${expectedSummaries.size} inserted event(s) recovered via parseEmbedText (event_type + summary intact)`);
         } finally {
             try {
                 await deleteCollection(collectionId, settings, registryKey);
@@ -2229,6 +2334,860 @@ test('TEST 013 — Synthetic E2E qdrant: lorebook + EventBase round-trip', async
                 } catch (cleanupErr) {
                     console.warn(`${TEST} [WARN] Lorebook cleanup failed: ${cleanupErr.message}`);
                 }
+            }
+        }
+    });
+    assertPassed(logs);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  TEST 014 — Auto-sync backfill: fingerprint cache prevents duplicate windows
+// ═══════════════════════════════════════════════════════════════════
+//
+// Why this test exists:
+//   Auto-sync's correctness rests on the WINDOW FINGERPRINT CACHE (see
+//   Doc/dev_helper.md §4 and Doc/collection_helper.md "Chat Auto-Sync").
+//   Without it, every auto-sync trigger would re-extract every window from
+//   the beginning of chat — burning LLM tokens and duplicating events.
+//
+//   This is the "smart marker" that makes auto-sync safe: each completed
+//   window's hashes are joined into a fingerprint string and stored in
+//   `_windowCacheSet` (in-memory Set) + `extension_settings.vectfox
+//   .eventbase_extracted_windows[uuid]` (persisted array). On the next
+//   ingestion call, isLastWindowExtracted does a quick-exit, and
+//   isWindowAlreadyExtracted gates each window. Already-done windows are
+//   skipped.
+//
+//   User scenario this exercises:
+//     1. Vectorize a chat at 2 messages (window size = 2) → window [0-1] done
+//     2. User replies twice — chat now has 6 messages
+//     3. User checks "Enable Auto-Sync" → next trigger should backfill the
+//        4 new messages (windows [2-3] and [4-5]) WITHOUT re-processing the
+//        original [0-1] window.
+//
+//   We test the dedup CONTRACT directly — fast and deterministic. The
+//   integration of fingerprint cache with the LLM extraction pipeline is
+//   already covered by TEST 003/007/013 which exercise the full
+//   runEventBaseIngestion path on real chats.
+//
+// What this test proves:
+//   - markWindowExtracted writes to BOTH the in-memory Set and the
+//     persisted array.
+//   - isWindowAlreadyExtracted correctly reports true for marked windows
+//     and false for unmarked ones (the per-window dedup gate).
+//   - isLastWindowExtracted returns false when the last window is unmarked
+//     (work to do → ingestion runs) and true when every window is marked
+//     (quick-exit → ingestion no-ops).
+//   - The persisted array length equals the expected window count
+//     (survives page reload — key correctness property for auto-sync
+//     across browser restarts).
+//   - clearWindowCacheForChat wipes both tiers (cleanup contract).
+//
+// Boundary rules (same as TEST 009/010/011):
+//   ✗ DO NOT mutate extension_settings.vectfox at a global level beyond
+//     the synthetic test UUID's cache entry (cleaned up in finally).
+//   ✓ DO use a synthetic chat UUID prefixed with __vf_playwright_test_
+//     so beforeAll cleanup catches any leftover from a crashed run.
+test('TEST 014 — Auto-sync backfill: fingerprint cache prevents duplicate windows', async () => {
+    const logs = await runTestInPage(async () => {
+        const TEST = 'TEST 014 [AutoSyncDedup]';
+        const base = '/scripts/extensions/third-party/VectFox/';
+        const {
+            markWindowExtracted,
+            isWindowAlreadyExtracted,
+            isLastWindowExtracted,
+            clearWindowCacheForChat,
+        } = await import(base + 'core/eventbase-store.js');
+        const { extension_settings } = await import('/scripts/extensions.js');
+
+        // Synthetic test UUID — never collides with real chats. Marker prefix
+        // matches beforeAll's cleanup pattern so a crashed run leaves no orphans.
+        const testUUID = '__vf_playwright_test_014__autosync_dedup';
+        const windowSize = 2;
+        const step = 2;
+
+        // Build a fake 6-message chat. The hashes are arbitrary integers — what
+        // matters is that they're stable across the test and unique per message,
+        // which matches the windowFingerprint contract (sorted hashes joined).
+        const messages = [
+            { mes: 'human msg 0', name: 'You' },
+            { mes: 'ai msg 0',    name: 'AI'  },
+            { mes: 'human msg 1', name: 'You' },
+            { mes: 'ai msg 1',    name: 'AI'  },
+            { mes: 'human msg 2', name: 'You' },
+            { mes: 'ai msg 2',    name: 'AI'  },
+        ];
+        const hashes = [100, 200, 300, 400, 500, 600];
+        const hashFn = (m) => hashes[messages.indexOf(m)];
+        const win01 = [hashes[0], hashes[1]];   // initial vectorization window
+        const win23 = [hashes[2], hashes[3]];   // backfill window 1
+        const win45 = [hashes[4], hashes[5]];   // backfill window 2 (last)
+
+        try {
+            // ═══ Phase 1 — initial state: chat at 2 messages, window [0-1] done ═══
+            console.log(`${TEST} Phase 1: simulating initial vectorization (2 messages → window [0-1])`);
+            markWindowExtracted(win01, testUUID);
+
+            const phase1WindowDone = await isWindowAlreadyExtracted(win01, null, {}, testUUID);
+            if (!phase1WindowDone) {
+                console.error(`${TEST} [FAIL] Phase 1: marked window [0-1] reads back as NOT extracted — markWindowExtracted broken`);
+                return;
+            }
+            console.log(`${TEST} Phase 1 ✓ window [0-1] correctly in cache`);
+
+            // ═══ Phase 2 — chat grows to 6 messages, NEW windows not yet marked ═══
+            console.log(`${TEST} Phase 2: chat grew to 6 messages — verifying new windows [2-3] and [4-5] are NOT in cache`);
+            const phase2Win23 = await isWindowAlreadyExtracted(win23, null, {}, testUUID);
+            const phase2Win45 = await isWindowAlreadyExtracted(win45, null, {}, testUUID);
+            if (phase2Win23) {
+                console.error(`${TEST} [FAIL] Phase 2: window [2-3] reads as extracted but was never marked — false positive in dedup gate`);
+                return;
+            }
+            if (phase2Win45) {
+                console.error(`${TEST} [FAIL] Phase 2: window [4-5] reads as extracted but was never marked — false positive in dedup gate`);
+                return;
+            }
+            console.log(`${TEST} Phase 2 ✓ unmarked windows correctly report not-extracted`);
+
+            // ═══ Phase 3 — quick-exit gate should report MORE WORK TO DO ═══
+            // This is the gate runEventBaseIngestion checks first. If it
+            // returned true here, auto-sync would no-op even though 4 messages
+            // are unprocessed — exactly the bug the smart marker prevents.
+            console.log(`${TEST} Phase 3: isLastWindowExtracted should return false (last window [4-5] unmarked → work to do)`);
+            const quickExitBefore = isLastWindowExtracted(messages, windowSize, step, testUUID, hashFn);
+            if (quickExitBefore) {
+                console.error(`${TEST} [FAIL] Phase 3: quick-exit returned true despite last window [4-5] being unmarked — auto-sync would skip the 4-message backfill`);
+                return;
+            }
+            console.log(`${TEST} Phase 3 ✓ quick-exit correctly reports work pending`);
+
+            // ═══ Phase 4 — simulate the auto-sync ingestion marking the 2 new windows ═══
+            console.log(`${TEST} Phase 4: simulating auto-sync sweep — marking windows [2-3] and [4-5]`);
+            markWindowExtracted(win23, testUUID);
+            markWindowExtracted(win45, testUUID);
+
+            const phase4Win23 = await isWindowAlreadyExtracted(win23, null, {}, testUUID);
+            const phase4Win45 = await isWindowAlreadyExtracted(win45, null, {}, testUUID);
+            if (!phase4Win23 || !phase4Win45) {
+                console.error(`${TEST} [FAIL] Phase 4: after marking, windows [2-3] (${phase4Win23}) or [4-5] (${phase4Win45}) still report as not-extracted`);
+                return;
+            }
+            console.log(`${TEST} Phase 4 ✓ all 3 windows now marked in cache`);
+
+            // ═══ Phase 5 — quick-exit should now report NOTHING TO DO ═══
+            // This proves the fingerprint cache prevents the next auto-sync
+            // trigger from re-processing already-done windows. Without this,
+            // every chat message would re-extract the entire chat — burning
+            // LLM tokens linearly with each new message.
+            console.log(`${TEST} Phase 5: isLastWindowExtracted should return true (all windows marked → next trigger no-ops)`);
+            const quickExitAfter = isLastWindowExtracted(messages, windowSize, step, testUUID, hashFn);
+            if (!quickExitAfter) {
+                console.error(`${TEST} [FAIL] Phase 5: quick-exit returned false despite all 3 windows marked — next auto-sync would re-process work`);
+                return;
+            }
+            console.log(`${TEST} Phase 5 ✓ quick-exit correctly reports nothing pending`);
+
+            // ═══ Phase 6 — persisted array matches in-memory state ═══
+            // The Set is rebuilt from this array on the next page load, so
+            // length-correctness here is what makes auto-sync survive a reload.
+            console.log(`${TEST} Phase 6: verifying persisted array on disk matches the in-memory Set`);
+            const persisted = extension_settings?.vectfox?.eventbase_extracted_windows?.[testUUID];
+            if (!Array.isArray(persisted)) {
+                console.error(`${TEST} [FAIL] Phase 6: persisted entry is not an array — type=${typeof persisted}`);
+                return;
+            }
+            if (persisted.length !== 3) {
+                console.error(`${TEST} [FAIL] Phase 6: persisted array length=${persisted.length}, expected 3 (one fingerprint per window)`);
+                return;
+            }
+            console.log(`${TEST} Phase 6 ✓ persisted array has exactly 3 fingerprints`);
+
+            console.log(`${TEST} [PASS] Fingerprint cache correctly gates auto-sync — 2-msg → 6-msg backfill processes only the 4 new messages, never the original 2`);
+        } finally {
+            // Wipe the in-memory Set entry AND the persisted array for testUUID.
+            // Real user data is never touched — testUUID is synthetic and unique.
+            try {
+                clearWindowCacheForChat(testUUID);
+                const after = extension_settings?.vectfox?.eventbase_extracted_windows?.[testUUID];
+                if (after !== undefined) {
+                    console.warn(`${TEST} [WARN] clearWindowCacheForChat left a stale entry: ${JSON.stringify(after)}`);
+                } else {
+                    console.log(`${TEST} Cleanup ✓ fingerprint cache cleared for ${testUUID}`);
+                }
+            } catch (cleanupErr) {
+                console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`);
+            }
+        }
+    });
+    assertPassed(logs);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  TEST 015 — Auto-sync window-size change: start marker filters obsolete windows
+// ═══════════════════════════════════════════════════════════════════
+//
+// Why this test exists:
+//   The window fingerprint cache (covered by TEST 014) gives per-window
+//   dedup safety as long as the window size doesn't change. If the user
+//   vectorizes a chat at windowSize=2 and later changes to windowSize=4,
+//   the fingerprints don't match anymore (different size = different
+//   sorted-hash join), so the cache reports "not extracted" for every new
+//   window — auto-sync would naively re-process the entire chat at the new
+//   window size, duplicating events.
+//
+//   The AUTO-SYNC START MARKER prevents this. When the user enables
+//   auto-sync, `stampAutoSyncMarker` records a message-index threshold in
+//   `extension_settings.vectfox.eventbase_autosync_start_marker[chatUUID]`.
+//   On every auto-sync run, `runEventBaseIngestion` filters its window
+//   list with `windows.filter(w => w.start >= marker)` — only windows that
+//   START at or after the marker get processed. Windows from the
+//   pre-marker era (which were already covered by the prior, smaller-window
+//   extractions) get filtered OUT safely.
+//
+//   Smart-placement logic in stampAutoSyncMarker:
+//     - Collection non-empty: marker = max(source_window_end) + 1
+//       (backfill the gap between last-covered message and chat tail at
+//       the new window size)
+//     - Collection empty: marker = chatLength
+//       (auto-sync starts "from now on" — no full re-extraction of a long
+//       pre-existing chat that was never vectorized)
+//
+//   Together with TEST 014's fingerprint cache test, this proves the
+//   two-layer safety story:
+//     Layer 1 (TEST 014) — fingerprint cache: per-window dedup at same size
+//     Layer 2 (TEST 015) — start marker:      window-size-change protection
+//
+// What this test proves:
+//   - getAutoSyncMarker returns undefined for un-stamped chats.
+//   - The marker round-trips through extension_settings storage correctly.
+//   - The window-filter pattern `w.start >= marker` excludes obsolete
+//     pre-marker windows and keeps post-marker windows. This is the EXACT
+//     filter used inside runEventBaseIngestion at the auto-sync marker
+//     block (eventbase-workflow.js ~line 170).
+//   - clearAutoSyncMarker removes the entry cleanly so the next enable
+//     stamps a fresh value for the current chat state.
+//
+// Boundary rules:
+//   ✗ DO NOT mutate extension_settings.vectfox at a global level beyond
+//     the synthetic test UUID's marker entry (cleaned up in finally).
+//   ✓ DO use a synthetic chat UUID prefixed with __vf_playwright_test_.
+test('TEST 015 — Auto-sync window-size change: start marker filters obsolete windows', async () => {
+    const logs = await runTestInPage(async () => {
+        const TEST = 'TEST 015 [AutoSyncMarker]';
+        const base = '/scripts/extensions/third-party/VectFox/';
+        const {
+            getAutoSyncMarker,
+            clearAutoSyncMarker,
+        } = await import(base + 'core/eventbase-store.js');
+        const { extension_settings } = await import('/scripts/extensions.js');
+
+        const testUUID = '__vf_playwright_test_015__autosync_marker';
+
+        try {
+            // ═══ Phase 1 — fresh UUID, no marker stamped ═══
+            console.log(`${TEST} Phase 1: getAutoSyncMarker on fresh UUID should return undefined`);
+            const initial = getAutoSyncMarker(testUUID);
+            if (initial !== undefined) {
+                console.error(`${TEST} [FAIL] Phase 1: unmarked UUID returned ${initial} instead of undefined`);
+                return;
+            }
+            console.log(`${TEST} Phase 1 ✓ no marker on fresh UUID`);
+
+            // ═══ Phase 2 — stamp marker, simulating the smart-placement output ═══
+            // Scenario: user vectorized chat at length=2 with windowSize=2.
+            // Window [0-1] was extracted, so the EventBase event has
+            // source_window_end=1. User switches to windowSize=4 and enables
+            // auto-sync. stampAutoSyncMarker would compute:
+            //   marker = max(source_window_end) + 1 = 1 + 1 = 2
+            // We simulate the result directly (the math itself is trivial;
+            // what we're testing here is the get/filter contract).
+            const stampedValue = 2;
+            if (!extension_settings.vectfox.eventbase_autosync_start_marker) {
+                extension_settings.vectfox.eventbase_autosync_start_marker = {};
+            }
+            extension_settings.vectfox.eventbase_autosync_start_marker[testUUID] = stampedValue;
+
+            const readBack = getAutoSyncMarker(testUUID);
+            if (readBack !== stampedValue) {
+                console.error(`${TEST} [FAIL] Phase 2: getAutoSyncMarker returned ${readBack}, expected ${stampedValue}`);
+                return;
+            }
+            console.log(`${TEST} Phase 2 ✓ marker=${stampedValue} stamped and read back via canonical getter`);
+
+            // ═══ Phase 3 — simulate runEventBaseIngestion's window filter ═══
+            // Now the chat has grown to 8 messages. New windowSize=4 produces:
+            //   [0-3] (start=0) — OLD content, was covered by the prior
+            //                     windowSize=2 extraction at messages 0,1.
+            //                     If re-processed here it would re-extract
+            //                     messages 0,1 → duplicate events.
+            //   [4-7] (start=4) — entirely NEW content past the marker
+            //
+            // The marker filter `w.start >= 2` should:
+            //   - Exclude [0-3] (start=0 < 2) — prevents wrong re-processing
+            //   - Keep [4-7] (start=4 >= 2) — legitimate new content backfill
+            //
+            // This is the EXACT logic at eventbase-workflow.js ~line 170-180.
+            console.log(`${TEST} Phase 3: simulating ingestion window filter for chat at 8 messages, windowSize=4`);
+            const windowsAtNewSize = [
+                { start: 0, end: 3, msgs: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }] },
+                { start: 4, end: 7, msgs: [{ id: 4 }, { id: 5 }, { id: 6 }, { id: 7 }] },
+            ];
+            const marker = getAutoSyncMarker(testUUID);
+            const filtered = windowsAtNewSize.filter(w => w.start >= marker);
+
+            if (filtered.length !== 1) {
+                console.error(`${TEST} [FAIL] Phase 3: expected 1 window after marker filter, got ${filtered.length}: ${JSON.stringify(filtered.map(w => `[${w.start}-${w.end}]`))}`);
+                return;
+            }
+            if (filtered[0].start !== 4) {
+                console.error(`${TEST} [FAIL] Phase 3: surviving window has start=${filtered[0].start}, expected 4`);
+                return;
+            }
+            console.log(`${TEST} Phase 3 ✓ marker filter excluded obsolete [0-3], kept legitimate [4-7]`);
+
+            // ═══ Phase 4 — boundary check: start === marker should be KEPT ═══
+            // The filter uses `>=` not `>`. This matters because
+            // stampAutoSyncMarker uses max(source_window_end)+1, so the next
+            // legitimate window starts exactly AT the marker. A `>` filter
+            // would skip the first new window — extraction gap.
+            console.log(`${TEST} Phase 4: verifying boundary inclusion — start === marker survives the filter`);
+            const boundaryWindows = [
+                { start: 1, end: 4, msgs: [] },  // start=1 < 2 → out
+                { start: 2, end: 5, msgs: [] },  // start=2 === marker → in
+                { start: 3, end: 6, msgs: [] },  // start=3 > 2 → in
+            ];
+            const boundaryFiltered = boundaryWindows.filter(w => w.start >= marker);
+            if (boundaryFiltered.length !== 2) {
+                console.error(`${TEST} [FAIL] Phase 4: expected 2 windows (start=2 and start=3), got ${boundaryFiltered.length}`);
+                return;
+            }
+            if (boundaryFiltered[0].start !== 2 || boundaryFiltered[1].start !== 3) {
+                console.error(`${TEST} [FAIL] Phase 4: surviving windows have wrong starts: ${JSON.stringify(boundaryFiltered.map(w => w.start))}`);
+                return;
+            }
+            console.log(`${TEST} Phase 4 ✓ boundary at start === marker correctly included`);
+
+            // ═══ Phase 5 — clearAutoSyncMarker removes the entry ═══
+            // Called when auto-sync is disabled, so re-enabling later
+            // re-computes a fresh marker for the current chat state.
+            console.log(`${TEST} Phase 5: clearAutoSyncMarker removes the entry`);
+            clearAutoSyncMarker(testUUID);
+            const cleared = getAutoSyncMarker(testUUID);
+            if (cleared !== undefined) {
+                console.error(`${TEST} [FAIL] Phase 5: clearAutoSyncMarker left value ${cleared} — should be undefined after clear`);
+                return;
+            }
+            console.log(`${TEST} Phase 5 ✓ marker cleared, fresh re-enable would re-compute`);
+
+            console.log(`${TEST} [PASS] Auto-sync start marker correctly gates the window filter — windowSize-change protection holds: obsolete pre-marker windows excluded, post-marker windows pass through, boundary at start === marker included`);
+        } finally {
+            try {
+                clearAutoSyncMarker(testUUID);
+                const after = getAutoSyncMarker(testUUID);
+                if (after !== undefined) {
+                    console.warn(`${TEST} [WARN] clearAutoSyncMarker left a stale value: ${after}`);
+                } else {
+                    console.log(`${TEST} Cleanup ✓ marker cleared for ${testUUID}`);
+                }
+            } catch (cleanupErr) {
+                console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`);
+            }
+        }
+    });
+    assertPassed(logs);
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  TEST 016 — stampAutoSyncMarker smart placement (production-function smoke)
+// ═══════════════════════════════════════════════════════════════════
+//
+//  TEST 015 covered the marker get/clear contract and the workflow filter
+//  using simulated data. TEST 016 exercises the *production* function that
+//  actually computes the marker — `stampAutoSyncMarker(chatUUID, settings)`
+//  in core/eventbase-store.js — across its decision branches:
+//
+//    Branch A: no chatUUID                        → returns 0, no persistence
+//    Branch B: no candidates in registry          → marker = chatLength
+//    Branch C: candidates exist, no readable data → marker = chatLength (fallback)
+//    Branch D: candidates exist with source_window_end metadata
+//                                                 → marker = max(end) + 1
+//
+//  Branches A/B/C run in every environment. Branch D requires a backend that
+//  preserves item-level metadata; collection-export's insertChunksWithVectors
+//  routes standard-backend inserts through native /api/vector/insert which
+//  strips metadata, so D is only meaningful on env 3 (qdrant). Rather than
+//  bolting on a qdrant-only Phase 4 with synthetic point inserts, this test
+//  asserts the three branches that work everywhere and lets the actual
+//  max+1 arithmetic — a trivial one-line reducer — stand on its own. The
+//  high-risk parts (branch selection, the chatLength fallback in the
+//  try/catch, re-stamp overwrite) are what real regressions hit.
+//
+//  Phases:
+//    1. Branch A — empty chatUUID returns 0 sentinel, no write.
+//    2. Branch B — fresh UUID with no registered EventBase collection.
+//       Marker should equal getContext().chat.length and persist.
+//    3. Branch C — synthetic vf_eventbase_<…>_<uuid> registered, no chunks
+//       on disk. listChunks returns empty / throws → caught → fallback to
+//       chatLength.
+//    4. Re-stamp idempotency — second call overwrites the persisted value.
+//    5. Cleanup — unregister the synthetic collection, clear the marker.
+
+test('TEST 016 — stampAutoSyncMarker smart placement (production-function smoke)', async () => {
+    const logs = await runTestInPage(async () => {
+        const TEST = 'TEST 016 [AutoSyncStamp]';
+        const base = '/scripts/extensions/third-party/VectFox/';
+        const {
+            stampAutoSyncMarker,
+            getAutoSyncMarker,
+            clearAutoSyncMarker,
+            findEventBaseCollectionIdsForChat,
+        } = await import(base + 'core/eventbase-store.js');
+        const { registerCollection, unregisterCollection } = await import(base + 'core/collection-loader.js');
+        const { extension_settings } = await import('/scripts/extensions.js');
+
+        const ctx = window.SillyTavern?.getContext?.() ?? window.getContext?.() ?? {};
+        const settings = extension_settings?.vectfox || {};
+        const backend = (settings.vector_backend || 'standard').toLowerCase();
+
+        // Two distinct UUIDs so Phase 2 (no candidates) and Phase 3 (synthetic
+        // candidate) don't pollute each other's registry lookups.
+        const uuidBranchB = '__vf_playwright_test_016__no_candidate';
+        const uuidBranchC = '__vf_playwright_test_016__empty_candidate';
+        const syntheticCollectionId = `vf_eventbase_${backend}_playwright_test_016_${uuidBranchC}`;
+        const syntheticRegistryKey  = `${backend}:${syntheticCollectionId}`;
+
+        try {
+            // ═══ Phase 1 — Branch A: empty chatUUID returns 0, no write ═══
+            console.log(`${TEST} Phase 1: stampAutoSyncMarker('') should return 0 and NOT touch the marker store`);
+            // Capture any pre-existing keys so we can prove no spurious write happened.
+            const storeBefore = extension_settings?.vectfox?.eventbase_autosync_start_marker || {};
+            const keysBefore  = Object.keys(storeBefore).slice().sort();
+
+            const sentinel = await stampAutoSyncMarker('', settings);
+            if (sentinel !== 0) {
+                console.error(`${TEST} [FAIL] Phase 1: empty UUID returned ${sentinel} instead of 0`);
+                return;
+            }
+            const storeAfter = extension_settings?.vectfox?.eventbase_autosync_start_marker || {};
+            const keysAfter  = Object.keys(storeAfter).slice().sort();
+            if (keysBefore.length !== keysAfter.length ||
+                keysBefore.some((k, i) => k !== keysAfter[i])) {
+                console.error(`${TEST} [FAIL] Phase 1: marker store was mutated by an empty-UUID call. Before=${JSON.stringify(keysBefore)} After=${JSON.stringify(keysAfter)}`);
+                return;
+            }
+            console.log(`${TEST} Phase 1 ✓ Branch A early-exit: returned 0, no persistence`);
+
+            // ═══ Phase 2 — Branch B: no candidates → marker = chatLength ═══
+            console.log(`${TEST} Phase 2: Branch B — fresh UUID, no registered EventBase collection → marker should equal chat length`);
+            const chatLengthB = ctx?.chat?.length ?? 0;
+            const markerB = await stampAutoSyncMarker(uuidBranchB, settings);
+            if (markerB !== chatLengthB) {
+                console.error(`${TEST} [FAIL] Phase 2: marker=${markerB}, expected chatLength=${chatLengthB}`);
+                return;
+            }
+            const persistedB = getAutoSyncMarker(uuidBranchB);
+            if (persistedB !== markerB) {
+                console.error(`${TEST} [FAIL] Phase 2: persisted value ${persistedB} does not match returned ${markerB}`);
+                return;
+            }
+            console.log(`${TEST} Phase 2 ✓ Branch B: marker=${markerB} (chatLength=${chatLengthB}) persisted via getAutoSyncMarker`);
+
+            // ═══ Phase 3 — Branch C: synthetic candidate, no data → fallback ═══
+            console.log(`${TEST} Phase 3: Branch C — registering synthetic ${syntheticRegistryKey}; listChunks will return empty (or throw, caught) → marker should fall back to chat length`);
+            registerCollection(syntheticRegistryKey);
+
+            // Sanity: confirm the synthetic registration is actually visible
+            // to findEventBaseCollectionIdsForChat so the test exercises the
+            // intended branch (`candidates.length > 0`). If this fails the
+            // test would silently degrade into another Branch B run.
+            const candidates = findEventBaseCollectionIdsForChat(uuidBranchC, backend);
+            if (candidates.length === 0) {
+                console.error(`${TEST} [FAIL] Phase 3: synthetic registration didn't surface in findEventBaseCollectionIdsForChat — would silently re-test Branch B. Registry key was ${syntheticRegistryKey}.`);
+                return;
+            }
+
+            const chatLengthC = ctx?.chat?.length ?? 0;
+            const markerC = await stampAutoSyncMarker(uuidBranchC, settings);
+            if (markerC !== chatLengthC) {
+                console.error(`${TEST} [FAIL] Phase 3: marker=${markerC}, expected chatLength=${chatLengthC} (listChunks returned no metadata, should have fallen back). Branch C try/catch fallback may be broken.`);
+                return;
+            }
+            console.log(`${TEST} Phase 3 ✓ Branch C: marker=${markerC} (chatLength=${chatLengthC}) — try/catch fallback held; candidate present but no readable source_window_end`);
+
+            // ═══ Phase 4 — Re-stamp idempotency ═══
+            console.log(`${TEST} Phase 4: re-stamping Branch B UUID overwrites the persisted value cleanly`);
+            // Mutate the persisted value to a sentinel so we can prove the
+            // re-stamp actually wrote (not just left a stale equal value).
+            extension_settings.vectfox.eventbase_autosync_start_marker[uuidBranchB] = -999;
+            // Read back the sentinel via the canonical getter — if this fails,
+            // the pre-condition wasn't met (frozen object, missing nested key)
+            // and the rest of Phase 4 would silently pass on a no-op overwrite.
+            const sentinelReadBack = getAutoSyncMarker(uuidBranchB);
+            if (sentinelReadBack !== -999) {
+                console.error(`${TEST} [FAIL] Phase 4 pre-condition: sentinel write didn't land — getAutoSyncMarker reads ${sentinelReadBack} instead of -999. Re-stamp overwrite assertion below would be meaningless.`);
+                return;
+            }
+            const reStamped = await stampAutoSyncMarker(uuidBranchB, settings);
+            if (reStamped !== chatLengthB) {
+                console.error(`${TEST} [FAIL] Phase 4: re-stamp returned ${reStamped}, expected ${chatLengthB}`);
+                return;
+            }
+            if (getAutoSyncMarker(uuidBranchB) !== chatLengthB) {
+                console.error(`${TEST} [FAIL] Phase 4: re-stamp did not overwrite — getAutoSyncMarker still reads ${getAutoSyncMarker(uuidBranchB)} after re-stamp`);
+                return;
+            }
+            console.log(`${TEST} Phase 4 ✓ re-stamp overwrites prior value (sentinel -999 → ${chatLengthB})`);
+
+            console.log(`${TEST} [PASS] stampAutoSyncMarker smart placement holds — Branch A early-exit, Branch B no-candidate falls to chatLength, Branch C empty-candidate falls to chatLength via try/catch, re-stamp overwrites. Branch D (max(source_window_end)+1) is not asserted by this test because env-1/2 standard-backend inserts strip metadata; the one-line reducer is trivial.`);
+        } finally {
+            // Cleanup — clear markers and unregister synthetic collection.
+            try {
+                clearAutoSyncMarker(uuidBranchB);
+                clearAutoSyncMarker(uuidBranchC);
+                if (getAutoSyncMarker(uuidBranchB) !== undefined ||
+                    getAutoSyncMarker(uuidBranchC) !== undefined) {
+                    console.warn(`${TEST} [WARN] clearAutoSyncMarker left stale values: B=${getAutoSyncMarker(uuidBranchB)} C=${getAutoSyncMarker(uuidBranchC)}`);
+                }
+                try { unregisterCollection(syntheticRegistryKey); } catch {}
+                try { unregisterCollection(syntheticCollectionId); } catch {}
+                console.log(`${TEST} Cleanup ✓ markers cleared, synthetic registration removed`);
+            } catch (cleanupErr) {
+                console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`);
+            }
+        }
+    });
+    assertPassed(logs);
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  TEST 017 — Pause button (enabled=false) blocks activation
+// ═══════════════════════════════════════════════════════════════════
+//
+//  `isCollectionEnabled` / `setCollectionEnabled` are documented in
+//  Doc/collection_helper.md as the hard kill switch — priority 1 of
+//  `shouldCollectionActivate`. Even when a collection is locked to the
+//  current chat (priority 4), `enabled=false` MUST override and block
+//  activation. Easy to break during a future activation-priority refactor;
+//  no existing test asserts this invariant.
+//
+//  This test runs in every environment because it's pure metadata —
+//  no backend insert, no chunk listing, no LLM call.
+//
+//  Phases:
+//    1. Default state: a fresh registered collection (no `enabled` meta
+//       written) reports `isCollectionEnabled === true`.
+//    2. Baseline: with a chat lock pinned, `shouldCollectionActivate`
+//       returns true (priority-4 path).
+//    3. Pause: `setCollectionEnabled(key, false)` ⇒ `isCollectionEnabled`
+//       flips to false AND `shouldCollectionActivate` returns false even
+//       though the lock is still in place. Priority 1 overrides priority 4.
+//    4. Re-enable: `setCollectionEnabled(key, true)` restores activation —
+//       lock state was never touched by the pause path.
+
+test('TEST 017 — Pause button (enabled=false) blocks activation even when locked', async () => {
+    const logs = await runTestInPage(async () => {
+        const TEST = 'TEST 017 [PauseButton]';
+        const base = '/scripts/extensions/third-party/VectFox/';
+        const {
+            isCollectionEnabled,
+            setCollectionEnabled,
+            setCollectionLock,
+            removeCollectionLock,
+            isCollectionLockedToChat,
+            shouldCollectionActivate,
+            deleteCollectionMeta,
+        } = await import(base + 'core/collection-metadata.js');
+        const { registerCollection, unregisterCollection } = await import(base + 'core/collection-loader.js');
+        const { buildRegistryKey } = await import(base + 'core/collection-ids.js');
+        const { extension_settings } = await import('/scripts/extensions.js');
+
+        const ctx = window.SillyTavern?.getContext?.() ?? window.getContext?.() ?? {};
+        const settings = extension_settings?.vectfox || {};
+        const currentChatId = ctx?.chatId ? String(ctx.chatId) : null;
+        const currentCharacterId = ctx?.characterId != null ? String(ctx.characterId) : null;
+        if (!currentChatId) {
+            console.error(`${TEST} [FAIL] No active chat — open a chat first`);
+            return;
+        }
+
+        // Synthetic lorebook ID — character-scoped under the new parseCollectionId
+        // mapping, but the test pins activation via an explicit chat lock so scope
+        // doesn't affect the result. The `playwright_test` marker drives cleanup
+        // both at top-of-file beforeAll and at the end of this test.
+        const collectionId  = `vf_lorebook_${(settings.vector_backend || 'standard').toLowerCase()}_playwright_test_017_pause_button_${Date.now()}`;
+        const registryKey   = buildRegistryKey(collectionId, settings);
+        const searchContext = { currentChatId, currentCharacterId };
+
+        try {
+            registerCollection(registryKey);
+
+            // ═══ Phase 1 — default enabled when no meta.enabled written ═══
+            console.log(`${TEST} Phase 1: fresh registration with no enabled-meta written → isCollectionEnabled should default to true`);
+            const defaultEnabled = isCollectionEnabled(registryKey);
+            if (defaultEnabled !== true) {
+                console.error(`${TEST} [FAIL] Phase 1: isCollectionEnabled defaulted to ${defaultEnabled}, expected true. Default-true contract broken.`);
+                return;
+            }
+            console.log(`${TEST} Phase 1 ✓ default enabled=true`);
+
+            // ═══ Phase 2 — baseline: lock pinned, activation should return true ═══
+            console.log(`${TEST} Phase 2: pinning chat lock for chatId=${currentChatId} → shouldCollectionActivate must return true (priority-4 path)`);
+            setCollectionLock(registryKey, currentChatId);
+            if (!isCollectionLockedToChat(registryKey, currentChatId)) {
+                console.error(`${TEST} [FAIL] Phase 2: setCollectionLock didn't take — isCollectionLockedToChat reads false. Baseline can't be established.`);
+                return;
+            }
+            const activeBaseline = await shouldCollectionActivate(registryKey, searchContext);
+            if (activeBaseline !== true) {
+                console.error(`${TEST} [FAIL] Phase 2: shouldCollectionActivate returned ${activeBaseline} with lock pinned — expected true. Lock priority-4 path may be broken.`);
+                return;
+            }
+            console.log(`${TEST} Phase 2 ✓ baseline active with lock`);
+
+            // ═══ Phase 3 — pause: enabled=false must override lock ═══
+            console.log(`${TEST} Phase 3: setCollectionEnabled(false) → isCollectionEnabled flips false AND shouldCollectionActivate returns false despite the lock`);
+            setCollectionEnabled(registryKey, false);
+            const enabledAfterPause = isCollectionEnabled(registryKey);
+            if (enabledAfterPause !== false) {
+                console.error(`${TEST} [FAIL] Phase 3: isCollectionEnabled reads ${enabledAfterPause} after setCollectionEnabled(false). Pause meta didn't land.`);
+                return;
+            }
+            // Lock must still be there — pause should not touch lock state.
+            if (!isCollectionLockedToChat(registryKey, currentChatId)) {
+                console.error(`${TEST} [FAIL] Phase 3: pause path silently removed the chat lock — setCollectionEnabled should only flip enabled meta, never touch locks.`);
+                return;
+            }
+            const activeAfterPause = await shouldCollectionActivate(registryKey, searchContext);
+            if (activeAfterPause !== false) {
+                console.error(`${TEST} [FAIL] Phase 3: shouldCollectionActivate returned ${activeAfterPause} after pause — priority 1 (enabled=false) should override priority 4 (chat lock). Activation priority chain is broken.`);
+                return;
+            }
+            console.log(`${TEST} Phase 3 ✓ pause overrides lock: enabled=false → activation=false even with lock still in place`);
+
+            // ═══ Phase 4 — re-enable restores activation ═══
+            console.log(`${TEST} Phase 4: setCollectionEnabled(true) → activation restored cleanly`);
+            setCollectionEnabled(registryKey, true);
+            const enabledAfterResume = isCollectionEnabled(registryKey);
+            if (enabledAfterResume !== true) {
+                console.error(`${TEST} [FAIL] Phase 4: isCollectionEnabled reads ${enabledAfterResume} after setCollectionEnabled(true).`);
+                return;
+            }
+            const activeAfterResume = await shouldCollectionActivate(registryKey, searchContext);
+            if (activeAfterResume !== true) {
+                console.error(`${TEST} [FAIL] Phase 4: shouldCollectionActivate returned ${activeAfterResume} after resume — re-enabling should restore the priority-4 lock path. Lock state may have been silently lost during the pause cycle.`);
+                return;
+            }
+            console.log(`${TEST} Phase 4 ✓ resume restores activation`);
+
+            console.log(`${TEST} [PASS] Pause button (enabled=false) correctly overrides chat lock — priority 1 wins over priority 4, lock state survives the pause cycle, default isCollectionEnabled is true`);
+        } finally {
+            try {
+                try { removeCollectionLock(registryKey, currentChatId); } catch {}
+                try { deleteCollectionMeta(registryKey); } catch {}
+                try { unregisterCollection(registryKey); } catch {}
+                try { unregisterCollection(collectionId); } catch {}
+                console.log(`${TEST} Cleanup ✓ lock removed, meta deleted, registration unregistered`);
+            } catch (cleanupErr) {
+                console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`);
+            }
+        }
+    });
+    assertPassed(logs);
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  TEST 018 — shouldCollectionActivate priority chain
+// ═══════════════════════════════════════════════════════════════════
+//
+//  The activation priority chain is documented in Doc/collection_helper.md
+//  → "Runtime activation chain". Five priorities, in order:
+//
+//    1. enabled=false        → BLOCKED   (covered by TEST 017)
+//    2. Activation Triggers  → ACTIVE    (this test)
+//    3. Advanced Conditions  → ACTIVE    (this test)
+//    4. Chat lock match      → ACTIVE    (covered by TEST 017 baseline)
+//    5. Character lock match → ACTIVE    (this test)
+//    Nothing matched         → BLOCKED   (this test)
+//
+//  Each priority is what's drawing real users into VectFox: lorebook
+//  authors who set keyword triggers, power users who write advanced
+//  conditions, lorebook-per-character setups. If priority 2 or 3 silently
+//  break during a refactor, semantic WI stops activating for everyone who
+//  relies on keyword/condition-driven scope.
+//
+//  Pure-metadata test, runs in every environment. Phases:
+//    1. Priority 2 — meta.triggers matches a synthetic recentMessages
+//       token → active, with NO lock present (proves triggers fire
+//       independent of lock state).
+//    2. Priority 3 — meta.conditions with a guaranteed-pass randomChance
+//       rule (probability: 100) → active, no triggers / no locks.
+//    3. Priority 5 — character lock match → active, no triggers / no
+//       conditions / no chat lock.
+//    4. Nothing matched — fresh meta, empty context locks → blocked.
+//
+//  Per-phase, the production `[VECTFOX Activation Filter] Collection X: …`
+//  debug log will print which priority gate fired (✓ TRIGGERS_MATCHED, ✓
+//  CONDITIONS_PASS, ✓ LOCKED_TO_CURRENT_CHARACTER, ✗ NOT_ACTIVATED) — that's
+//  the false-positive defense: a Phase 1 PASS with the wrong gate log
+//  would mean the trigger-evaluator is broken but lock state is leaking
+//  through. The test gates on the boolean return; the production log
+//  gives independent evidence of *why*.
+
+test('TEST 018 — shouldCollectionActivate priority chain (triggers / conditions / character lock / nothing)', async () => {
+    const logs = await runTestInPage(async () => {
+        const TEST = 'TEST 018 [PriorityChain]';
+        const base = '/scripts/extensions/third-party/VectFox/';
+        const {
+            setCollectionMeta,
+            deleteCollectionMeta,
+            setCollectionCharacterLock,
+            removeCollectionCharacterLock,
+            isCollectionLockedToCharacter,
+            shouldCollectionActivate,
+        } = await import(base + 'core/collection-metadata.js');
+        const { registerCollection, unregisterCollection } = await import(base + 'core/collection-loader.js');
+        const { buildRegistryKey } = await import(base + 'core/collection-ids.js');
+        const { extension_settings } = await import('/scripts/extensions.js');
+
+        const ctx = window.SillyTavern?.getContext?.() ?? window.getContext?.() ?? {};
+        const settings = extension_settings?.vectfox || {};
+        const currentChatId = ctx?.chatId ? String(ctx.chatId) : null;
+        if (!currentChatId) {
+            console.error(`${TEST} [FAIL] No active chat — open a chat first`);
+            return;
+        }
+        // Use a synthetic character ID — Phase 3 only needs the lock value
+        // to match the context's currentCharacterId. Decoupling from the
+        // real character keeps Phase 3 deterministic regardless of which
+        // character the chat is paired with (or even none — group chats).
+        const syntheticCharacterId = '__vf_pw_test_018_character__';
+
+        // One synthetic collection, meta reset between phases.
+        const collectionId = `vf_lorebook_${(settings.vector_backend || 'standard').toLowerCase()}_playwright_test_018_priority_chain_${Date.now()}`;
+        const registryKey  = buildRegistryKey(collectionId, settings);
+
+        // Unique token Phase 1 plants in recentMessages + triggers. The
+        // playwright_test prefix matches the beforeAll cleanup pattern.
+        const TRIGGER_TOKEN = 'PW_TEST_018_TRIGGER_TOKEN_e3f1';
+
+        // Reset meta to a baseline empty state between phases so the
+        // previous phase's triggers/conditions/locks don't leak. Each
+        // phase then sets only what it needs.
+        const resetMeta = () => {
+            try { deleteCollectionMeta(registryKey); } catch {}
+            // Locks live in meta too — explicit clear in case meta was
+            // touched without going through setCollectionMeta defaults.
+            try { removeCollectionCharacterLock(registryKey, syntheticCharacterId); } catch {}
+        };
+
+        try {
+            registerCollection(registryKey);
+
+            // ═══ Phase 1 — Priority 2: triggers match → active (no lock) ═══
+            console.log(`${TEST} Phase 1: Priority 2 — meta.triggers matches recentMessages token → active without any lock`);
+            resetMeta();
+            setCollectionMeta(registryKey, {
+                triggers: [TRIGGER_TOKEN.toLowerCase()],   // lowercased — checkTriggers lowercases search text
+                triggerMatchMode: 'any',
+                triggerCaseSensitive: false,
+                triggerScanDepth: 5,
+            });
+            const triggerContext = {
+                currentChatId,
+                currentCharacterId: syntheticCharacterId,   // no lock matches this — proves triggers fire alone
+                recentMessages: [`some message containing ${TRIGGER_TOKEN} embedded inline`],
+            };
+            const triggerActive = await shouldCollectionActivate(registryKey, triggerContext);
+            if (triggerActive !== true) {
+                console.error(`${TEST} [FAIL] Phase 1: triggers should have matched and returned true, got ${triggerActive}. Priority-2 path broken.`);
+                return;
+            }
+            // Sanity: empty recentMessages should yield false (proves the
+            // boolean wasn't a leak from some other priority).
+            const triggerNegative = await shouldCollectionActivate(registryKey, { ...triggerContext, recentMessages: [] });
+            if (triggerNegative !== false) {
+                console.error(`${TEST} [FAIL] Phase 1 negative: triggers should have NOT matched with empty recentMessages, got ${triggerNegative}. Priority-2 may be returning true unconditionally.`);
+                return;
+            }
+            console.log(`${TEST} Phase 1 ✓ Priority 2: triggers match → active; same meta with empty recentMessages → blocked`);
+
+            // ═══ Phase 2 — Priority 3: conditions pass → active (no triggers, no lock) ═══
+            console.log(`${TEST} Phase 2: Priority 3 — randomChance probability=100 condition → active`);
+            resetMeta();
+            setCollectionMeta(registryKey, {
+                conditions: {
+                    enabled: true,
+                    logic: 'AND',
+                    rules: [{ type: 'randomChance', settings: { probability: 100 } }],
+                },
+            });
+            const conditionContext = {
+                currentChatId,
+                currentCharacterId: syntheticCharacterId,   // no lock for this — proves conditions fire alone
+                recentMessages: ['nothing trigger-like here'],
+            };
+            const conditionActive = await shouldCollectionActivate(registryKey, conditionContext);
+            if (conditionActive !== true) {
+                console.error(`${TEST} [FAIL] Phase 2: conditions should have passed and returned true, got ${conditionActive}. Priority-3 path broken (or conditional-activation.js regressed).`);
+                return;
+            }
+            console.log(`${TEST} Phase 2 ✓ Priority 3: randomChance(100) condition pass → active`);
+
+            // ═══ Phase 3 — Priority 5: character lock match → active ═══
+            console.log(`${TEST} Phase 3: Priority 5 — character lock match → active (no triggers, no conditions, no chat lock)`);
+            resetMeta();
+            setCollectionCharacterLock(registryKey, syntheticCharacterId);
+            if (!isCollectionLockedToCharacter(registryKey, syntheticCharacterId)) {
+                console.error(`${TEST} [FAIL] Phase 3 pre-condition: setCollectionCharacterLock didn't take.`);
+                return;
+            }
+            const characterLockContext = {
+                currentChatId,                                  // chat lock not pinned — only character lock pinned
+                currentCharacterId: syntheticCharacterId,
+                recentMessages: ['nothing trigger-like here'],
+            };
+            const characterLockActive = await shouldCollectionActivate(registryKey, characterLockContext);
+            if (characterLockActive !== true) {
+                console.error(`${TEST} [FAIL] Phase 3: character lock should have activated, got ${characterLockActive}. Priority-5 path broken.`);
+                return;
+            }
+            // Sanity: change the context's character ID to a non-matching value
+            // and the same setup should now block (priority 5 didn't actually
+            // match — proves the lock is keyed on character ID, not always-on).
+            const characterLockMissContext = { ...characterLockContext, currentCharacterId: 'wrong_character_xyz' };
+            const characterLockMiss = await shouldCollectionActivate(registryKey, characterLockMissContext);
+            if (characterLockMiss !== false) {
+                console.error(`${TEST} [FAIL] Phase 3 negative: character lock should NOT have matched a different character ID, got ${characterLockMiss}. Lock match is leaking.`);
+                return;
+            }
+            console.log(`${TEST} Phase 3 ✓ Priority 5: character lock matches → active; non-matching character ID → blocked`);
+
+            // ═══ Phase 4 — Nothing matched → blocked ═══
+            console.log(`${TEST} Phase 4: no triggers, no conditions, no locks → blocked`);
+            resetMeta();
+            const emptyContext = {
+                currentChatId,
+                currentCharacterId: syntheticCharacterId,
+                recentMessages: ['nothing trigger-like here'],
+            };
+            const nothingActive = await shouldCollectionActivate(registryKey, emptyContext);
+            if (nothingActive !== false) {
+                console.error(`${TEST} [FAIL] Phase 4: bare collection with no priorities should have been blocked, got ${nothingActive}. Activation defaults are leaking somewhere.`);
+                return;
+            }
+            console.log(`${TEST} Phase 4 ✓ no priority matched → blocked`);
+
+            console.log(`${TEST} [PASS] Priority chain intact — triggers (P2), conditions (P3), character lock (P5), and "nothing matched" all behave per Doc/collection_helper.md. Each phase's [VECTFOX Activation Filter] log independently confirms which priority gate fired.`);
+        } finally {
+            try {
+                resetMeta();
+                try { unregisterCollection(registryKey); } catch {}
+                try { unregisterCollection(collectionId); } catch {}
+                console.log(`${TEST} Cleanup ✓ meta cleared, registration unregistered`);
+            } catch (cleanupErr) {
+                console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`);
             }
         }
     });

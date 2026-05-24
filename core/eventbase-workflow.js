@@ -167,6 +167,16 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // stampAutoSyncMarker in eventbase-store.js for the placement logic.
     // Only applies to auto-sync runs; manual Vectorize Content / backfill
     // intentionally ignores the marker so the user can refill historical gaps.
+    //
+    // ⚠️ Regression coverage: TEST 014 (fingerprint cache, same window size) +
+    // TEST 015 (this marker filter, window-size-change protection) in
+    // tests/Eventbase-test.spec.js together cover the two-layer auto-sync
+    // safety story. Doc/collection_helper.md → "Chat Auto-Sync" explains the
+    // contract. Any change here — guard, operator (>= vs >), or filter shape
+    // — must be reviewed against both tests and the doc. The boundary `>=`
+    // is load-bearing: stampAutoSyncMarker uses max(source_window_end)+1,
+    // so the next legitimate window starts exactly AT marker. `>` would
+    // skip the first new window (extraction gap).
     if (isAutoSync) {
         const { getAutoSyncMarker } = await import('./eventbase-store.js');
         const marker = getAutoSyncMarker(uuid);

@@ -166,10 +166,12 @@ function ensureCollectionsObject() {
  *
  * Resolution order:
  *   1. Stored `meta.scope` if it's a valid value ('chat' or 'character').
- *   2. Parsed from the collection ID structure:
+ *   2. Parsed from the collection ID structure (via `parseCollectionId`):
  *      - `vf_eventbase_*` / `vf_archiveevent_*` → 'chat'
  *      - `vf_character_*` / `vf_lorebook_*` / `vf_document_*` → 'character'
  *   3. Default 'character' (matches `content-vectorization.js` insert default).
+ *      Only reached for unparseable IDs (parser returns 'unknown' sentinel)
+ *      and legacy stored values like the retired 'global'.
  *
  * @param {string} collectionIdOrRegistryKey - bare ID or "backend:id"
  * @param {object} [meta] - already-loaded meta (avoids re-reading from storage)

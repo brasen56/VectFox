@@ -277,15 +277,21 @@ TEST 005/006/007 are the regression coverage — they exercise the standard-back
 
 ## Scope migration — global is gone
 
-`scope='global'` is no longer a valid choice. The Vectorize Content modal exposes only `Character` (default) and `This Chat`. Existing global collections are auto-migrated **once**, on first read by `loadAllCollections`:
+`scope='global'` is no longer a valid value anywhere in the codebase. The Vectorize Content modal exposes only `Character` (default) and `This Chat`. Both the runtime path and the parser were cleaned up 2026-05-24:
 
-```
-storedMeta.scope === 'global'  →  setCollectionMeta(writeKey, { scope: 'character' })
-```
-
-After migration completes, no code anywhere checks for `'global'`. The only remaining reference is the migration block itself in `core/collection-loader.js`. Do not reintroduce `scope === 'global'` branches elsewhere.
+1. **`COLLECTION_SCOPES.GLOBAL` was deleted** from `core/collection-ids.js`. Only `CHARACTER`, `CHAT`, and `UNKNOWN` (the unparseable-input sentinel) remain.
+2. **`parseCollectionId` no longer returns `'global'`.** Before the cleanup it emitted `'global'` for `vf_lorebook_*`, `vf_document_*`, and `vf_archiveevent_*`. `getEffectiveScope` rejected those values and fell through to its `'character'` default — which happened to be correct for lorebook/document but **silently wrong for archive events** (should be `'chat'`). The parser now returns the canonical value directly:
+   - `vf_lorebook_*` / `vf_document_*` / `vf_character_*` → `'character'`
+   - `vf_eventbase_*` / `vf_archiveevent_*` → `'chat'`
+3. **Legacy on-disk `scope: 'global'` entries are auto-migrated** on first read by `loadAllCollections`:
+   ```
+   storedMeta.scope === 'global'  →  setCollectionMeta(writeKey, { scope: 'character' })
+   ```
+   This is the *only* remaining string-literal `'global'` reference in the codebase — it's needed to clean up user data that pre-dates the cleanup. Do not remove it.
 
 A migrated collection has no character lock by default — it stops auto-activating until the user re-checks "Active for current chat" in Collection Settings (which then calls `setCollectionCharacterLock(currentCharacterId)`).
+
+**Rule for new code:** never reintroduce `scope === 'global'` branches anywhere. If you need to handle stored data that *might* contain `'global'`, route it through `getEffectiveScope` — the canonical resolver folds every invalid value into `'character'` or `'chat'`.
 
 ## DB Browser — lock badge in the listing
 
@@ -350,6 +356,77 @@ It computes `activeIds` by filtering own-persona lorebooks (creatorHandle stamp)
 | ✗ Uncheck | For each currently-active own lorebook, remove the lock making it active (chat or character per scope). Dispatch `vectfox:collections-updated`. Persist `enabled_world_info=false`. |
 
 ## Chat Auto-Sync — "Enable Auto-Sync" checkbox
+
+### The smart marker — what makes auto-sync correct
+
+Before reading the rest of this section, internalize this: **the window fingerprint cache is what prevents auto-sync from re-extracting the entire chat on every trigger**. Without it, the cost of running auto-sync would grow linearly with chat length on every single message — every trigger would re-process every window from the top. The fingerprint cache is the "smart marker" that lets auto-sync only do the *new* work.
+
+The cache lives in [`core/eventbase-store.js`](../core/eventbase-store.js). Three functions form the contract:
+
+| Function | Role in auto-sync |
+|---|---|
+| `markWindowExtracted(sourceHashes, chatUUID)` | Called by `runEventBaseIngestion` after each window is successfully extracted. Writes the fingerprint to both the in-memory `_windowCacheSet` AND the persisted `extension_settings.vectfox.eventbase_extracted_windows[chatUUID]` array, then calls `saveSettingsDebounced()`. Survives page reload. |
+| `isWindowAlreadyExtracted(sourceHashes, messageIds, settings, chatUUID)` | Per-window dedup gate inside the ingestion loop. Returns `set.has(fp)` from the in-memory Set — synchronous, O(1). `messageIds` and `settings` are kept for API compat but ignored. |
+| `isLastWindowExtracted(messages, windowSize, step, chatUUID, hashFn)` | Quick-exit gate at the top of `runEventBaseIngestion`. If the last possible window for the current message count is already in the cache, every prior window must be too (windows process in order), so ingestion no-ops immediately without building the window list. This is the cheapest possible "is there anything new?" check. |
+
+User scenario the cache makes safe:
+
+1. User vectorizes a chat at 2 messages — window `[0-1]` extracted. `markWindowExtracted` records its fingerprint.
+2. User replies twice — chat now has 6 messages. Two new windows `[2-3]` and `[4-5]` exist on disk but are unmarked in the cache.
+3. User ticks "Enable Auto-Sync". Next trigger calls `runEventBaseIngestion`.
+4. `isLastWindowExtracted` checks `[4-5]` against the cache → not present → returns false → ingestion runs.
+5. The ingestion loop iterates windows. For `[0-1]`, `isWindowAlreadyExtracted` returns true → skipped (no LLM call, no duplicate event). For `[2-3]` and `[4-5]`, returns false → LLM extracts events, `markWindowExtracted` records each fingerprint.
+6. Next trigger: `isLastWindowExtracted` against `[4-5]` returns true → quick-exit → no work done.
+
+**Test coverage**: see TEST 014 in `tests/Eventbase-test.spec.js`. The full storage shape (two-tier persisted-array + in-memory-Set) and the rationale for *why* it's two-tier is in [Doc/dev_helper.md §4](dev_helper.md).
+
+### Second safety layer — the start marker (window-size-change protection)
+
+The fingerprint cache above is **window-size-dependent**: a window's fingerprint includes the message hashes it covers, so the fingerprint for `[0-1]` at `windowSize=2` does NOT match `[0-3]` at `windowSize=4`. If a user vectorized a long chat at one window size and then changes the setting before enabling auto-sync, every fingerprint silently misses and the cache devolves into "extract everything from message 0 again" — exactly the failure mode the cache exists to prevent.
+
+The **auto-sync start marker** is the second gate that catches this case. It's a message-index threshold per chat that says "auto-sync should only process windows whose `start >= marker`." Three functions in [`core/eventbase-store.js`](../core/eventbase-store.js):
+
+| Function | Role |
+|---|---|
+| `stampAutoSyncMarker(chatUUID, settings)` | Called from the Auto-Sync checkbox change handler when the user enables auto-sync (and re-called when the window-size setting changes while auto-sync is on). Smart placement: if the EventBase collection has existing events → `marker = max(source_window_end) + 1`; if empty → `marker = current chat length`. Persists to `extension_settings.vectfox.eventbase_autosync_start_marker[chatUUID]` and calls `saveSettingsDebounced()`. |
+| `getAutoSyncMarker(chatUUID)` | Read by `runEventBaseIngestion` to gate the window list. Returns `undefined` when no marker is stamped (manual runs and pre-auto-sync chats). |
+| `clearAutoSyncMarker(chatUUID)` | Called when auto-sync is disabled so re-enabling later re-computes a fresh marker against the current chat state. |
+
+The filter is at [`core/eventbase-workflow.js:170-180`](../core/eventbase-workflow.js#L170):
+
+```js
+if (isAutoSync) {
+    const marker = getAutoSyncMarker(uuid);
+    if (typeof marker === 'number') {
+        windows = windows.filter(w => w.start >= marker);
+    }
+}
+```
+
+**Why `>=` and not `>`:** `stampAutoSyncMarker` uses `max(source_window_end) + 1`, so the next legitimate window starts *exactly at* the marker. Using `>` would skip the first new window after the boundary — an extraction gap. Boundary inclusion is asserted by TEST 015 Phase 4.
+
+**Why the manual path ignores the marker:** the filter only applies when `isAutoSync === true`. A user manually clicking Vectorize Content can refill historical gaps at a new window size on purpose; the marker is an auto-sync-only safety, not a global "don't re-process" gate.
+
+User scenario the marker makes safe:
+
+1. User vectorizes chat at `windowSize=2`, message count=2 → window `[0-1]` extracted, event has `source_window_end=1`.
+2. User replies twice → chat now has 6 messages.
+3. User opens settings, changes `windowSize` to 4, then enables Auto-Sync.
+4. `stampAutoSyncMarker` reads the collection: `max(source_window_end)=1` → marker stamped as `2`.
+5. Next auto-sync trigger: `runEventBaseIngestion` builds windows at `windowSize=4` → `[0-3]` and `[4-7]`.
+6. Marker filter: `[0-3]` (start=0 < 2) excluded; `[4-7]` (start=4 ≥ 2) kept. Only legitimate new content gets extracted.
+7. Without the marker, both windows would have unknown fingerprints (new window size → fresh fingerprints) and both would be re-extracted, including the duplicate of messages 0,1 inside `[0-3]`.
+
+**Layer-summary table:**
+
+| Layer | Helper | Catches | When |
+|---|---|---|---|
+| 1 | `isLastWindowExtracted` / `isWindowAlreadyExtracted` (fingerprint cache) | Re-running the same windowing again | Same window size as the prior extraction |
+| 2 | `getAutoSyncMarker` + `windows.filter(w => w.start >= marker)` | Re-processing pre-marker history under a *different* window size | Window size changed between the prior extraction and auto-sync enable |
+
+**Test coverage:** TEST 015 in `tests/Eventbase-test.spec.js` is a pure-function exercise of the marker contract — fresh UUID returns `undefined`, stamp/read round-trips through the canonical getter, the `>= marker` filter excludes obsolete pre-marker windows and keeps post-marker windows, the boundary `start === marker` is included, and `clearAutoSyncMarker` removes the entry cleanly.
+
+### Key-form parity
 
 **Key-form parity is load-bearing.** Four sites read or write the per-collection autoSync flag: `refreshAutoSyncCheckbox` (UI mirror), `getChatAutoSyncStatus` (state evaluator), the change handler (writer), and `synchronizeChat` (the engine that actually fires extraction). All four must use the **registry-key form** (`backend:id`) — built via `buildRegistryKey(collectionId, settings)` or pulled from `entry.registryKey`. The 2026-05-17 regression where the popup never fired and extraction never ran was a single site (`synchronizeChat`) reading with the bare collection ID while everyone else wrote with the registry key. The flag was saved correctly; the reader looked in the wrong bucket and saw `undefined`.
 

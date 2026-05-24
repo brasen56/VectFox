@@ -697,44 +697,64 @@ The `tests/Eventbase-test.spec.js` suite runs against a live ST instance. Each t
 
 Three environment requirements to consider:
 
-- **Plugin** — Similharity plugin installed and enabled on the ST instance (probed via `/api/plugins/similharity/probe`)
-- **Qdrant** — Qdrant reachable at the host/port configured in `extension_settings.vectfox.qdrant_url` / `qdrant_host`
-- **Standard** — Vectra storage (always available; built into ST)
+VectFox runs in **three distinct deployment environments**. Each unlocks a different subset of features and exercises a different code path. The test suite soft-skips tests that aren't applicable to the current environment so users on any of the three setups get a clean `npm run test:e2e` run.
 
-Matrix:
+### The 3 environments
+
+| # | Environment | Plugin probe | Qdrant config | Backend in use | Who runs this |
+|---|---|---|---|---|---|
+| **1** | **No plugin** | `/api/plugins/similharity/health` returns no-plugin (no JSON) | — | Standard (vectra), degraded — native ST API only | Fresh ST install. The "minimum viable" deployment. |
+| **2** | **Plugin, no qdrant** | `/health` returns `{status: 'ok'}` | `qdrant_url`/`qdrant_host` empty | Standard (vectra), plugin-enhanced | User installed the Similharity plugin for richer metadata/scores but doesn't run Qdrant. |
+| **3** | **Plugin + qdrant** | `/health` returns `{status: 'ok'}` | `qdrant_url` or `qdrant_host` set, qdrant reachable | Qdrant (full A3 hybrid path) | Full production deployment with the entire feature set. |
+
+### Test coverage matrix per environment
+
+Marker key: ✅ runs, ⏭️ soft-skips, — n/a.
 
 
-| Test | Description | Plugin | Qdrant | Standard | Runs on no-plugin? |
-| --- | --- | --- | --- | --- | --- |
-| **001** | Qdrant lorebook: vectorize → lock → query isolation | Required | Required | — | ⏭️ skip |
-| **002** | Qdrant EventBase: insert + field check | Required | Required | — | ⏭️ skip |
-| **003** | E2E qdrant: locked lorebook + locked EventBase | Required | Required | — | ⏭️ skip |
-| **004** | DB Browser: listing + delete (qdrant) | Required | Required | — | ⏭️ skip |
-| **005** | Standard lorebook: vectorize → lock → query isolation | Optional (enhances) | — | Required | ✅ runs |
-| **006** | Standard EventBase: insert + parseEmbedText recovery | Optional (enhances) | — | Required | ✅ runs |
-| **007** | E2E standard: locked lorebook + locked EventBase | Optional (enhances) | — | Required | ✅ runs |
-| **008** | DB Browser standard + plugin: rich-mode listing | Required (by design) | — | Required | ⏭️ skip |
-| **009** | DB Browser standard, **no plugin**: graceful degradation | Forbidden (forces `pluginAvailable=false`) | — | Required | ✅ runs — purpose-built for no-plugin |
-| **010** | Cross-collection lock isolation (qdrant) | Required | Required | — | ⏭️ skip |
-| **011** | Cross-persona activation isolation (qdrant) | Required | Required | — | ⏭️ skip |
-| **012** | Cross-backend import: qdrant ↔ standard rename | Required (qdrant side) | Required | Required | ⏭️ skip |
-| **013** | Synthetic E2E qdrant: lorebook + EventBase round-trip | Required | Required | — | ⏭️ skip |
+| Test | Description | Case 1 (no plugin) | Case 2 (plugin, no qdrant) | Case 3 (plugin + qdrant) |
+| --- | --- | --- | --- | --- |
+| **001** | Qdrant lorebook | ⏭️ no plugin | ⏭️ no qdrant config | ✅ |
+| **002** | Qdrant EventBase | ⏭️ no plugin | ⏭️ no qdrant config | ✅ |
+| **003** | E2E qdrant | ⏭️ no plugin | ⏭️ no qdrant config | ✅ |
+| **004** | DB Browser qdrant | ⏭️ no plugin | ⏭️ no qdrant config | ✅ |
+| **005** | Standard lorebook | ✅ | ✅ (plugin enhances) | ✅ (plugin enhances) |
+| **006** | Standard EventBase + parseEmbedText | ✅ | ✅ (plugin enhances) | ✅ (plugin enhances) |
+| **007** | E2E standard | ✅ | ✅ (plugin enhances) | ✅ (plugin enhances) |
+| **008** | DB Browser standard + **plugin** | ⏭️ no plugin | ✅ | ✅ |
+| **009** | DB Browser standard, **no plugin** path | ✅ | ✅ (forces pluginAvailable=false) | ✅ (forces pluginAvailable=false) |
+| **010** | Cross-collection lock isolation (qdrant) | ⏭️ no plugin | ⏭️ no qdrant config | ✅ |
+| **011** | Cross-persona activation (qdrant) | ⏭️ no plugin | ⏭️ no qdrant config | ✅ |
+| **012** | Cross-backend import (qdrant ↔ standard) | ⏭️ no plugin | ⏭️ no qdrant config | ✅ |
+| **013** | Synthetic E2E qdrant | ⏭️ no plugin | ⏭️ no qdrant config | ✅ |
+| **014** | Auto-sync backfill: fingerprint cache prevents duplicate windows | ✅ | ✅ | ✅ |
+| **015** | Auto-sync window-size change: start marker filters obsolete windows | ✅ | ✅ | ✅ |
+| **Totals** | | **6 passed, 9 skipped** | **7 passed, 8 skipped** | **15 passed, 0 skipped** |
 
-**Reading the matrix:**
-- **"Required"** = the test cannot run without this component; it soft-skips.
-- **"Optional (enhances)"** = the test runs end-to-end on no-plugin standard backend. With plugin, scoring is richer (real `vectorScore` + metadata) but the BM25 text-search path still works without it — see §8 for the no-plugin scoring details.
-- **"Forbidden"** (TEST 009 only) = the test deliberately forces `pluginAvailable=false` on the shared backend instance to exercise the no-plugin code path. It runs even on machines that DO have the plugin (by simulating its absence).
-- **"—"** = the backend isn't touched by this test.
+### Skip logic that drives the matrix
 
-**No-plugin run example:**
-```
-npm run test:e2e
-```
-On a machine without the Similharity plugin, you'll see:
-- TEST 001–004, 008, 010–013 → ⏭️ skipped (skip reason: "Similharity plugin not installed — qdrant requires it")
-- **TEST 005, 006, 007, 009 → ✅ run** — these are the standard-backend tests that work without the plugin
+| Helper | Used by | Skip condition |
+|---|---|---|
+| `skipIfQdrantUnavailable()` | TEST 001-004, 010-013 | (a) Plugin probe fails, **or** (b) `qdrant_url`/`qdrant_host` not set in `extension_settings.vectfox`, **or** (c) qdrant config is set but qdrant is unreachable (emits a **WARNING** in the skip reason). |
+| `skipIfNoPlugin()` | TEST 008 only | Plugin probe fails. |
+| (none) | TEST 005-007, 009, 014, 015 | These run in every environment. TEST 014 and TEST 015 are pure-function (operate on the window fingerprint cache and the auto-sync start marker in `extension_settings`, respectively) — neither needs the plugin nor any backend. They form the two-layer auto-sync safety coverage: 014 covers the same-window-size dedup, 015 covers the window-size-change marker filter. See [collection_helper.md → Chat Auto-Sync](collection_helper.md) for the contract. |
 
-That's the expected outcome for a fresh ST install without the plugin. **TEST 005/006/007 are critical no-plugin coverage** alongside TEST 009. They catch the entire user-facing flow that basic-install users exercise: vectorize content → lock to chat → query → see results.
+**The unreachable-qdrant case** (config present but server down) is a soft skip with a WARNING-flavored reason, NOT a hard failure. The reasoning:
+
+- A common case-2 user installed qdrant once, took it down, kept the VectFox settings. They're now a pure standard-backend user.
+- Hard-failing qdrant tests for these users would be confusing — nothing is "wrong" with their environment, they just don't use qdrant.
+- Serial mode means one hard failure halts the rest of the suite — exactly what we don't want for a user who'd benefit from TEST 005/006/007/008/009 all passing.
+
+If qdrant **is** actually broken (down for the wrong reason) and the user **does** care, the WARNING in the skip log is the signal. The plugin probe (`/health`) and qdrant probe (`/backend/init/qdrant`) are independent — the test framework lets the user know which gate they failed.
+
+### Reading the matrix
+
+- **✅** = the test exercises real code and asserts behavior.
+- **"plugin enhances"** = test runs identically whether plugin is present or not, but the plugin upgrades the underlying code path (real `vectorScore` and metadata round-trip instead of degraded native fallback — see §8).
+- **TEST 008's "no plugin → skip"** is by design: this test specifically validates the plugin-enhanced standard backend path. The no-plugin counterpart is TEST 009.
+- **TEST 009 runs everywhere** because it forces `pluginAvailable = false` on the shared backend instance regardless of whether the plugin is actually installed. This guarantees no-plugin code-path coverage even on a fully-equipped dev machine.
+
+**Critical insight (2026-05-24):** TEST 005/006/007 are **not** "plugin optional" in the sense of "if plugin missing, skip." They run end-to-end on case 1 (no plugin) too — and they're the regression gate that caught the no-plugin scope-resolution bug. See the case study below.
 
 ### Why this coverage matters — case study (2026-05-24)
 

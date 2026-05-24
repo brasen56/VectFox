@@ -50,9 +50,17 @@ export const COLLECTION_TYPES = {
     UNKNOWN: 'unknown',
 };
 
-/** Collection scopes */
+/** Collection scopes.
+ *
+ * `'global'` was retired 2026-05-24 — the Vectorize Content modal exposes only
+ * `Character` and `This Chat`. Legacy on-disk `scope: 'global'` entries are
+ * auto-migrated to `'character'` on first read by `loadAllCollections`
+ * (see collection-loader.js). Do NOT reintroduce a GLOBAL constant — every
+ * scope value flowing through the codebase must be `'chat'` or `'character'`
+ * (or `UNKNOWN` for unparseable IDs, which `getEffectiveScope` then defaults
+ * to `'character'`).
+ */
 export const COLLECTION_SCOPES = {
-    GLOBAL: 'global',
     CHARACTER: 'character',
     CHAT: 'chat',
     UNKNOWN: 'unknown',
@@ -411,6 +419,12 @@ export function buildArchiveEventCollectionId({ filenameCharName, archiveUUID, b
  * Parses any collection ID format and returns structured info
  * Handles all legacy and current formats.
  *
+ * Scope mapping (must stay in sync with `getEffectiveScope`):
+ *   - `vf_eventbase_*` / `vf_archiveevent_*` → 'chat'
+ *   - `vf_lorebook_*` / `vf_character_*` / `vf_document_*` → 'character'
+ *   - invalid input → 'unknown' (sentinel; `getEffectiveScope` falls through
+ *     to its 'character' default)
+ *
  * @param {string} collectionId Collection ID to parse
  * @returns {{type: string, rawId: string, scope: string, format: string}} Parsed info
  */
@@ -429,7 +443,7 @@ export function parseCollectionId(collectionId) {
         return {
             type: COLLECTION_TYPES.LOREBOOK,
             rawId: collectionId.replace(COLLECTION_PREFIXES.VECTFOX_LOREBOOK, ''),
-            scope: COLLECTION_SCOPES.GLOBAL,
+            scope: COLLECTION_SCOPES.CHARACTER,
             format: 'vectfox',
         };
     }
@@ -449,7 +463,7 @@ export function parseCollectionId(collectionId) {
         return {
             type: COLLECTION_TYPES.DOCUMENT,
             rawId: collectionId.replace(COLLECTION_PREFIXES.VECTFOX_DOCUMENT, ''),
-            scope: COLLECTION_SCOPES.GLOBAL,
+            scope: COLLECTION_SCOPES.CHARACTER,
             format: 'vectfox',
         };
     }
@@ -465,11 +479,16 @@ export function parseCollectionId(collectionId) {
     }
 
     // VectFox archive event format: vf_archiveevent_*
+    // Scope is 'chat' to match getEffectiveScope's documented behavior — archive
+    // event collections hold chat-shaped events and belong to the chat scope.
+    // Returning 'global' here (the pre-2026-05-24 value) silently produced
+    // 'character' downstream after getEffectiveScope's reject-and-default,
+    // which was the actual scope bug for archive events.
     if (collectionId.startsWith(COLLECTION_PREFIXES.VECTFOX_ARCHIVE_EVENT)) {
         return {
             type: COLLECTION_TYPES.ARCHIVE_EVENT,
             rawId: collectionId.replace(COLLECTION_PREFIXES.VECTFOX_ARCHIVE_EVENT, ''),
-            scope: COLLECTION_SCOPES.GLOBAL,
+            scope: COLLECTION_SCOPES.CHAT,
             format: 'vectfox',
         };
     }
