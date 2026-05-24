@@ -307,8 +307,13 @@ export function getVllmApiKey(settings) {
  * @returns {Promise<{migrated: number, slots: string[]}>}
  */
 export async function migrateLegacyApiKeys() {
+    console.log('[VectFox migrate] START — auditing legacy API-key fields in extension_settings.vectfox');
+
     const vf = extension_settings?.vectfox;
-    if (!vf) return { migrated: 0, slots: [] };
+    if (!vf) {
+        console.warn('[VectFox migrate] extension_settings.vectfox is not initialized — skipping migration');
+        return { migrated: 0, slots: [] };
+    }
 
     // Standard migration pairs: (legacy plaintext field, dedicated slot name).
     const MIGRATIONS = [
@@ -321,65 +326,126 @@ export async function migrateLegacyApiKeys() {
         ['vllm_api_key',   VLLM_API_KEY_SECRET_SLOT],
     ];
 
+    // Pre-flight audit: log the current state of every legacy field so we
+    // can diagnose stuck migrations from console output alone. NEVER logs
+    // the key value itself — only type, length, hasOwnProperty status.
+    const _describe = (key) => {
+        const has = Object.prototype.hasOwnProperty.call(vf, key);
+        if (!has) return 'not present';
+        const v = vf[key];
+        if (typeof v !== 'string') return `non-string (type=${typeof v})`;
+        if (v.length === 0) return 'empty string ""';
+        return `string len=${v.length} (non-empty)`;
+    };
+    console.log('[VectFox migrate] Pre-flight state of legacy fields:');
+    for (const [field] of MIGRATIONS) {
+        console.log(`[VectFox migrate]   ${field}: ${_describe(field)}`);
+    }
+    console.log(`[VectFox migrate]   openrouter_api_key (special-case): ${_describe('openrouter_api_key')}`);
+
     const moved = [];
+    const deleted = [];
     // Track whether we mutated extension_settings.vectfox so we know to
     // call saveSettingsDebounced(). Just clearing in memory isn't enough:
-    // without an explicit save, the old plaintext value would linger in
-    // settings.json on disk until something else triggered a write.
+    // without an explicit save, the value lingers in settings.json on disk
+    // until something else triggers a write.
     let mutated = false;
 
     for (const [legacyField, slot] of MIGRATIONS) {
-        const val = vf[legacyField];
-        if (typeof val !== 'string' || val.trim().length === 0) continue;
-        try {
-            await writeSecret(slot, val.trim());
-            // delete (not = '') so the field is removed from settings.json
-            // entirely rather than persisting as an empty string. The
-            // defaults block in index.js will recreate the empty-string
-            // default in memory on next init, but the on-disk file stays
-            // clean post-migration. User-visible: no more "key": "..."
-            // residue in settings.json after this fix.
-            delete vf[legacyField];
-            mutated = true;
-            moved.push(slot);
-        } catch (err) {
-            console.warn(`[VectFox] Failed to migrate ${slot}:`, err?.message || err);
+        if (!Object.prototype.hasOwnProperty.call(vf, legacyField)) {
+            console.log(`[VectFox migrate]   ${legacyField}: SKIP (field not present)`);
+            continue;
         }
+        const val = vf[legacyField];
+        let migratedThisOne = false;
+
+        // Case A: non-empty plaintext value → migrate to secret_state first,
+        // then delete. On writeSecret failure, KEEP the field so a retry
+        // can happen on the next init (better to leave plaintext than to
+        // delete it without preserving the value somewhere).
+        if (typeof val === 'string' && val.trim().length > 0) {
+            console.log(`[VectFox migrate]   ${legacyField}: has plaintext (len=${val.length}), writing to secret_state[${slot}]...`);
+            try {
+                await writeSecret(slot, val.trim());
+                moved.push(slot);
+                migratedThisOne = true;
+                console.log(`[VectFox migrate]   ${legacyField}: writeSecret(${slot}) OK`);
+            } catch (err) {
+                console.warn(`[VectFox migrate]   ${legacyField}: writeSecret(${slot}) FAILED — keeping field for retry:`, err?.message || err);
+                continue; // leave the field on disk for retry
+            }
+        } else {
+            console.log(`[VectFox migrate]   ${legacyField}: empty/non-string value, no secret write needed`);
+        }
+
+        // Always delete the field once handled (whether we migrated a value
+        // or there was just an empty leftover). User-visible: settings.json
+        // no longer carries the field after this runs.
+        delete vf[legacyField];
+        deleted.push(legacyField);
+        mutated = true;
+        console.log(`[VectFox migrate]   ${legacyField}: DELETED from extension_settings.vectfox${migratedThisOne ? ' (after successful secret-write)' : ''}`);
     }
 
     // Special-case migration for embedding openrouter_api_key → SECRET_KEYS.OPENROUTER.
     // The destination slot is shared with ST; only write if it's currently empty
     // (don't clobber a value the user set through ST's own UI or via our pre-fix
-    // writeSecret call). The legacy plaintext is always cleared regardless.
-    const legacyOR = vf.openrouter_api_key;
-    if (typeof legacyOR === 'string' && legacyOR.trim().length > 0) {
-        const existingInSlot = _readSecretValue(SECRET_KEYS.OPENROUTER);
-        if (!existingInSlot) {
-            try {
-                await writeSecret(SECRET_KEYS.OPENROUTER, legacyOR.trim());
-                moved.push(SECRET_KEYS.OPENROUTER);
-            } catch (err) {
-                console.warn(`[VectFox] Failed to migrate openrouter_api_key → SECRET_KEYS.OPENROUTER:`, err?.message || err);
+    // writeSecret call). The legacy plaintext is always cleared regardless, INCLUDING
+    // empty-string leftovers from earlier partial migrations.
+    if (Object.prototype.hasOwnProperty.call(vf, 'openrouter_api_key')) {
+        const legacyOR = vf.openrouter_api_key;
+        let canDelete = true; // delete unless writeSecret failed
+
+        if (typeof legacyOR === 'string' && legacyOR.trim().length > 0) {
+            const existingInSlot = _readSecretValue(SECRET_KEYS.OPENROUTER);
+            if (existingInSlot) {
+                console.log(`[VectFox migrate]   openrouter_api_key: SECRET_KEYS.OPENROUTER already populated by ST or prior writeSecret — clearing legacy plaintext without overwriting secret`);
+            } else {
+                console.log(`[VectFox migrate]   openrouter_api_key: has plaintext (len=${legacyOR.length}), writing to secret_state[${SECRET_KEYS.OPENROUTER}]...`);
+                try {
+                    await writeSecret(SECRET_KEYS.OPENROUTER, legacyOR.trim());
+                    moved.push(SECRET_KEYS.OPENROUTER);
+                    console.log(`[VectFox migrate]   openrouter_api_key: writeSecret(${SECRET_KEYS.OPENROUTER}) OK`);
+                } catch (err) {
+                    console.warn(`[VectFox migrate]   openrouter_api_key: writeSecret(${SECRET_KEYS.OPENROUTER}) FAILED — keeping field for retry:`, err?.message || err);
+                    canDelete = false;
+                }
             }
+        } else {
+            console.log(`[VectFox migrate]   openrouter_api_key: empty/non-string value, no secret write needed`);
         }
-        delete vf.openrouter_api_key;
-        mutated = true;
+
+        if (canDelete) {
+            delete vf.openrouter_api_key;
+            deleted.push('openrouter_api_key');
+            mutated = true;
+            console.log(`[VectFox migrate]   openrouter_api_key: DELETED from extension_settings.vectfox`);
+        }
+    } else {
+        console.log(`[VectFox migrate]   openrouter_api_key: SKIP (field not present)`);
     }
 
     if (moved.length > 0) {
         // Refresh in-memory state so subsequent reads see the new values
-        try { await readSecretState(); } catch {}
-        console.log(`[VectFox] Migrated ${moved.length} plaintext API key(s) from settings.json to ST secret_state: ${moved.join(', ')}. Plaintext copies cleared from settings.json.`);
+        try {
+            await readSecretState();
+            console.log(`[VectFox migrate] readSecretState() refreshed in-memory secret_state`);
+        } catch (err) {
+            console.warn(`[VectFox migrate] readSecretState() failed:`, err?.message || err);
+        }
     }
 
-    // Persist the deletions to settings.json. Without this call, the old
-    // plaintext values remain on disk until some other code path triggers
-    // a save — which might be never if the user doesn't touch settings UI.
-    // saveSettingsDebounced is idempotent and cheap to call when mutated=false too,
-    // but the guard makes the no-op case explicit.
+    // Persist the deletions to settings.json. Without this call, the changes
+    // remain in-memory only and the old values linger in settings.json on
+    // disk until some other code path triggers a save.
     if (mutated) {
         saveSettingsDebounced();
+        console.log(`[VectFox migrate] saveSettingsDebounced() called — settings.json flush queued (typical debounce ~1s).`);
+    } else {
+        console.log(`[VectFox migrate] mutated=false, no save needed (no fields were present or all already deleted)`);
     }
+
+    console.log(`[VectFox migrate] DONE — ${moved.length} secret(s) written: [${moved.join(', ') || 'none'}]; ${deleted.length} field(s) deleted from extension_settings.vectfox: [${deleted.join(', ') || 'none'}]`);
 
     return { migrated: moved.length, slots: moved };
 }
