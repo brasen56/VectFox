@@ -271,6 +271,44 @@ function applyPattern(text, pattern) {
 }
 
 /**
+ * Cleans text and returns null when nothing meaningful survives.
+ *
+ * Canonical entry point for content-preparation pipelines (lorebook,
+ * character, document, URL, wiki, YouTube) — anywhere the pattern is
+ * "clean a piece of content, then drop the unit entirely if nothing
+ * is left." Bundles the clean + emptiness-check into one call so
+ * callers can't accidentally skip the check.
+ *
+ * Returns null when:
+ *   - input is falsy
+ *   - input is not a string
+ *   - cleaned result has zero non-whitespace characters
+ *
+ * Why a separate function vs. an `if (!cleanText(x).trim())` check at
+ * each call site: the 2026-05-24 lorebook regression where a stripped
+ * `<Intimacy_System>...</Intimacy_System>` block left an empty entry
+ * whose `# <comment>` header + auto-appended `[KEYWORDS: ...]` still
+ * built a "valid-looking" chunk. The fix needed an emptiness re-check
+ * after cleanText — and every other content pipeline (character per-
+ * field, document, URL, wiki, YouTube, wiki per-page) has the exact
+ * same shape, the exact same bug, just with different surrounding
+ * metadata. Centralizing the gate stops the pattern from drifting.
+ *
+ * DOES NOT replace `cleanText`. Use the original when you want the
+ * cleaned string regardless of whether it's empty (e.g. per-message
+ * cleaning fed to an LLM extractor like eventbase-extractor.js, where
+ * an empty message just produces no events and isn't a chunk leak).
+ *
+ * @param {string} text - raw content
+ * @returns {string|null} cleaned text, or null if empty/whitespace-only
+ */
+export function cleanContentOrNull(text) {
+    if (typeof text !== 'string' || !text) return null;
+    const cleaned = cleanText(text);
+    return cleaned && cleaned.trim() ? cleaned : null;
+}
+
+/**
  * Cleans text using all active patterns
  * @param {string} text - Text to clean
  * @returns {string} Cleaned text

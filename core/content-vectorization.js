@@ -26,7 +26,7 @@ import {
     getBackendFromCollectionId,
 } from './collection-ids.js';
 import { extractLorebookKeywords, extractTextKeywords, extractChatKeywords, extractBM25Keywords, EXTRACTION_LEVELS, DEFAULT_EXTRACTION_LEVEL, DEFAULT_BASE_WEIGHT } from './keyword-boost.js';
-import { cleanText, cleanMessages } from './text-cleaning.js';
+import { cleanText, cleanContentOrNull, cleanMessages } from './text-cleaning.js';
 import { prepareLorebookContent } from './lorebook-content-preparer.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
@@ -527,25 +527,34 @@ function prepareCharacterContent(rawContent, settings) {
     };
 
     // For per_field strategy
+    // Use cleanContentOrNull so a field whose entire content gets stripped
+    // by user regex is dropped from `fields` rather than appearing under
+    // its label with an empty value. Same bug class as the lorebook
+    // empty-after-clean leak.
     if (settings.strategy === 'per_field') {
         const fields = {};
         for (const [fieldId, enabled] of Object.entries(selectedFields)) {
             if (enabled && FIELD_MAP[fieldId] && character[FIELD_MAP[fieldId].key]) {
-                fields[FIELD_MAP[fieldId].label] = cleanText(character[FIELD_MAP[fieldId].key]);
+                const cleaned = cleanContentOrNull(character[FIELD_MAP[fieldId].key]);
+                if (cleaned !== null) {
+                    fields[FIELD_MAP[fieldId].label] = cleaned;
+                }
             }
         }
         return { text: fields, type: 'fields', character: character };
     }
 
     // Otherwise, concatenate selected fields
+    // cleanContentOrNull also covers the combined case — without it a
+    // fully-stripped field still produces `## Label\n` as its rendered
+    // section, surviving the `.filter(Boolean)` below.
     const combined = Object.entries(selectedFields)
         .filter(([, enabled]) => enabled)
         .map(([fieldId]) => {
             const field = FIELD_MAP[fieldId];
-            if (field && character[field.key]) {
-                return `## ${field.label}\n${cleanText(character[field.key])}`;
-            }
-            return null;
+            if (!field || !character[field.key]) return null;
+            const cleaned = cleanContentOrNull(character[field.key]);
+            return cleaned !== null ? `## ${field.label}\n${cleaned}` : null;
         })
         .filter(Boolean)
         .join('\n\n');
@@ -631,8 +640,14 @@ function prepareUrlContent(rawContent, settings) {
 
     // Basic text cleaning for web content
     if (typeof text === 'string') {
-        // Apply user's cleaning patterns first
-        text = cleanText(text);
+        // Apply user's cleaning patterns first; bail with empty text if
+        // nothing survives (caller can short-circuit instead of inserting
+        // a 0-byte chunk). See cleanContentOrNull docstring.
+        const cleaned = cleanContentOrNull(text);
+        if (cleaned === null) {
+            return { text: '', type: 'url', name: rawContent.name, url: rawContent.url };
+        }
+        text = cleaned;
         // Remove excessive whitespace
         text = text.replace(/\n{3,}/g, '\n\n');
         // Remove common web artifacts
@@ -653,8 +668,13 @@ function prepareDocumentContent(rawContent, settings) {
 
     // Basic text cleaning
     if (typeof text === 'string') {
-        // Apply user's cleaning patterns first
-        text = cleanText(text);
+        // Apply user's cleaning patterns first; bail with empty text if
+        // nothing survives. See cleanContentOrNull docstring.
+        const cleaned = cleanContentOrNull(text);
+        if (cleaned === null) {
+            return { text: '', type: 'document', name: rawContent.name };
+        }
+        text = cleaned;
         // Remove excessive whitespace
         text = text.replace(/\n{3,}/g, '\n\n');
         // Trim
@@ -672,23 +692,42 @@ function prepareWikiContent(rawContent, settings) {
 
     // Wiki content is already formatted with headers from scraper
     if (typeof text === 'string') {
-        // Apply user's cleaning patterns first
-        text = cleanText(text);
-        // Remove excessive whitespace
-        text = text.replace(/\n{3,}/g, '\n\n');
-        // Trim
-        text = text.trim();
+        // Apply user's cleaning patterns first; bail with empty text if
+        // nothing survives. See cleanContentOrNull docstring.
+        const cleaned = cleanContentOrNull(text);
+        if (cleaned === null) {
+            text = '';
+        } else {
+            text = cleaned;
+            // Remove excessive whitespace
+            text = text.replace(/\n{3,}/g, '\n\n');
+            // Trim
+            text = text.trim();
+        }
     }
 
     // For per_page strategy, split back into individual pages
+    // Per-page: clean ONLY the page content (not the `# Title` header).
+    // Two behaviors in one update:
+    //   1. Drop pages whose content goes empty after cleaning — same
+    //      bug class as the lorebook empty-header leak.
+    //   2. Title is preserved verbatim — it's metadata, not content
+    //      the user's regex should touch. Previously the title was
+    //      inside the cleanText call alongside the content.
     if (settings.strategy === 'per_page' && rawContent.pages) {
         return {
-            text: rawContent.pages.map(p => ({
-                text: cleanText(`# ${p.title}\n\n${p.content}`),
-                metadata: {
-                    pageTitle: p.title,
-                },
-            })),
+            text: rawContent.pages
+                .map(p => {
+                    const cleaned = cleanContentOrNull(p.content);
+                    if (cleaned === null) return null;
+                    return {
+                        text: `# ${p.title}\n\n${cleaned}`,
+                        metadata: {
+                            pageTitle: p.title,
+                        },
+                    };
+                })
+                .filter(Boolean),
             type: 'pages',
             pages: rawContent.pages,
             name: rawContent.name,
@@ -712,12 +751,18 @@ function prepareYouTubeContent(rawContent, settings) {
 
     // Clean up transcript text
     if (typeof text === 'string') {
-        // Apply user's cleaning patterns first
-        text = cleanText(text);
-        // Remove excessive whitespace
-        text = text.replace(/\n{3,}/g, '\n\n');
-        // Trim
-        text = text.trim();
+        // Apply user's cleaning patterns first; bail with empty text if
+        // nothing survives. See cleanContentOrNull docstring.
+        const cleaned = cleanContentOrNull(text);
+        if (cleaned === null) {
+            text = '';
+        } else {
+            text = cleaned;
+            // Remove excessive whitespace
+            text = text.replace(/\n{3,}/g, '\n\n');
+            // Trim
+            text = text.trim();
+        }
     }
 
     return {
