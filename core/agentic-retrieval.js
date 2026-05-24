@@ -23,6 +23,12 @@ import { getContext } from '../../../../extensions.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { queryCollection } from './core-vector-api.js';
 import { buildPlannerUserMessage, getAgenticPlannerPrompt } from './prompts-i18n.js';
+import {
+    getSummarizeOpenRouterKey,
+    getSummarizeVllmKey,
+    getAgenticOpenRouterKey,
+    getAgenticVllmKey,
+} from './api-keys.js';
 
 // ============================================================================
 // Public API
@@ -279,7 +285,11 @@ export function _resolveAgenticLLMConfig(settings = {}) {
     }
 
     if (provider === 'openrouter') {
-        const apiKey = (settings.agentic_retrieval_openrouter_api_key || settings.summarize_openrouter_api_key || '').trim();
+        // Override-or-inherit chain. Both layers go through api-keys.js so
+        // secret_state and legacy plaintext are both checked uniformly.
+        // Empty agentic override → inherit summarize key (the "(empty →
+        // inherit summarize key)" UX in the AgentMode settings panel).
+        const apiKey = getAgenticOpenRouterKey(settings) || getSummarizeOpenRouterKey(settings);
         if (!apiKey) {
             return { ok: false, reason: 'missing_openrouter_api_key' };
         }
@@ -291,7 +301,7 @@ export function _resolveAgenticLLMConfig(settings = {}) {
         if (!vllmUrl) {
             return { ok: false, reason: 'missing_vllm_url' };
         }
-        const apiKey = (settings.agentic_retrieval_vllm_api_key || settings.summarize_vllm_api_key || '').trim();
+        const apiKey = getAgenticVllmKey(settings) || getSummarizeVllmKey(settings);
         return { ok: true, provider, model, vllmUrl, apiKey };
     }
 

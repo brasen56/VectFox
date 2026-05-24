@@ -11,7 +11,7 @@
  * ============================================================================
  */
 
-import { SECRET_KEYS, secret_state } from '../../../../secrets.js';
+import { getSummarizeOpenRouterKey, getSummarizeVllmKey } from './api-keys.js';
 import {
     EVENT_TYPES,
     EventBaseExtractionError,
@@ -40,23 +40,11 @@ const DEFAULT_TIMEOUT_MS = 60000;
  * @param {object} settings
  * @returns {string}
  */
-function _getOpenRouterApiKey(settings) {
-    if (settings?.summarize_openrouter_api_key) {
-        return settings.summarize_openrouter_api_key.trim();
-    }
-
-    // Fall back to ST secrets store
-    const stored = secret_state[SECRET_KEYS.OPENROUTER];
-    if (typeof stored === 'string') return stored.trim();
-    if (Array.isArray(stored) && stored.length > 0) {
-        const active = stored.find(s => s?.active) || stored[0];
-        if (typeof active?.value === 'string') return active.value.trim();
-    }
-    if (stored && typeof stored === 'object' && typeof stored.value === 'string') {
-        return stored.value.trim();
-    }
-    return '';
-}
+// _getOpenRouterApiKey lived inline here pre-H-1; the resolution logic now
+// lives in core/api-keys.js::getSummarizeOpenRouterKey (single source of
+// truth shared with summarizer + agentic-retrieval). Thin local alias so
+// existing call sites stay terse.
+const _getOpenRouterApiKey = getSummarizeOpenRouterKey;
 
 // ---------------------------------------------------------------------------
 // Response body builder
@@ -390,7 +378,7 @@ async function _callVLLM(prompt, settings, windowIndex) {
     const timeoutMs = settings.eventbase_timeout_ms || DEFAULT_TIMEOUT_MS;
 
     const headers = { 'Content-Type': 'application/json' };
-    const apiKey = settings.summarize_vllm_api_key;
+    const apiKey = getSummarizeVllmKey(settings);
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {

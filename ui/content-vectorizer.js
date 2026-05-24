@@ -28,6 +28,7 @@ import { extension_settings, getContext } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { getChatUUID } from '../core/chat-vectorization.js';
 import { validateLLMConfig } from '../core/summarizer.js';
+import { getSummarizeOpenRouterKey } from '../core/api-keys.js';
 import { resolveEffectiveSettings } from '../core/content-vectorization.js';
 import { renderCollections } from './database-browser.js';
 import { buildArchiveEventCollectionId } from '../core/collection-ids.js';
@@ -2461,7 +2462,7 @@ async function startContinueVectorization() {
     console.log('[VectFox] LLM config check (vectorize-content):', {
         provider: mergedSettings.summarize_provider,
         model: mergedSettings.summarize_model,
-        hasOpenRouterKey: !!mergedSettings.summarize_openrouter_api_key,
+        hasOpenRouterKey: !!getSummarizeOpenRouterKey(mergedSettings),
         hasVllmUrl: !!mergedSettings.summarize_vllm_url,
     });
     const llmCheck = validateLLMConfig(mergedSettings);
@@ -2729,7 +2730,7 @@ async function startVectorization() {
     console.log('[VectFox] LLM config check (start-vectorization):', {
         provider: mergedSettings.summarize_provider,
         model: mergedSettings.summarize_model,
-        hasOpenRouterKey: !!mergedSettings.summarize_openrouter_api_key,
+        hasOpenRouterKey: !!getSummarizeOpenRouterKey(mergedSettings),
         hasVllmUrl: !!mergedSettings.summarize_vllm_url,
     });
     const llmCheck = validateLLMConfig(mergedSettings);

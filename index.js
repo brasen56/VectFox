@@ -27,6 +27,7 @@ import { synchronizeChat, rearrangeChat, vectorizeAll } from './core/chat-vector
 import { purgeAllVectorIndexes, purgeVectorIndex } from './core/core-vector-api.js';
 import { migrateOldEnabledKeys } from './core/collection-metadata.js';
 import { clearCollectionRegistry, discoverExistingCollections, cleanupCorruptedCollections } from './core/collection-loader.js';
+import { migrateLegacyApiKeys } from './core/api-keys.js';
 import AsyncUtils from './utils/async-utils.js';
 
 // VectFox modules - UI
@@ -130,10 +131,10 @@ const defaultSettings = {
 
     // Summarization before vectorization
     summarize_provider: 'openrouter', // 'openrouter', 'vllm'
-    summarize_openrouter_api_key: '',  // OpenRouter API key for summarization (stored here, not ST secrets)
+    summarize_openrouter_api_key: '',  // Legacy plaintext slot. Pre-2026-05-24 default; new saves go to ST secret_state (slot 'summarize_openrouter_api_key'). migrateLegacyApiKeys() in init moves any existing plaintext value to secrets and clears this field. Reader: core/api-keys.js::getSummarizeOpenRouterKey
     summarize_model: '',              // Model ID for summarization (e.g. 'google/gemini-flash-1.5-8b')
     summarize_vllm_url: '',           // vLLM base URL for summarization (e.g. 'http://localhost:8000')
-    summarize_vllm_api_key: '',       // vLLM API key (stored in extension settings, not ST secrets)
+    summarize_vllm_api_key: '',       // Legacy plaintext slot. Pre-2026-05-24 default; new saves go to ST secret_state (slot 'summarize_vllm_api_key'). migrateLegacyApiKeys() in init moves any existing plaintext value to secrets and clears this field. Reader: core/api-keys.js::getSummarizeVllmKey
     summarize_prompt: '',             // Custom prompt template (empty = use built-in default)
 
     // Hybrid Search fusion settings.
@@ -245,9 +246,9 @@ const defaultSettings = {
     agentic_retrieval_enabled: false,                  // Master toggle (default OFF)
     agentic_retrieval_provider: '',                    // '' → inherit summarize_provider
     agentic_retrieval_model: '',                       // '' → inherit summarize_model
-    agentic_retrieval_openrouter_api_key: '',          // '' → inherit summarize_openrouter_api_key
+    agentic_retrieval_openrouter_api_key: '',          // Legacy plaintext slot (post-2026-05-24 H-1 fix: new saves go to ST secret_state slot 'agentic_retrieval_openrouter_api_key'; migrateLegacyApiKeys moves existing plaintext on first load and clears this field). Empty → inherits summarize key via getSummarizeOpenRouterKey. Reader: core/api-keys.js::getAgenticOpenRouterKey
     agentic_retrieval_vllm_url: '',                    // '' → inherit summarize_vllm_url
-    agentic_retrieval_vllm_api_key: '',                // '' → inherit summarize_vllm_api_key
+    agentic_retrieval_vllm_api_key: '',                // Legacy plaintext slot (post-2026-05-24 H-1 fix: new saves go to ST secret_state slot 'agentic_retrieval_vllm_api_key'; migrateLegacyApiKeys moves existing plaintext on first load and clears this field). Empty → inherits summarize key via getSummarizeVllmKey. Reader: core/api-keys.js::getAgenticVllmKey
     agentic_retrieval_chat_depth: 3,                   // # of past chat turns sent to planner (slider 1-10)
     agentic_retrieval_candidates_to_show: 12,          // Pre-search slice shown to planner (slider 5-20)
     agentic_retrieval_max_queries: 4,                  // Hard ceiling on planner output (slider 1-4)
@@ -431,6 +432,18 @@ jQuery(async () => {
     }
     if (!_ebs.summarize_vllm_url && _ebs.eventbase_vllm_url) _ebs.summarize_vllm_url = _ebs.eventbase_vllm_url;
     if (!_ebs.summarize_vllm_api_key && _ebs.eventbase_vllm_api_key) _ebs.summarize_vllm_api_key = _ebs.eventbase_vllm_api_key;
+
+    // H-1 one-shot migration (2026-05-24): move plaintext *_api_key values
+    // from settings.json to ST secret_state. Runs AFTER the eventbase →
+    // summarize copy above so any user who only had eventbase_* set gets
+    // the value migrated correctly. Idempotent: empty fields = no-op.
+    // See plans/review-fix.md §H-1 and core/api-keys.js for the full design.
+    try {
+        await migrateLegacyApiKeys();
+    } catch (err) {
+        console.warn('[VectFox] migrateLegacyApiKeys failed:', err?.message || err);
+        // Non-fatal — readers fall back to legacy plaintext slots if migration didn't complete.
+    }
 
     // Migrate empty rag_xml_tag to default value
     if (!settings.rag_xml_tag) {

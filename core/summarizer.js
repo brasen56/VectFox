@@ -15,7 +15,7 @@
  * ============================================================================
  */
 
-import { SECRET_KEYS, secret_state } from '../../../../secrets.js';
+import { getSummarizeOpenRouterKey, getSummarizeVllmKey } from './api-keys.js';
 import { getDefaultSummarizePrompt } from './prompts-i18n.js';
 
 /**
@@ -95,7 +95,7 @@ export function getSummarizationConfigFingerprint(settings = {}) {
 
     if (provider === 'vllm') {
         const url = (settings?.summarize_vllm_url || '').trim();
-        const key = (settings?.summarize_vllm_api_key || '').trim();
+        const key = getSummarizeVllmKey(settings);
         const keySig = key ? `${key.length}:${key.slice(0, 2)}:${key.slice(-2)}` : 'missing';
         return `vllm|${url}|${keySig}`;
     }
@@ -196,32 +196,11 @@ function _extractReply(data) {
     return data?.choices?.[0]?.message?.content?.trim() || null;
 }
 
-function _getOpenRouterApiKey(settings) {
-    // Prefer key stored directly in VectFox settings (most reliable)
-    if (settings?.summarize_openrouter_api_key) {
-        return settings.summarize_openrouter_api_key.trim();
-    }
-
-    // Fall back to ST secrets store
-    const stored = secret_state[SECRET_KEYS.OPENROUTER];
-
-    if (typeof stored === 'string') {
-        return stored.trim();
-    }
-
-    if (Array.isArray(stored) && stored.length > 0) {
-        const activeSecret = stored.find(secret => secret?.active) || stored[0];
-        if (typeof activeSecret?.value === 'string') {
-            return activeSecret.value.trim();
-        }
-    }
-
-    if (stored && typeof stored === 'object' && typeof stored.value === 'string') {
-        return stored.value.trim();
-    }
-
-    return '';
-}
+// _getOpenRouterApiKey was inlined here pre-H-1; the resolution logic now
+// lives in core/api-keys.js::getSummarizeOpenRouterKey (single source of
+// truth shared with eventbase-extractor + agentic-retrieval). Kept as a
+// thin local alias so the existing internal call sites below stay terse.
+const _getOpenRouterApiKey = getSummarizeOpenRouterKey;
 
 async function _callOpenRouter(prompt, model, settings, originalLength, maxTokens = DEFAULT_MAX_TOKENS, timeoutMs = DEFAULT_TIMEOUT_MS) {
     const apiKey = _getOpenRouterApiKey(settings);
@@ -276,7 +255,7 @@ async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS
     }
 
     const headers = { 'Content-Type': 'application/json' };
-    const apiKey = settings?.summarize_vllm_api_key;
+    const apiKey = getSummarizeVllmKey(settings);
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
