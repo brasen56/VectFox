@@ -637,6 +637,42 @@ export async function importCollection(exportData, settings, options = {}) {
         throw new Error('No valid chunks to import (all chunks missing text)');
     }
 
+    // ─── H-3 mitigations ──────────────────────────────────────────────────
+    // Reject imports that carry payloads which would cause passive harm
+    // post-import (regex ReDoS at every chat scan; NaN/Infinity vectors that
+    // produce NaN similarity scores and silently break retrieval).
+    //
+    // Length cap on triggers: catastrophic-backtracking patterns can be
+    // shorter than typical legitimate triggers — capping at 300 chars draws
+    // a generous line without restricting normal use. Shape heuristics
+    // intentionally NOT applied (e.g. `(.+)+` is a valid regex when the
+    // user actually means it).
+    const MAX_TRIGGER_LEN = 300;
+    const importedTriggers = exportData?.settings?.triggers;
+    if (Array.isArray(importedTriggers)) {
+        for (const t of importedTriggers) {
+            if (typeof t === 'string' && t.length > MAX_TRIGGER_LEN) {
+                throw new Error(`Trigger exceeds ${MAX_TRIGGER_LEN} char limit (got ${t.length}): "${t.slice(0, 80)}…"`);
+            }
+        }
+    }
+
+    // Vector validation: any non-finite component (NaN, ±Infinity) would
+    // pollute similarity calculations downstream. Reject the whole import
+    // if any vector contains one — better than silently storing broken
+    // vectors and watching retrieval scores come back as NaN. No magnitude
+    // bound — providers vary, normalization is provider-specific.
+    for (let i = 0; i < validChunks.length; i++) {
+        const v = validChunks[i].vector;
+        if (!v || !Array.isArray(v)) continue; // skip — will be re-embedded
+        for (let j = 0; j < v.length; j++) {
+            if (!Number.isFinite(v[j])) {
+                throw new Error(`Chunk ${i} vector has non-finite component at index ${j} (value: ${v[j]}). Refusing to import.`);
+            }
+        }
+    }
+    // ─── end H-3 mitigations ──────────────────────────────────────────────
+
     // Check if we can use pre-computed vectors
     const embeddingInfo = exportData.embedding || {};
     const chunksWithVectors = validChunks.filter(c => c.vector && Array.isArray(c.vector));

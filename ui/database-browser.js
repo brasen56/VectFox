@@ -553,6 +553,22 @@ function bindBrowserEvents() {
     // Reset input so same file can be selected again
     $(this).val("");
 
+    // H-3 mitigation: reject oversized files at the picker before any read
+    // commitment. 400 MB is well above any realistic export (the largest
+    // EventBase exports with thousands of 1536-dim vectors run ~40-60 MB),
+    // but well below browser memory limits — modern desktop browsers handle
+    // a 400 MB file read without crashing. The cap exists to stop a multi-GB
+    // PNG from OOM-ing the tab before parse can fail gracefully.
+    const MAX_IMPORT_BYTES = 400 * 1024 * 1024;
+    if (file.size > MAX_IMPORT_BYTES) {
+      const mb = (file.size / 1024 / 1024).toFixed(1);
+      toastr.error(
+        `File too large: ${mb} MB (max ${MAX_IMPORT_BYTES / 1024 / 1024} MB).`,
+        "VECTFOX Import",
+      );
+      return;
+    }
+
     try {
       toastr.info("Reading import file...", "VectFox");
 
