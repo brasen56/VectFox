@@ -3963,7 +3963,15 @@ function bindSettingsEvents(settings, callbacks) {
     $('#VectFox_cleanup_corrupted').on('click', callbacks.onCleanupCorrupted);
     $('#VectFox_run_diagnostics').on('click', callbacks.onRunDiagnostics);
     $('#VectFox_database_browser').on('click', () => {
-        openDatabaseBrowser();
+        console.log('VECTFOX: Database Browser button clicked');
+        try {
+            const p = openDatabaseBrowser();
+            if (p && typeof p.catch === 'function') {
+                p.catch(err => console.error('VECTFOX: openDatabaseBrowser rejected:', err));
+            }
+        } catch (err) {
+            console.error('VECTFOX: Database Browser click handler threw synchronously:', err);
+        }
     });
     $('#VectFox_view_results').on('click', () => {
         openQueryTestModal();

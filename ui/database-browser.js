@@ -129,33 +129,47 @@ export function initializeDatabaseBrowser(settings) {
  * Opens the database browser modal
  */
 export async function openDatabaseBrowser() {
+  console.log("VECTFOX Database Browser: openDatabaseBrowser called, isOpen=", browserState.isOpen);
   if (browserState.isOpen) {
-    console.log("VECTFOX Database Browser: Already open");
+    console.log("VECTFOX Database Browser: Already open (early return)");
     return;
   }
 
   browserState.isOpen = true;
+  try {
+    // Check plugin availability
+    browserState.pluginAvailable = await checkPluginAvailable();
+    console.log("VECTFOX Database Browser: pluginAvailable=", browserState.pluginAvailable);
 
-  // Check plugin availability
-  browserState.pluginAvailable = await checkPluginAvailable();
+    // Create modal if it doesn't exist
+    if ($("#vectfox_database_browser_modal").length === 0) {
+      console.log("VECTFOX Database Browser: creating modal");
+      createBrowserModal();
+    } else {
+      console.log("VECTFOX Database Browser: modal already in DOM");
+    }
 
-  // Create modal if it doesn't exist
-  if ($("#vectfox_database_browser_modal").length === 0) {
-    createBrowserModal();
+    // Show/hide plugin warning banner
+    updatePluginWarningBanner();
+
+    // Force a fresh plugin scan on open so collections created since last scan
+    // (e.g. just-vectorized EventBase collections) land in pluginCollectionData with
+    // their real source/model — otherwise View Chunks sends source: 'unknown' and
+    // the plugin queries the wrong on-disk path.
+    console.log("VECTFOX Database Browser: about to refreshCollections(true)");
+    await refreshCollections(true);
+    console.log("VECTFOX Database Browser: refreshCollections done");
+
+    // Show modal
+    $("#vectfox_database_browser_modal").fadeIn(200);
+    console.log("VECTFOX Database Browser: Opened (fadeIn fired)");
+  } catch (err) {
+    // Never leave isOpen=true on error — that would jam the button forever
+    // (the early-return guard above would block every subsequent click).
+    console.error("VECTFOX Database Browser: openDatabaseBrowser threw, resetting isOpen=false", err);
+    browserState.isOpen = false;
+    throw err;
   }
-
-  // Show/hide plugin warning banner
-  updatePluginWarningBanner();
-
-  // Force a fresh plugin scan on open so collections created since last scan
-  // (e.g. just-vectorized EventBase collections) land in pluginCollectionData with
-  // their real source/model — otherwise View Chunks sends source: 'unknown' and
-  // the plugin queries the wrong on-disk path.
-  await refreshCollections(true);
-
-  // Show modal
-  $("#vectfox_database_browser_modal").fadeIn(200);
-  if (browserState.settings?.eventbase_debug_logging) console.log("VECTFOX Database Browser: Opened");
 }
 
 /**
