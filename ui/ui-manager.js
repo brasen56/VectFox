@@ -2233,7 +2233,12 @@ function bindSettingsEvents(settings, callbacks) {
                         ? (typeof data.data === 'string' ? data.data : JSON.stringify(data.data))
                         : '(no detail returned)';
                     console.warn('[VectFox] Upstream rejected model-list request:', data.data);
-                    throw new Error(`Upstream rejected: ${detail.slice(0, 300)}. Check that the API key in SECRET_KEYS.CUSTOM matches the vLLM Base URL endpoint.`);
+                    // Common cause is the endpoint not exposing /v1/models at all
+                    // (siliconflow, some hosted vLLM-compatible providers do this
+                    // even when /v1/chat/completions and /v1/embeddings work fine
+                    // with the same key). Summarize still works — type the model
+                    // name manually instead of using the Choose button.
+                    throw new Error(`Upstream /v1/models rejected the request. Detail: ${detail.slice(0, 200)}. If embedding/summarize works with this URL+key, the endpoint probably just doesn't expose model listing — type the model name manually.`);
                 }
                 // OpenAI standard: `{ data: [...] }`, Cohere: `{ models: [...] }`,
                 // some bare endpoints return an array directly.
