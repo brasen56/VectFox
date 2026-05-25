@@ -112,15 +112,23 @@ export class QdrantBackend extends VectorBackend {
         let config;
 
         if (settings.qdrant_use_cloud) {
-            // Cloud mode: use URL and API key
+            // Cloud mode: use URL. The API key is resolved server-side by the
+            // Similharity plugin from ST's secret_state slot 'api_key_qdrant'
+            // (post-2026-05-26 migration). Client sends apiKey:null and the
+            // plugin's /backend/init/qdrant handler reads the real key via
+            // readSecret() before passing config to qdrantBackend.initialize.
+            // For pre-migration users still on plaintext, getQdrantApiKey()
+            // returns the transition-fallback value — keep checking it so
+            // that flow doesn't break during the upgrade window.
+            const legacyPlaintext = getQdrantApiKey(settings);
             config = {
                 url: settings.qdrant_url || null,
-                apiKey: getQdrantApiKey(settings) || null,
+                apiKey: legacyPlaintext || null,
                 // Explicitly clear local settings to prevent conflicts
                 host: null,
                 port: null,
             };
-            console.log('VectFox: Initializing Qdrant Cloud:', config.url);
+            console.log('VectFox: Initializing Qdrant Cloud:', config.url, legacyPlaintext ? '(using legacy plaintext key — will migrate)' : '(plugin resolves key from secret_state)');
         } else {
             // Local mode: use host and port
             config = {

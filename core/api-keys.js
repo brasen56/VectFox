@@ -66,12 +66,25 @@
  *     plaintext value into `SECRET_KEYS.CUSTOM` (don't-clobber) on
  *     first load post-upgrade.
  *
- *   - qdrant_api_key, ollama_api_key:
- *     Stay as plaintext in settings.json. Same LAN-scope justification —
- *     but actually verified this time: both are reads-only fields where
- *     the client passes the value through to its respective backend; no
- *     ST proxy involvement. Migration to secret_state would require
- *     refactoring every read site to go through ST's proxy. Out of scope.
+ *   - Qdrant API key (Cloud auth):
+ *     Stored in ST's secret_state under the CUSTOM slot name `api_key_qdrant`
+ *     (not in ST's SECRET_KEYS enum — writeSecret/readSecret accept any
+ *     string key; only getSecretState's read-to-client path filters by enum).
+ *     Server-side: the Similharity plugin reads it via
+ *     `readSecret(req.user.directories, 'api_key_qdrant', null)` and uses
+ *     the real value to authenticate to Qdrant Cloud. Client-side:
+ *     `secret_state.api_key_qdrant` is undefined (enum filter), so the UI
+ *     presence indicator round-trips via the plugin's
+ *     `/qdrant/key-status` endpoint instead (see `fetchQdrantApiKeyPresence`).
+ *     Migration drains any legacy `settings.qdrant_api_key` plaintext into
+ *     the slot on first load and deletes the plaintext field.
+ *
+ *   - ollama_api_key:
+ *     Stay as plaintext in settings.json. Ollama is local-only in practice
+ *     (LAN/personal scope), and there's no ST proxy for the embedding path
+ *     that ollama uses, so the masking problem would break it. Migration
+ *     to secret_state would require refactoring every read site. Out of
+ *     scope until someone demonstrates a real attack surface here.
  *
  *   - bananabread_api_key:
  *     Untouched — the provider has been unselectable since day one
@@ -184,13 +197,58 @@ export function getCustomApiKey(settings) {
 export const getVllmApiKey = getCustomApiKey;
 
 /**
- * Resolve the Qdrant API key. Plaintext storage.
+ * Resolve the Qdrant API key presence indicator.
+ *
+ * Post-2026-05-26: the key lives in ST's secret_state under the custom slot
+ * `api_key_qdrant`. That slot is NOT in ST's `SECRET_KEYS` enum, so
+ * `getSecretState` (and therefore client-side `secret_state.api_key_qdrant`)
+ * does NOT surface it. Server-side `readSecret(directories, 'api_key_qdrant')`
+ * DOES read it correctly — that's how the Similharity plugin auth-flows the
+ * real key value into Qdrant.
+ *
+ * For client-side presence checks (UI placeholder, "is the key set"), call
+ * `fetchQdrantApiKeyPresence()` below — it round-trips to the plugin's
+ * `/qdrant/key-status` endpoint which returns `{set, masked}`.
+ *
+ * This synchronous reader is kept ONLY as a transition fallback for the
+ * pre-migration plaintext field. After migration drains it, this returns ''
+ * and the UI/backends rely on the async presence fetch + server-side
+ * resolution respectively.
+ *
  * @param {object} [settings] - extension_settings.vectfox
- * @returns {string} key value or empty string
+ * @returns {string} pre-migration plaintext value, or '' once migrated
  */
 export function getQdrantApiKey(settings) {
     const v = settings?.qdrant_api_key;
     return (typeof v === 'string') ? v.trim() : '';
+}
+
+/**
+ * Async presence fetch for the Qdrant API key via the Similharity plugin's
+ * `/qdrant/key-status` endpoint. Returns `{set: false, masked: ''}` when the
+ * plugin is unreachable so callers can degrade gracefully.
+ *
+ * @returns {Promise<{set: boolean, masked: string}>}
+ */
+export async function fetchQdrantApiKeyPresence() {
+    try {
+        const response = await fetch('/api/plugins/similharity/qdrant/key-status', {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+            return { set: false, masked: '' };
+        }
+        const data = await response.json();
+        return {
+            set: !!data?.set,
+            masked: typeof data?.masked === 'string' ? data.masked : '',
+        };
+    } catch (err) {
+        // Plugin unreachable (not installed, network error, etc.) — caller
+        // should treat as "presence unknown" and not render the key indicator.
+        return { set: false, masked: '' };
+    }
 }
 
 /**
@@ -337,6 +395,46 @@ export async function migrateLegacyApiKeys() {
             moves.push(msg);
         }
     }
+
+    // ─── Qdrant API key → 'api_key_qdrant' (custom slot) drain ───
+    // Pre-2026-05-26: VectFox stored the Qdrant Cloud API key plaintext in
+    // settings.qdrant_api_key. The backends/qdrant.js init flow sent the raw
+    // value to the Similharity plugin which then auth'd to Qdrant Cloud.
+    // Post-refactor: client sends `apiKey: null` to the plugin, which reads
+    // the real value server-side from ST's secret_state slot 'api_key_qdrant'
+    // via readSecret. The slot is a custom name (not in ST's SECRET_KEYS enum)
+    // because no enum slot exists for Qdrant. writeSecret accepts any string
+    // slot name; readSecret reads it correctly server-side; client-side
+    // secret_state filters non-enum slots, so the UI presence indicator goes
+    // through the plugin's /qdrant/key-status endpoint instead (see
+    // fetchQdrantApiKeyPresence above).
+    const QDRANT_SLOT = 'api_key_qdrant';
+    const rawQdrantPlaintext = vf?.qdrant_api_key;
+    if (typeof rawQdrantPlaintext === 'string' && rawQdrantPlaintext.trim().length > 0) {
+        const qdrantValue = rawQdrantPlaintext.trim();
+        // No don't-clobber check here: custom slot is undefined in client-side
+        // secret_state, so we can't presence-check from JS. Plugin-side this
+        // overwrites any prior value, which is acceptable for the first
+        // migration pass (slot is brand new for VectFox users).
+        try {
+            await writeSecret(QDRANT_SLOT, qdrantValue);
+            moves.push(`Qdrant → wrote to secret_state.${QDRANT_SLOT} (len=${qdrantValue.length})`);
+        } catch (err) {
+            console.warn('[VectFox migrate] writeSecret(api_key_qdrant) failed:', err?.message || err);
+            moves.push(`Qdrant → writeSecret(${QDRANT_SLOT}) FAILED — Qdrant Cloud auth may break, re-enter via VectFox UI`);
+        }
+    }
+    // Always remove the plaintext field whether or not we had a value —
+    // matches the OpenRouter/vLLM migration pattern. settings.json should
+    // never contain qdrant_api_key after first reload post-upgrade.
+    if (Object.prototype.hasOwnProperty.call(vf, 'qdrant_api_key')) {
+        delete vf.qdrant_api_key;
+        mutated = true;
+        if (!rawQdrantPlaintext) {
+            moves.push(`Qdrant → removed empty plaintext qdrant_api_key from settings.json`);
+        }
+    }
+
     if (mutated) {
         // saveSettingsDebounced flushes our deletions/consolidations to
         // settings.json. Without this, the in-memory changes don't reach

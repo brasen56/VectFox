@@ -18,6 +18,7 @@ import {
     getCustomApiKey,
     getQdrantApiKey,
     getOllamaApiKey,
+    fetchQdrantApiKeyPresence,
 } from '../core/api-keys.js';
 import { getWebLlmProvider as getSharedWebLlmProvider } from '../providers/webllm.js';
 import StringUtils from '../utils/string-utils.js';
@@ -2721,30 +2722,48 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // Qdrant API key — plaintext in settings.qdrant_api_key
-    // 2026-05-25: reverted from the custom-slot secret_state approach
-    // (those don't round-trip). Plaintext is justified by the personal/LAN
-    // deployment scope — see Doc/dev_helper.md §15. Masked-paste UX:
-    // user pastes, we save on blur (`change`), clear input, show mask.
-    const updateQdrantKeyDisplay = () => {
-        const savedKey = getQdrantApiKey(settings);
-        if (savedKey) {
-            const masked = savedKey.length > 4
-                ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
-                : '*'.repeat(savedKey.length);
-            $('#VectFox_qdrant_api_key').attr('placeholder', `Key saved: ${masked}`);
-        } else {
-            $('#VectFox_qdrant_api_key').attr('placeholder', 'Your Qdrant Cloud API key');
+    // Qdrant API key — stored in ST's secret_state under custom slot
+    // 'api_key_qdrant' (post-2026-05-26 migration). Client-side
+    // secret_state filters non-enum slots, so the masked placeholder
+    // comes from the plugin's /qdrant/key-status endpoint asynchronously.
+    // Pre-migration users still on plaintext see their value masked from
+    // settings.qdrant_api_key during the transition window.
+    const updateQdrantKeyDisplay = async () => {
+        const legacyPlaintext = getQdrantApiKey(settings);
+        if (legacyPlaintext) {
+            const masked = legacyPlaintext.length > 4
+                ? '*'.repeat(Math.min(legacyPlaintext.length - 4, 8)) + legacyPlaintext.slice(-4)
+                : '*'.repeat(legacyPlaintext.length);
+            $('#VectFox_qdrant_api_key').attr('placeholder', `Key saved: ${masked} (legacy plaintext, will migrate on next reload)`);
+            return;
+        }
+        // No plaintext — check server-side presence via plugin endpoint.
+        try {
+            const presence = await fetchQdrantApiKeyPresence();
+            if (presence.set) {
+                $('#VectFox_qdrant_api_key').attr('placeholder', `Key saved: ${presence.masked}`);
+            } else {
+                $('#VectFox_qdrant_api_key').attr('placeholder', 'Your Qdrant Cloud API key');
+            }
+        } catch (err) {
+            $('#VectFox_qdrant_api_key').attr('placeholder', 'Your Qdrant Cloud API key (presence check unavailable)');
         }
     };
     updateQdrantKeyDisplay();
-    $('#VectFox_qdrant_api_key').on('change', function() {
+    $('#VectFox_qdrant_api_key').on('change', async function() {
         const value = String($(this).val()).trim();
         if (value) {
-            settings.qdrant_api_key = value;
-            Object.assign(extension_settings.vectfox, settings);
-            saveSettingsDebounced();
-            toastr.success('Qdrant API key saved');
+            try {
+                await writeSecret('api_key_qdrant', value);
+                // secret_state.api_key_qdrant won't appear (enum filter), so
+                // skip readSecretState — the plugin endpoint is the source of
+                // truth for presence now.
+                toastr.success('Qdrant API key saved to secret_state');
+            } catch (err) {
+                console.error('[VectFox] writeSecret(api_key_qdrant) failed:', err);
+                toastr.error('Failed to save Qdrant key — see console');
+                return;
+            }
             $(this).val('');
             updateQdrantKeyDisplay();
         }
