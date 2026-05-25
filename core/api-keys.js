@@ -18,15 +18,29 @@
  * destroyed them. The BananaBread comment at ui-manager.js:3589 had
  * warned about this; we re-learned it the hard way.
  *
- * Current model — reuse whatever ST already round-trips:
+ * Current model — reuse whatever ST already round-trips, and proxy when
+ * the real key value is needed:
  *
  *   - OpenRouter (one key for embedding + summarize + agent):
- *     Stored in ST's well-known `SECRET_KEYS.OPENROUTER` slot. ST
- *     round-trips this correctly because it uses it for its own
- *     chat-completion settings. All three VectFox UI inputs (Embedding /
- *     LLM Summarization / AgentMode) write to and read from this slot —
- *     they all reflect the same value. Setting the key in any of them
- *     updates the others.
+ *     Stored in ST's well-known `SECRET_KEYS.OPENROUTER` slot. ST's
+ *     `getSecretState` returns this slot as an array of `{value, label,
+ *     active, id}` entries — but `value` is MASKED (e.g. "*******abcd")
+ *     unless `allowKeysExposure: true` is set in `config.yaml` (default
+ *     false). So `getOpenRouterApiKey()` returns the masked string when
+ *     a key is configured, and empty string otherwise. That's a presence
+ *     indicator — DON'T send it as a Bearer token; you'll get 401.
+ *
+ *     Embedding works because it goes through ST's `/api/vector/insert`
+ *     (or the Similharity plugin's `/api/plugins/similharity/chunks/insert`)
+ *     proxy, which reads the real key server-side via
+ *     `readSecret(SECRET_KEYS.OPENROUTER)`.
+ *
+ *     Summarize, EventBase, and Agentic chat-completion paths apply the
+ *     same pattern: POST to `/api/backends/chat-completions/generate` with
+ *     `chat_completion_source: 'openrouter'` — ST's server reads the real
+ *     key and forwards to OpenRouter. All three VectFox UI inputs
+ *     (Embedding / LLM Summarization / AgentMode) write to the same slot
+ *     via `writeSecret`, so setting the key in any of them is shared.
  *
  *   - vLLM (one key for embedding + summarize + agent):
  *     Stored as plaintext in `settings.vllm_api_key`. There's no ST
@@ -98,17 +112,22 @@ function _readSecretValue(slot) {
 // ─── Public readers ─────────────────────────────────────────────────────
 
 /**
- * Resolve the OpenRouter API key. ONE key shared across embedding,
- * summarize, and agentic-retrieval paths.
+ * Resolve the OpenRouter API key — RETURNS A MASKED VALUE, not the real key.
  *
- * Reads `SECRET_KEYS.OPENROUTER` (ST's well-known slot). All three UI
- * inputs (Embedding OpenRouter, LLM Summarization OpenRouter, AgentMode
- * OpenRouter) write to this slot, so setting the key in any of them
- * affects all three usages.
+ * ST's `getSecretState` masks all values for non-EXPORTABLE_KEYS (OpenRouter
+ * is not exportable), so what we get back is something like "*******abcd".
+ * Use this for:
+ *   - Presence checks (empty string ⇒ no key configured)
+ *   - UI placeholder masking
  *
- * @param {object} [settings] - kept for signature compat with older callers;
- *                              not read (legacy plaintext is migrated away by init).
- * @returns {string} key value or empty string
+ * DO NOT pass the return value as a Bearer token — you'll get 401. Instead,
+ * route OpenRouter requests through ST's `/api/backends/chat-completions/generate`
+ * proxy with `chat_completion_source: 'openrouter'`; the server reads the
+ * real key via `readSecret(SECRET_KEYS.OPENROUTER)` and forwards correctly.
+ * See `core/summarizer.js::_callOpenRouter` for the canonical call pattern.
+ *
+ * @param {object} [settings] - kept for signature compat; not read.
+ * @returns {string} masked value (presence indicator) or empty string
  */
 export function getOpenRouterApiKey(settings) {
     return _readSecretValue(SECRET_KEYS.OPENROUTER);

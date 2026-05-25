@@ -1,35 +1,67 @@
 # SigMap Query Context
-Generated: 2026-05-24T01:29:11.771Z
+Generated: 2026-05-24T23:59:27.745Z
 
-## backends\qdrant.js
+## core\content-vectorization.js
 ```
-export class QdrantBackend
-async initialize(settings)
-if(settings.qdrant_use_cloud)
-if(!response.ok)
-async healthCheck()
-if(!collectionId || typeof collectionId !== 'string')
-if(!collectionId || typeof collectionId !== 'string')
-if(parts.length >= 3 && parts[0] === 'vf')
-async getSavedHashes(collectionId, settings)
-function _isDimensionMismatch(errorBody)
-function _warnDimensionMismatch(errorBody)
-function getPluginProviderParams(settings)
-function getActualCollectionId(collectionId, settings) → string
+export function resolveEffectiveSettings(callerSettings) → object
+export async function vectorizeContent({ contentType, source, settings, abortSignal = null, continueMode = false, startFromMessage = 1 }) → Promise<{success: boolean
+export async function resolveAndPrepareContent(contentType, source, settings) → Promise<{text: string, ..
+export async function deleteContentCollection(collectionId, callerSettings = null)
+async function resolveSource(contentType, source)
+async function loadSelectedSource(contentType, sourceId)
+async function loadLorebookContent(lorebookName, context)
+async function loadCharacterContent(characterId, context)
+async function prepareContent(contentType, rawContent, settings, startFromMessage = 1)
+function prepareCharacterContent(rawContent, settings)
+function prepareChatContent(rawContent, settings, startFromMessage = 1)
+function prepareUrlContent(rawContent, settings)
+function prepareDocumentContent(rawContent, settings)
+function prepareWikiContent(rawContent, settings)
+function prepareYouTubeContent(rawContent, settings)
+function generateCollectionId(contentType, source, settings)
+function enrichChunks(chunks, contentType, source, settings, preparedContent, VectFoxSettings)
 ```
 
-## backends\standard.js
+## diagnostics\configuration.js
 ```
-export class StandardBackend
-constructor()
-async initialize(settings)
-if(this.pluginAvailable)
-async healthCheck()
-async getSavedHashes(collectionId, settings) → object
-if(!response.ok)
-if(response.status === 500)
-async insertVectorItems(collectionId, items, settings, abortSignal = null)
-function getProviderSpecificParams(settings, isQuery = false) → object
+export function checkChatEnabled(settings)
+export function checkChunkSize(settings)
+export function checkScoreThreshold(settings)
+export function checkInsertQueryCounts(settings)
+export async function checkChatVectors(settings)
+export function checkVisualizerApiReadiness(settings)
+export function checkCollectionIdFormat()
+export function checkConditionalActivationModule()
+export async function checkHashCollisionRate(settings)
+export function checkChatMetadataIntegrity()
+export async function checkConditionRuleValidity(settings)
+export async function checkCollectionRegistryStatus(settings)
+export async function checkPromptContextConfig(settings)
+export function checkPNGExportCapability()
+```
+
+## core\chat-vectorization.js
+```
+export async function synchronizeChat(settings, batchSize = 5, triggerEvent = null) → Promise<object>
+export async function rearrangeChat(chat, settings, type, { dryRun = false, testMessage = null } = {})
+export async function vectorizeAll(settings, batchSize, abortSignal = null)
+function getStringHash(str) → number
+function getTextWithoutAttachments(message) → string
+async function groupMessagesByStrategy(messages, strategy, batchSize = 4, keywordLevel = 'balanced', settings = {})
+async function applyChunkConditions(chunks, chat, settings) → object[]
+function trackChunkActivation(hash, messageCount)
+async function rerankWithBananaBread(query, chunks, settings) → Promise<Array>
+function gatherCollectionsToQuery(settings) → string[]
+function buildSearchQuery(chat, settings) → string
+async function queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData) → Promise<object[]>
+async function expandSummaryChunks(chunks, activeCollections, settings, debugData) → Promise<object[]>
+function applyThresholdFilter(chunks, threshold, debugData) → object[]
+async function applyConditionsStage(chunks, chat, settings, debugData) → Promise<object[]>
+async function applyGroupsAndLinksStage(chunks, activeCollections, settings, debugData) → Promise<object[]>
+function deduplicateChunks(chunks, chat, settings, debugData) → {toInject: object[], skip
+function buildNestedInjectionText(chunks, settings) → string
+function resolveChunkInjectionPosition(chunk, settings) → {position: number, depth:
+function injectChunksIntoPrompt(chunksToInject, settings, debugData) → {verified: boolean, text:
 ```
 
 ## core\core-vector-api.js
@@ -56,44 +88,13 @@ export async function listChunks(collectionId, settings, options = {}) → Promi
 export async function updateChunkText(collectionId, hash, newText, settings)
 ```
 
-## diagnostics\infrastructure.js
+## core\agentic-retrieval.js
 ```
-export async function checkVectorsExtension()
-export async function checkBackendEndpoints(settings)
-export async function checkServerPlugin()
-export async function checkPluginEndpoints()
-export async function checkQdrantBackend(settings)
-export async function checkQdrantDimensionMatch(settings)
-export async function checkEmbeddingProvider(settings)
-export function checkTransformersMemoryLimits(settings)
-export function checkApiKeys(settings)
-export function checkApiUrls(settings)
-export async function checkProviderConnectivity(settings)
-export function checkWebLlmExtension(settings)
-export async function checkBananaBreadConnection(settings)
-function getPluginProviderParams(settings) → object
-```
-
-## core\collection-loader.js
-```
-export function getCollectionFilterReason(collectionId) → string|null
-export function getCollectionRegistry() → string[]
-export function sanitizeHandleId(name)
-export function registerCollection(collectionId)
-export function getCollectionListing(settings) → Array<{ * registryKey: st
-export function unregisterCollection(collectionId)
-export async function deleteCollection(collectionId, settings, registryKey = null) → Promise<{success: boolean
-export function clearCollectionRegistry()
-export function cleanupCollectionRegistry()
-export function cleanupTestCollections() → number
-export async function checkPluginAvailable() → Promise<boolean>
-export async function cleanupCorruptedCollections() → Promise<{purged: Array<{k
-export async function discoverExistingCollections(settings) → Promise<string[]>
-export async function doesChatHaveVectors(settings, overrideChatId, overrideUUID) → Promise<{hasVectors: bool
-export async function loadAllCollections(settings, autoDiscover = true) → Promise<object[]>
-export function isCollectionEmpty(registryKey) → boolean
-function _sanitizeHandleId(name)
-function getCollectionDisplayName(collectionId, metadata) → string
-async function discoverViaPlugin(settings) → Promise<string[]>
-async function probeCollection(collectionId, settings) → Promise<{exists: boolean,
+export async function retrieveEventsWithAgent(params) → Promise<{events: object[]
+export function _resolveAgenticLLMConfig(settings = {})
+export function _validatePlannerFilters(raw, settings)
+async function _callPlanner({ systemPrompt, userMessage, llmCfg, timeoutMs })
+function _getRecentChatForPlanner(settings)
+function _firstNWords(text, n)
+function _validateAndTrimQueries(queries, maxQueries)
 ```

@@ -2255,6 +2255,12 @@ function bindSettingsEvents(settings, callbacks) {
     // embedding/summarize/agentic (no ST shared SECRET_KEYS slot for vLLM,
     // and custom slots don't round-trip). All three UI inputs read/write
     // the same settings.vllm_api_key plaintext field.
+    //
+    // Cross-input refresh: each display function also listens for the
+    // `vectfox:vllm-key-changed` custom event, so saving the key in any
+    // of the three inputs updates all three placeholders. Without this
+    // the sibling inputs would keep showing the previous key's mask until
+    // the page reloads.
     const updateSummarizeVllmKeyDisplay = () => {
         const savedKey = getVllmApiKey(settings);
         if (savedKey) {
@@ -2267,6 +2273,7 @@ function bindSettingsEvents(settings, callbacks) {
         }
     };
     updateSummarizeVllmKeyDisplay();
+    $(document).on('vectfox:vllm-key-changed', updateSummarizeVllmKeyDisplay);
     $('#VectFox_summarize_vllm_apikey').on('change', function() {
         const value = String($(this).val()).trim();
         if (value) {
@@ -2275,16 +2282,21 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
             toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
             $(this).val('');
-            updateSummarizeVllmKeyDisplay();
+            $(document).trigger('vectfox:vllm-key-changed');
         }
     });
 
     // OpenRouter API key (summarize input) — writes to SECRET_KEYS.OPENROUTER
-    // 2026-05-25 architecture pivot: ONE OpenRouter key shared across
-    // embedding/summarize/agentic. Custom secret_state slots don't
-    // round-trip (BananaBread comment was right), so we reuse ST's
-    // well-known SECRET_KEYS.OPENROUTER which DOES round-trip. All three
-    // UI inputs (Embedding, Summarize, AgentMode) read/write this slot.
+    // 2026-05-25: ONE OpenRouter key shared across embedding/summarize/agentic,
+    // stored in ST's well-known SECRET_KEYS.OPENROUTER slot (same slot ST's own
+    // Connection Profile uses). The real key value lives server-side; the client
+    // only ever sees a masked placeholder. Chat-completion calls are routed
+    // through ST's /api/backends/chat-completions/generate proxy so the server
+    // can read the real key — see core/api-keys.js for the full rationale.
+    //
+    // Cross-input refresh: each display function also listens for the
+    // `vectfox:openrouter-key-changed` custom event, so saving the key in any
+    // of the three inputs updates all three placeholders immediately.
     const updateSummarizeORKeyDisplay = () => {
         const savedKey = getOpenRouterApiKey(settings);
         if (savedKey) {
@@ -2297,6 +2309,7 @@ function bindSettingsEvents(settings, callbacks) {
         }
     };
     updateSummarizeORKeyDisplay();
+    $(document).on('vectfox:openrouter-key-changed', updateSummarizeORKeyDisplay);
     $('#VectFox_summarize_openrouter_apikey').on('change', async function() {
         const value = String($(this).val()).trim();
         if (value) {
@@ -2310,7 +2323,7 @@ function bindSettingsEvents(settings, callbacks) {
                 return;
             }
             $(this).val('');
-            updateSummarizeORKeyDisplay();
+            $(document).trigger('vectfox:openrouter-key-changed');
         }
     });
 
@@ -2366,6 +2379,7 @@ function bindSettingsEvents(settings, callbacks) {
         }
     };
     updateAgenticORKeyDisplay();
+    $(document).on('vectfox:openrouter-key-changed', updateAgenticORKeyDisplay);
     $('#VectFox_agentic_openrouter_apikey').on('change', async function() {
         const value = String($(this).val()).trim();
         if (value) {
@@ -2379,7 +2393,7 @@ function bindSettingsEvents(settings, callbacks) {
                 return;
             }
             $(this).val('');
-            updateAgenticORKeyDisplay();
+            $(document).trigger('vectfox:openrouter-key-changed');
         }
     });
 
@@ -2406,6 +2420,7 @@ function bindSettingsEvents(settings, callbacks) {
         }
     };
     updateAgenticVllmKeyDisplay();
+    $(document).on('vectfox:vllm-key-changed', updateAgenticVllmKeyDisplay);
     $('#VectFox_agentic_vllm_apikey').on('change', function() {
         const value = String($(this).val()).trim();
         if (value) {
@@ -2414,7 +2429,7 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
             toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
             $(this).val('');
-            updateAgenticVllmKeyDisplay();
+            $(document).trigger('vectfox:vllm-key-changed');
         }
     });
 
@@ -3691,6 +3706,7 @@ function bindSettingsEvents(settings, callbacks) {
         }
     };
     updateVllmKeyDisplay();
+    $(document).on('vectfox:vllm-key-changed', updateVllmKeyDisplay);
     $('#VectFox_vllm_api_key').on('change', function() {
         const value = String($(this).val()).trim();
         if (value) {
@@ -3699,7 +3715,7 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
             toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
             $(this).val('');
-            updateVllmKeyDisplay();
+            $(document).trigger('vectfox:vllm-key-changed');
         }
     });
 
@@ -3734,11 +3750,12 @@ function bindSettingsEvents(settings, callbacks) {
 
         try {
             if (!_openrouterModelCache) {
+                // OpenRouter's /models endpoint is public — auth only personalizes
+                // the response. getOpenRouterApiKey() returns a MASKED value
+                // (see core/api-keys.js docstring), which would 401 if sent as
+                // Bearer. Fetch unauthenticated; the global model list is fine
+                // for the picker UI.
                 const headers = { 'Content-Type': 'application/json' };
-                // ONE OpenRouter key — same getOpenRouterApiKey helper as
-                // the embedding/summarize/agentic readers all use.
-                const apiKey = getOpenRouterApiKey(settings);
-                if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
                 // Embedding models use output_modalities=embeddings — not in the standard list
                 const [embResp, allResp] = await Promise.all([
                     fetch('https://openrouter.ai/api/v1/models?output_modalities=embeddings', { method: 'GET', headers }),
@@ -3815,34 +3832,42 @@ function bindSettingsEvents(settings, callbacks) {
         $list.hide();
     });
 
-    // OpenRouter API key - saves directly to ST secrets
-    // Show existing key if set
+    // OpenRouter API key (embedding input) — writes to SECRET_KEYS.OPENROUTER,
+    // the shared slot used by ST's own Connection Profile and by VectFox's
+    // Summarize + AgentMode inputs. See core/api-keys.js for the rationale.
     const updateOpenRouterKeyDisplay = () => {
-        const secrets = secret_state[SECRET_KEYS.OPENROUTER];
-        if (Array.isArray(secrets) && secrets.length > 0) {
-            const activeSecret = secrets.find(s => s.active) || secrets[0];
-            if (activeSecret?.value) {
-                $('#VectFox_openrouter_apikey').attr('placeholder', activeSecret.value);
-            }
+        const savedKey = getOpenRouterApiKey(settings);
+        if (savedKey) {
+            const masked = savedKey.length > 4
+                ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
+                : '*'.repeat(savedKey.length);
+            $('#VectFox_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (shared with Summarize + AgentMode)`);
+        } else {
+            $('#VectFox_openrouter_apikey').attr('placeholder', 'Paste OpenRouter key (shared with Summarize + AgentMode)');
         }
     };
     updateOpenRouterKeyDisplay();
+    $(document).on('vectfox:openrouter-key-changed', () => {
+        updateOpenRouterKeyDisplay();
+        _openrouterModelCache = null; // sibling-input save also invalidates the model picker cache
+    });
 
     $('#VectFox_openrouter_apikey')
         .on('change', async function() {
             const value = String($(this).val()).trim();
             if (value) {
-                await writeSecret(SECRET_KEYS.OPENROUTER, value);
-                await readSecretState(); // Refresh state to get masked value
-                // H-1 fix 2026-05-24: dropped `settings.openrouter_api_key = value`
-                // dual-storage write. The key was being persisted to BOTH
-                // ST secrets AND settings.json plaintext — defeated the
-                // purpose of writeSecret. Embedding code paths that need
-                // the key already read it from secret_state.
-                _openrouterModelCache = null; // Invalidate cache so next fetch uses new key
-                toastr.success('OpenRouter API key saved (ST secrets)');
-                $(this).val(''); // Clear input
-                updateOpenRouterKeyDisplay(); // Show masked key in placeholder
+                try {
+                    await writeSecret(SECRET_KEYS.OPENROUTER, value);
+                    await readSecretState(); // refresh masked state for display
+                } catch (err) {
+                    console.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
+                    toastr.error('Failed to save OpenRouter key — see console');
+                    return;
+                }
+                _openrouterModelCache = null;
+                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
+                $(this).val('');
+                $(document).trigger('vectfox:openrouter-key-changed');
             }
         });
 

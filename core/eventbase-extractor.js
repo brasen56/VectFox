@@ -12,6 +12,7 @@
  */
 
 import { getOpenRouterApiKey, getVllmApiKey } from './api-keys.js';
+import { getRequestHeaders } from '../../../../../script.js';
 import {
     EVENT_TYPES,
     EventBaseExtractionError,
@@ -303,6 +304,10 @@ function _inferLanguageHint(text) {
 // ---------------------------------------------------------------------------
 
 async function _callOpenRouter(prompt, settings, windowIndex) {
+    // Presence-only check: see summarizer._callOpenRouter for the full rationale.
+    // Short version: getOpenRouterApiKey() returns ST's MASKED value, so we route
+    // through /api/backends/chat-completions/generate which reads the real key
+    // server-side via readSecret(SECRET_KEYS.OPENROUTER).
     const apiKey = _getOpenRouterApiKey(settings);
     if (!apiKey) {
         throw new EventBaseFatalError(
@@ -323,13 +328,13 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
     const temperature = settings.eventbase_temperature ?? DEFAULT_TEMPERATURE;
     const timeoutMs = settings.eventbase_timeout_ms || DEFAULT_TIMEOUT_MS;
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('/api/backends/chat-completions/generate', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(_buildBody(prompt, model, maxTokens, temperature)),
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            chat_completion_source: 'openrouter',
+            ..._buildBody(prompt, model, maxTokens, temperature),
+        }),
         signal: AbortSignal.timeout(timeoutMs),
     });
 

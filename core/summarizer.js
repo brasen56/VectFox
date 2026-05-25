@@ -17,6 +17,7 @@
 
 import { getOpenRouterApiKey, getVllmApiKey } from './api-keys.js';
 import { getDefaultSummarizePrompt } from './prompts-i18n.js';
+import { getRequestHeaders } from '../../../../../script.js';
 
 /**
  * Fatal summarization error that should abort vectorization instead of silently
@@ -203,9 +204,14 @@ function _extractReply(data) {
 const _getOpenRouterApiKey = getOpenRouterApiKey;
 
 async function _callOpenRouter(prompt, model, settings, originalLength, maxTokens = DEFAULT_MAX_TOKENS, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    // Presence-only check: getOpenRouterApiKey() returns the MASKED value from
+    // secret_state (e.g. "*******abcd"), not the real key — ST's getSecretState
+    // masks all non-EXPORTABLE_KEYS. We can't send a masked value as a Bearer
+    // token, so we route through ST's own /api/backends/chat-completions/generate
+    // proxy, which reads the real key server-side via readSecret(SECRET_KEYS.OPENROUTER)
+    // and forwards to OpenRouter. Same pattern the embedding flow already uses
+    // via /api/vector/insert.
     const apiKey = _getOpenRouterApiKey(settings);
-    // don't remove 
-    // console.log(`[VectFox Summarizer] OpenRouter key present: ${!!apiKey}`);
     if (!apiKey) {
         throw new SummarizationFatalError(
             'OpenRouter API key not found. Add it in Summarize Before Store settings.',
@@ -214,13 +220,13 @@ async function _callOpenRouter(prompt, model, settings, originalLength, maxToken
         );
     }
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('/api/backends/chat-completions/generate', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(_buildBody(prompt, model, maxTokens)),
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            chat_completion_source: 'openrouter',
+            ..._buildBody(prompt, model, maxTokens),
+        }),
         signal: AbortSignal.timeout(timeoutMs),
     });
 
