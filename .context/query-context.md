@@ -1,75 +1,66 @@
 # SigMap Query Context
-Generated: 2026-05-25T20:37:11.254Z
+Generated: 2026-05-26T10:45:59.132Z
 
-## core\eventbase-store.js
+## core\core-vector-api.js
 ```
-export async function insertEvents(events, settings, abortSignal = null, collectionIdOverride = null) → Promise<void>
-export async function queryEvents(searchText, topK, settings, chatUUID) → Promise<object[]>
-export async function listEvents(settings, limit = 100, chatUUID) → Promise<object[]>
-export async function deleteEventByHash(hash, settings, chatUUID) → Promise<void>
-export function getAutoSyncMarker(chatUUID) → Promise<boolean>
-export function clearAutoSyncMarker(chatUUID)
-export async function stampAutoSyncMarker(chatUUID, settings) → Promise<number>
-export function getLastUsedWindowSize(chatUUID) → number|undefined
-export function setLastUsedWindowSize(chatUUID, windowSize)
-export function windowFingerprint(sourceHashes) → string
-export function markWindowExtracted(sourceHashes, chatUUID)
-export function clearWindowCacheForChat(chatUUID)
-export function isLastWindowExtracted(messages, windowSize, step, chatUUID, hashFn) → boolean
-export async function isWindowAlreadyExtracted(sourceHashes, messageIds, settings, chatUUID) → Promise<boolean>
-export function findEventBaseCollectionIdsForChat(uuid, preferredBackend) → { registryKey: string, co
-export async function ensureEventBaseIndexes(settings) → Promise<void>
-async function _resolveEventBaseCollectionIdForRead(settings, chatUUID) → Promise<string|null>
-function _eventHash(id) → number
-```
-
-## core\eventbase-extractor.js
-```
-export async function extractEvents({ messages, windowStart, windowEnd, settings, windowIndex = 0 }) → Promise<object[]>
-function _getOpenRouterApiKey(settings) → string
-function _buildBody(prompt, model, maxTokens, temperature) → object
-function _extractReply(data) → string|null
-function _parseJsonArray(raw, debugLog = false, windowIndex = -1, msgRange = '') → unknown[]
-function _detectScript(text) → 'cjk'|'latin'|'mixed'|'em
-function _inferLanguageHint(text)
-async function _callOpenRouter(prompt, settings, windowIndex)
-async function _callVLLM(prompt, settings, windowIndex)
-function _simpleHash(str) → number
+class DynamicRateLimiter
+constructor()
+async execute(fn, settings) → Promise<any>
+if(maxCalls <= 0)
+if(this.timestamps.length >= maxCalls)
+if(waitTime > 0)
+export function getVectorsRequestBody(args = {}, settings) → object
+export async function getAdditionalArgs(items, settings, onProgress = null) → Promise<object>
+export function throwIfSourceInvalid(settings)
+export async function getSavedHashes(collectionId, settings, includeMetadata = false) → Promise<number[]|{hashes:
+export async function insertVectorItems(collectionId, items, settings, onProgress = null, abortSignal = null) → Promise<void>
+export async function deleteVectorItems(collectionId, hashes, settings) → Promise<void>
+export async function queryCollection(collectionId, searchText, topK, settings, filters = {}) → Promise<{ hashes: number[
+export async function queryMultipleCollections(collectionIds, searchText, topK, threshold, settings) → Promise<Record<string, {
+export async function queryActiveCollections(collectionIds, searchText, topK, threshold, settings, context) → Promise<Record<string, {
+export async function purgeVectorIndex(collectionId, settings) → Promise<boolean>
+export async function purgeFileVectorIndex(collectionId, settings) → Promise<void>
+export async function purgeAllVectorIndexes(settings) → Promise<void>
+export async function listChunks(collectionId, settings, options = {}) → Promise<{items: Array<{ha
+export async function updateChunkText(collectionId, hash, newText, settings)
 ```
 
-## core\providers.js
+## ui\search-debug.js
 ```
-export function getValidProviderIds()
-export function isValidProvider(providerId)
-export function getProviderConfig(providerId)
-export function getModelField(providerId)
-export function getModelFromSettings(settings, fallback = '') → string
-export function getSecretKey(providerId)
-export function requiresApiKey(providerId)
-export function requiresUrl(providerId)
-export function getCloudProviders()
-export function getUrlProviders()
+export function createDebugData() → SearchDebugData
+export function addTrace(debugData, stage, action, details = {})
+export function recordChunkFate(debugData, hash, stage, fate, reason = null, data = {})
+export function setLastSearchDebug(data)
+export function getQueryHistory() → Array<SearchDebugData>
+export function getLastSearchDebug() → SearchDebugData|null
+export function openSearchDebugModal()
+export function closeSearchDebugModal()
+export function openQueryTestModal()
+function createModalHtml(data, historyIndex = 0) → string
+function createPipelineStage(label, count, fromCount, icon, colorClass, disabled = false)
+function createKeywordBoostStage(data)
+function renderStageChunks(chunks, stageName, data)
+function getExclusionStatus(chunk, currentStage, data)
+function buildScoreBreakdown(chunk)
+function renderInjectionVerification(data)
+function renderCriticalFailure(data)
+function diagnosePipeline(data) → Array<{label: string, det
+function truncateText(text, maxLength)
+function renderExcludedAnalysis(data)
 ```
 
-## core\content-vectorization.js
+## core\eventbase-schema.js
 ```
-export function resolveEffectiveSettings(callerSettings) → object
-export async function vectorizeContent({ contentType, source, settings, abortSignal = null, continueMode = false, startFromMessage = 1 }) → Promise<{success: boolean
-export async function resolveAndPrepareContent(contentType, source, settings) → Promise<{text: string, ..
-export async function deleteContentCollection(collectionId, callerSettings = null)
-async function resolveSource(contentType, source)
-async function loadSelectedSource(contentType, sourceId)
-async function loadLorebookContent(lorebookName, context)
-async function loadCharacterContent(characterId, context)
-async function prepareContent(contentType, rawContent, settings, startFromMessage = 1)
-function prepareCharacterContent(rawContent, settings)
-function prepareChatContent(rawContent, settings, startFromMessage = 1)
-function prepareUrlContent(rawContent, settings)
-function prepareDocumentContent(rawContent, settings)
-function prepareWikiContent(rawContent, settings)
-function prepareYouTubeContent(rawContent, settings)
-function generateCollectionId(contentType, source, settings)
-function enrichChunks(chunks, contentType, source, settings, preparedContent, VectFoxSettings)
+export class EventBaseExtractionError
+constructor(message, windowIndex = -1)
+export class EventBaseFatalError
+constructor(message, code = 'fatal')
+export function validateEvent(raw) → { ok: boolean, errors: st
+export function buildEmbedText(event) → string
+export function parseEmbedText(text) → object
+export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl') → string
+function ensureArray(val) → string[]
+function ensureDateTime(raw, errors) → string|null
 ```
 
 ## core\agentic-retrieval.js
@@ -81,4 +72,26 @@ async function _callPlanner({ systemPrompt, userMessage, llmCfg, timeoutMs })
 function _getRecentChatForPlanner(settings)
 function _firstNWords(text, n)
 function _validateAndTrimQueries(queries, maxQueries)
+```
+
+## core\collection-ids.js
+```
+export function normalizeBackendForId(backend) → string
+export function getBackendFromCollectionId(collectionId) → string|null
+export function remapCollectionIdToBackend(collectionId, targetBackend) → string
+export function getRegistryBackend(vectorBackend) → string
+export function buildRegistryKey(collectionId, settingsOrBackend) → string
+export function resolveBackendForCollection(input) → { backend: string|null, c
+export function getChatUUID() → string|null
+export function buildLorebookCollectionId(lorebookName, backend, timestamp) → string
+export function buildCharacterCollectionId(characterName, backend, timestamp) → string
+export function buildDocumentCollectionId(documentName, backend, timestamp) → string
+export function buildEventBaseCollectionId(chatUUID, backend) → string|null
+export function buildArchiveEventCollectionId({ filenameCharName, archiveUUID, backend }) → string|null
+export function parseCollectionId(collectionId) → {type: string, rawId: str
+export function buildChatSearchPatterns(chatId, chatUUID) → string[]
+export function matchesPatterns(collectionId, patterns) → boolean
+export function parseRegistryKey(registryKey) → {backend: string|null, so
+function _sanitizeNameSegment(name, maxLength)
+function _currentHandleId()
 ```

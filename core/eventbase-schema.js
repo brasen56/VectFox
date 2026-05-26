@@ -209,6 +209,13 @@ export function buildEmbedText(event) {
     if (event.items?.length) parts.push(`ITEMS: ${event.items.join(', ')}`);
     if (event.keywords?.length) parts.push(`KEYS: ${event.keywords.join(', ')}`);
     if (event.open_threads?.length) parts.push(`THREADS: ${event.open_threads.join(', ')}`);
+    // Note: `factions` is INTENTIONALLY excluded from embed text — faction
+    // names tend to be generic strings ("Empire", "Council", "Rebels") that
+    // would dominate keyword recall and pollute vector similarity with
+    // matches that don't reflect actual narrative relevance. Factions are
+    // still collected by the validator + stored in payload, and AgentMode
+    // can filter by them via the `factions_any` planner field. Treat
+    // factions as a STRUCTURED filter signal, not a text-retrieval signal.
     return parts.join('\n');
 }
 
