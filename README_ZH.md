@@ -146,7 +146,7 @@ EventBase 並沒有*強迫*你使用 Qdrant——A1/A2 輕量路徑可以跑在 
 **為什麼 Agent Mode 搭配 A3（Qdrant）**：
 - 每個規劃師查詢都是獨立的 Qdrant 呼叫。Qdrant 並行處理 4 個查詢只需 1–3 秒。
 - AgentMode 需要 Qdrant——在標準後端會完全跳過（記錄 `mode=SKIPPED reason=requires_qdrant_backend`）並直接返回預搜尋結果。沒有優雅退化，這是設計上的決定。
-- Qdrant 的 payload 過濾器（`characters_any`、`concepts_any`）讓規劃師能精準縮小每次搜尋範圍——標準後端沒這個功能。
+- Qdrant 的 payload 過濾器（`characters_any`、`locations_any`、`factions_any`、`items_any`、`concepts_any`、`event_type_any`、`importance_gte`）讓規劃師能精準縮小每次搜尋範圍——標準後端沒這個功能。
 
 **成本與延遲**：使用 GPT-4o-mini 或 Haiku 等小模型作為規劃師，每輪約 $0.0002，並增加約 2–5 秒。它是**純加法**——絕不取代正常搜尋，且任何失敗都會乾淨地回退到標準流程。可在專屬的 **AgentMode** 頁籤設定；預設為關閉。
 

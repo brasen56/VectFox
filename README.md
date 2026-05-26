@@ -152,7 +152,7 @@ All four merge with the original search and feed the same 4-weight re-ranker. Th
 
 - Each planner query is a separate Qdrant call. Qdrant fanout completes in 1–3 seconds for 4 parallel queries.
 - AgentMode requires Qdrant — on the Standard backend it skips entirely (logs `mode=SKIPPED reason=requires_qdrant_backend`) and just returns the pre-search unchanged. No graceful degradation, by design.
-- Qdrant's payload filters (`characters_any`, `concepts_any`) let the planner narrow each search precisely — the standard backend doesn't expose these.
+- Qdrant's payload filters (`characters_any`, `locations_any`, `factions_any`, `items_any`, `concepts_any`, `event_type_any`, `importance_gte`) let the planner narrow each search precisely — the standard backend doesn't expose these.
 
 **Cost & latency**: ~$0.0002 with GPT-4o-mini or Haiku as the planner, ~2–5 seconds added per turn. It's purely additive — never replaces normal search, and falls back cleanly to the standard flow if the planner fails. Configure it in the dedicated **AgentMode** tab; default off.
 

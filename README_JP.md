@@ -144,7 +144,7 @@ Agent Mode を使うと、プランナーは自動的に次の角度を追加し
 **Agent Mode が A3（Qdrant）と組み合わさる理由**：
 - プランナーの各クエリは独立した Qdrant 呼び出しです。Qdrant は 4 つの並列クエリを 1〜3 秒で処理します。
 - AgentMode は Qdrant が必要です——Standard バックエンドでは完全にスキップし（`mode=SKIPPED reason=requires_qdrant_backend` をログ出力）、プリサーチをそのまま返します。優雅なフォールバックはなく、設計上の意図です。
-- Qdrant のペイロードフィルタ（`characters_any`、`concepts_any`）により、プランナーは各検索を正確に絞り込めます——標準バックエンドはこれを公開していません。
+- Qdrant のペイロードフィルタ（`characters_any`、`locations_any`、`factions_any`、`items_any`、`concepts_any`、`event_type_any`、`importance_gte`）により、プランナーは各検索を正確に絞り込めます——標準バックエンドはこれを公開していません。
 
 **コストとレイテンシ**：プランナーに GPT-4o-mini や Haiku などの小型モデルを使う場合、1 ターンあたり約 $0.0002、追加で約 2〜5 秒。**純粋に加算的**で、通常の検索を置き換えることはなく、プランナーが失敗すれば標準フローに自動的にフォールバックします。専用の **AgentMode** タブで設定。デフォルトはオフ。
 

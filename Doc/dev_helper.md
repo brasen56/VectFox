@@ -541,9 +541,9 @@ retrieveEventsWithAgent(params)
               re-runs 4-weight rerank / dedup / context-dedup / top-K trim
 ```
 
-### Phase 1 limitations (intentional)
+### Planner-emitted filter application (Phase 1.5 — shipped)
 
-- **Planner-emitted filters are NOT applied** to queries yet. The planner may emit `characters_any`, `concepts_any`, `importance_gte` etc. in its JSON output, but the agentic-retrieval module ignores those fields and runs unfiltered hybrid search. Phase 1.5 will extend Similharity's [`_buildHybridFilter`](../../similharity/qdrant-backend.js) to translate the `*_any` shape into Qdrant `should` clauses.
+- **Planner-emitted filters ARE applied** to queries. The planner emits `characters_any`, `locations_any`, `factions_any`, `items_any`, `concepts_any`, `event_type_any`, and `importance_gte`, validated and clamped by [`agentic-retrieval.js::_validateAndClampFilters`](../core/agentic-retrieval.js) (arrays capped to a reasonable max, `importance_gte` clamped to 1–10), then translated by Similharity's [`_buildHybridFilter`](../../similharity/qdrant-backend.js) into Qdrant payload `should` clauses (for `*_any` — OR within and across fields) and a `must` clause (for `importance_gte`). Both the non-rerank and formula-rerank Qdrant query paths apply them.
 
 ### Settings (all in `index.js` defaults)
 

@@ -13,8 +13,8 @@
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { queryCollection } from './core-vector-api.js';
 import { resolveBackendForCollection } from './collection-ids.js';
-import { getCollectionListing } from './collection-loader.js';
-import { getCollectionMeta, shouldCollectionActivate } from './collection-metadata.js';
+import { getCollectionListing, getCollectionRegistry } from './collection-loader.js';
+import { getCollectionMeta, isCollectionEnabled, shouldCollectionActivate } from './collection-metadata.js';
 import { LOREBOOK_PROMPT_TAG } from './constants.js';
 import { detectLorebookRenames, showLorebookRenameModal, openDatabaseBrowserForRename } from './lorebook-rename-detector.js';
 // Lorebook collection ID lookup uses registry scan (see _findLorebookRegistryEntry below);
@@ -272,7 +272,9 @@ function _findLorebookRegistryEntry(lorebookName, settings) {
     const lorebookPrefix = 'vf_lorebook_';
     const nameNeedle = `_${sanitizedName}_`;
 
-    const registry = getCollectionRegistry();
+    // Honor caller-supplied registry (used by tests / synthetic snapshots);
+    // otherwise read the module-global via getCollectionRegistry() like production.
+    const registry = settings?.vectfox_collection_registry || getCollectionRegistry();
     for (const key of registry) {
         // Registry keys can be "backend:collectionId" or bare "collectionId".
         const id = String(key).includes(':') ? String(key).split(':').slice(1).join(':') : String(key);

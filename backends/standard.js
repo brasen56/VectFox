@@ -919,33 +919,4 @@ export class StandardBackend extends VectorBackend {
         };
     }
 
-    /**
-     * Discover all collections on disk
-     * Plugin provides this; native API requires probing
-     */
-    async discoverCollections(settings) {
-        if (this.pluginAvailable) {
-            try {
-                const response = await fetch('/api/plugins/similharity/collections', {
-                    headers: getRequestHeaders(),
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    return (data.collections || []).map(c => ({
-                        id: c.id,
-                        source: c.source,
-                        chunkCount: c.chunkCount || 0,
-                        backend: c.backend || 'vectra',
-                    }));
-                }
-            } catch (e) {
-                console.warn('VectFox: Plugin discoverCollections failed');
-            }
-        }
-
-        // No native way to list collections - return empty
-        // Discovery will be handled by collection-loader probing known patterns
-        return null;
-    }
 }
