@@ -481,6 +481,16 @@ Scene support was removed (it was a chunk-based-chat-era feature, and chat now r
 **The explanation of the system sounds way too technical and I can't understand!**
 I agree. This extension might be overkill for a typical SillyTavern chat. Who the hell will chat for 10,000+ replies? But the quality of retrieval does matter.
 
+**Is this extension safe for multi-user or public-facing deployments?**
+VectFox + Similharity is designed for **personal use on your own machine or a trusted private LAN** — not for public internet or shared multi-user environments. Two reasons:
+
+- **Qdrant** ships without per-user access control in its default installation. On a shared Qdrant instance, anyone who can reach the port can read and write all collections. Two users sharing the same Qdrant server can read and modify each other's VectFox collections.
+- **The Similharity plugin** has no per-user authentication. It relays embedding and query requests to your backend (OpenAI, Ollama, vLLM, etc.) without user-level isolation.
+
+Adding proper RBAC to Qdrant and per-user ACLs to the plugin is significant engineering work that is out of scope for a drop-in vector memory extension. If you need multi-user isolation, run a separate Qdrant instance and a separate SillyTavern install per user, or use containerised deployments.
+
+Note: SillyTavern itself does support per-user data isolation via `enableUserAccounts = true` — that isolates ST's own data (chats, settings, characters) per user, but does not extend to the shared Qdrant server.
+
 ---
 
 ## 🐛 Troubleshooting
