@@ -223,6 +223,13 @@ function getCombinedStopwords(settings = null) {
         }
     }
 
+    // Allowlists take precedence over stop words: a character explicitly kept
+    // by a language allowlist must not be filtered as a stop word, regardless
+    // of what the general stop-word lists say.
+    for (const c of JAPANESE_SINGLE_CHAR_ALLOWLIST) combined.delete(c);
+    for (const c of TRADITIONAL_CHINESE_SINGLE_CHAR_ALLOWLIST) combined.delete(c);
+    for (const c of SIMPLIFIED_CHINESE_SINGLE_CHAR_ALLOWLIST) combined.delete(c);
+
     return combined;
 }
 
