@@ -26,7 +26,7 @@ import {
 } from '../core/content-types.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
-import { getChatUUID } from '../core/chat-vectorization.js';
+import { getChatUUID, vectorizeAll } from '../core/chat-vectorization.js';
 import { validateLLMConfig } from '../core/summarizer.js';
 import { getOpenRouterApiKey } from '../core/api-keys.js';
 import StringUtils from '../utils/string-utils.js';
@@ -2561,7 +2561,7 @@ async function _runEventBaseBackfill() {
         const settings = extension_settings.vectfox || {};
         const source = getSourceData();
 
-        let messages, chatUUID, collectionIdOverride = null;
+        let messages, chatUUID, collectionIdOverride = null; // only used by archive route
 
         if (source?.type === 'file') {
             // Archive upload route — .jsonl / .json / .txt
@@ -2583,36 +2583,47 @@ async function _runEventBaseBackfill() {
                 backend: settings.vector_backend,
             });
             console.log(`[EventBase] Archive upload route — collection: ${collectionIdOverride}, messages: ${messages.length}`);
+
+            const parallelWindows = parseInt($('#vectfox_cv_parallel_windows').val()) || 1;
+            const result = await runEventBaseIngestion({
+                messages,
+                chatUUID,
+                settings,
+                abortSignal: activeVectorizeAbortController.signal,
+                parallelWindows,
+                collectionIdOverride,
+            });
+
+            if (activeVectorizeAbortController?.signal?.aborted) {
+                progressTracker.complete(false, `Stopped — saved ${result.eventsExtracted} events from ${result.windowsProcessed} windows so far`);
+                toastr.info('EventBase ingestion stopped', 'VectFox');
+            } else {
+                progressTracker.complete(true, `EventBase: extracted ${result.eventsExtracted} events from ${result.windowsProcessed} windows`);
+                toastr.success(`EventBase: extracted ${result.eventsExtracted} events across ${result.windowsProcessed} windows`, 'VectFox');
+                closeContentVectorizer();
+            }
         } else {
-            // Live chat route
+            // Live chat route — delegate entirely to vectorizeAll (same path as Sync Chat button)
             console.log('[EventBase] Context chat length:', context.chat?.length);
             if (!Array.isArray(context.chat) || context.chat.length === 0) {
                 toastr.warning('No chat messages to process', 'EventBase');
                 return;
             }
-            const allMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
-            messages = allMessages;
-            if (startFromMessage > 1) {
-                const sliceIdx = Math.min(startFromMessage - 1, allMessages.length);
-                console.log(`[EventBase] Start-from message ${startFromMessage} — skipping first ${sliceIdx} messages, ${allMessages.length - sliceIdx} remaining`);
-                messages = allMessages.slice(sliceIdx);
-            }
-            chatUUID = getChatUUID();
-        }
 
-        // Window-size-change warning. The window fingerprint dedup cache is
-        // window-size-dependent (see eventbase-store.js#windowFingerprint), so
-        // changing window size silently invalidates every cached fingerprint
-        // and triggers full re-extraction with duplicate-coverage events.
-        // Warn the user before they unknowingly pay that cost. Live chats only —
-        // archive uploads use a one-shot UUID with no prior history.
-        if (source?.type !== 'file' && chatUUID) {
+            chatUUID = getChatUUID();
+
+            // Window-size-change warning. The window fingerprint dedup cache is
+            // window-size-dependent (see eventbase-store.js#windowFingerprint), so
+            // changing window size silently invalidates every cached fingerprint
+            // and triggers full re-extraction with duplicate-coverage events.
+            // Warn the user before they unknowingly pay that cost.
             const { getLastUsedWindowSize } = await import('../core/eventbase-store.js');
             const lastSize = getLastUsedWindowSize(chatUUID);
             const currentWindowSize = Math.max(2, settings.eventbase_window_size || 6);
             if (typeof lastSize === 'number' && lastSize !== currentWindowSize) {
-                // Estimate cost so the user can make an informed choice.
-                const estimatedWindows = Math.max(0, Math.floor(messages.length / currentWindowSize));
+                const estimatedWindows = Math.max(0, Math.floor(
+                    context.chat.filter(m => m.mes && m.mes.trim().length > 0).length / currentWindowSize
+                ));
                 const proceed = await callGenericPopup(
                     `<div style="text-align: left;">
                         <p><strong>Window size changed</strong> since the last extraction on this chat (was <strong>${lastSize}</strong>, now <strong>${currentWindowSize}</strong>).</p>
@@ -2633,63 +2644,32 @@ async function _runEventBaseBackfill() {
                     return;
                 }
             }
-        }
 
-        const legacyStrategy = currentSettings.strategy || 'per_message';
-        const legacyBatchSize = Number(currentSettings.batchSize) || 4;
-
-        // Reuse legacy chunk math so progress aligns with the Vectorize Content modal.
-        const legacyChunks = await chunkText(messages, {
-            strategy: legacyStrategy,
-            chunkSize: currentSettings.chunkSize || 1000,
-            chunkOverlap: currentSettings.chunkOverlap || 200,
-            batchSize: legacyBatchSize,
-        });
-        const legacyTotalChunks = Array.isArray(legacyChunks) ? legacyChunks.length : 0;
-
-        console.log('[EventBase] Filtered messages:', messages.length);
-        console.log('[EventBase] Starting ingestion with settings:', {
-            eventbase_window_size: settings.eventbase_window_size,
-            eventbase_window_overlap: settings.eventbase_window_overlap,
-            eventbase_debug_logging: settings.eventbase_debug_logging,
-            legacy_progress_strategy: legacyStrategy,
-            legacy_total_chunks: legacyTotalChunks,
-        });
-
-        const parallelWindows = parseInt($('#vectfox_cv_parallel_windows').val()) || 1;
-
-        const result = await runEventBaseIngestion({
-            messages,
-            chatUUID,
-            settings,
-            abortSignal: activeVectorizeAbortController.signal,
-            parallelWindows,
-            progressPlan: {
+            const legacyStrategy = currentSettings.strategy || 'per_message';
+            const legacyBatchSize = Number(currentSettings.batchSize) || 4;
+            const legacyChunks = await chunkText(context.chat.filter(m => m.mes && m.mes.trim().length > 0), {
                 strategy: legacyStrategy,
+                chunkSize: currentSettings.chunkSize || 1000,
+                chunkOverlap: currentSettings.chunkOverlap || 200,
                 batchSize: legacyBatchSize,
-                totalChunks: legacyTotalChunks,
-            },
-            collectionIdOverride,
-        });
+            });
+            const legacyTotalChunks = Array.isArray(legacyChunks) ? legacyChunks.length : 0;
+            const parallelWindows = parseInt($('#vectfox_cv_parallel_windows').val()) || 1;
 
-        console.log('[EventBase] Ingestion result:', result);
+            await vectorizeAll(settings, legacyBatchSize, activeVectorizeAbortController.signal, {
+                startFromMessage,
+                parallelWindows,
+                progressPlan: {
+                    strategy: legacyStrategy,
+                    batchSize: legacyBatchSize,
+                    totalChunks: legacyTotalChunks,
+                },
+            });
 
-        // If the user hit Stop, the abort signal will be set even though
-        // runEventBaseIngestion returned normally (it catches AbortError internally).
-        if (activeVectorizeAbortController?.signal?.aborted) {
-            progressTracker.complete(false, `Stopped — saved ${result.eventsExtracted} events from ${result.windowsProcessed} windows so far`);
-            toastr.info('EventBase ingestion stopped', 'VectFox');
-            return;
+            if (!activeVectorizeAbortController?.signal?.aborted) {
+                closeContentVectorizer();
+            }
         }
-
-        // Force-complete progress so the chunk counter doesn't show "1 left" when
-        // the last partial window was intentionally skipped by the window size guard.
-        progressTracker.complete(true, `EventBase: extracted ${result.eventsExtracted} events from ${result.windowsProcessed} windows`);
-        toastr.success(
-            `EventBase: extracted ${result.eventsExtracted} events across ${result.windowsProcessed} windows`,
-            'VectFox'
-        );
-        closeContentVectorizer();
     } catch (e) {
         const isStopped = e?.name === 'AbortError' || String(e?.message || '').toLowerCase().includes('stopped by user');
         if (isStopped) {

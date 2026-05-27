@@ -1538,7 +1538,11 @@ export async function rearrangeChat(chat, settings, type, { dryRun = false, test
  * @param {object} settings VECTFOX settings
  * @param {number} batchSize Batch size
  */
-export async function vectorizeAll(settings, batchSize, abortSignal = null) {
+export async function vectorizeAll(settings, batchSize, abortSignal = null, {
+    startFromMessage = 1,
+    parallelWindows = 1,
+    progressPlan = null,
+} = {}) {
     try {
         const chatId = getCurrentChatId();
         if (!chatId) {
@@ -1569,8 +1573,10 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null) {
         const context = getContext();
         if (!Array.isArray(context.chat)) return;
 
-        const messages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
-        progressTracker.show('Vectorizing Chat', messages.length, 'Messages');
+        const allMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+        const messages = startFromMessage > 1
+            ? allMessages.slice(Math.min(startFromMessage - 1, allMessages.length))
+            : allMessages;
 
         const { runEventBaseIngestion } = await import('./eventbase-workflow.js');
         const result = await runEventBaseIngestion({
@@ -1579,6 +1585,8 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null) {
             settings,
             abortSignal,
             isAutoSync: false,
+            parallelWindows,
+            progressPlan,
         });
 
         if (chatId !== getCurrentChatId()) {
@@ -1586,8 +1594,13 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null) {
             throw new Error('Chat changed');
         }
 
-        progressTracker.complete(true, `Extracted ${result.eventsExtracted} events from ${result.windowsProcessed} windows`);
-        toastr.success('Chat vectorized successfully', 'VectFox');
+        if (abortSignal?.aborted) {
+            progressTracker.complete(false, `Stopped — saved ${result.eventsExtracted} events from ${result.windowsProcessed} windows so far`);
+            return;
+        }
+
+        progressTracker.complete(true, `EventBase: extracted ${result.eventsExtracted} events from ${result.windowsProcessed} windows`);
+        toastr.success(`EventBase: extracted ${result.eventsExtracted} events across ${result.windowsProcessed} windows`, 'VectFox');
         console.log(`VectFox: ✅ Vectorization complete — ${result.eventsExtracted} events, ${result.windowsProcessed} windows processed, ${result.windowsSkipped} skipped`);
     } catch (error) {
         console.error('VectFox: Failed to vectorize all', error);
