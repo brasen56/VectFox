@@ -84,6 +84,35 @@ function _extractReply(data) {
     return data?.choices?.[0]?.message?.content?.trim() || null;
 }
 
+/**
+ * OpenRouter (and ST's proxy) sometimes returns HTTP 200 with an error in the
+ * BODY instead of a 4xx — e.g. a retired/unknown model comes back as
+ * `{ "error": { "message": "…deprecated…" } }` with no `choices`. _extractReply
+ * then yields null and we'd throw a per-window "empty response" skip, silently
+ * dropping the real cause. This re-runs the model-config classifier on the body
+ * so that case surfaces as a fatal error. Throws EventBaseFatalError if matched;
+ * otherwise returns (logs the raw body under debug for diagnosis).
+ *
+ * @param {{ provider: string, model: string, status: number, data: any, settings: object }} ctx
+ */
+function _classifyEmptyReplyBody({ provider, model, status, data, settings }) {
+    const bodyText = data?.error ? JSON.stringify(data.error) : JSON.stringify(data || {});
+    const modelConfigError = getModelConfigErrorMessage({
+        contextLabel: 'EventBase',
+        provider,
+        model,
+        status,
+        responseText: bodyText,
+        enforceStatusGate: false,
+    });
+    if (modelConfigError) {
+        throw new EventBaseFatalError(modelConfigError, 'invalid_model_config');
+    }
+    if (settings?.eventbase_debug_logging) {
+        console.warn(`[EventBase] ${provider} returned empty reply (HTTP ${status}) — raw body: ${bodyText.slice(0, 500)}`);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // JSON parse + repair
 // ---------------------------------------------------------------------------
@@ -366,6 +395,7 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
     const data = await response.json();
     const reply = _extractReply(data);
     if (!reply) {
+        _classifyEmptyReplyBody({ provider: 'OpenRouter', model, status: response.status, data, settings });
         throw new EventBaseExtractionError('EventBase: OpenRouter returned empty response', windowIndex);
     }
     return reply;
@@ -443,6 +473,7 @@ async function _callVLLM(prompt, settings, windowIndex) {
     const data = await response.json();
     const reply = _extractReply(data);
     if (!reply) {
+        _classifyEmptyReplyBody({ provider: 'vLLM', model, status: response.status, data, settings });
         throw new EventBaseExtractionError('EventBase: vLLM returned empty response', windowIndex);
     }
     return reply;
