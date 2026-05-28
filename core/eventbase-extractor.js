@@ -13,7 +13,7 @@
 
 import { getOpenRouterApiKey, getCustomApiKey } from './api-keys.js';
 import { getRequestHeaders } from '../../../../../script.js';
-import { getEventBaseModelConfigErrorMessage } from './eventbase-http-errors.js';
+import { getModelConfigErrorMessage } from './model-http-errors.js';
 import {
     EVENT_TYPES,
     EventBaseExtractionError,
@@ -347,7 +347,8 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
                 'invalid_api_key',
             );
         }
-        const modelConfigError = getEventBaseModelConfigErrorMessage({
+        const modelConfigError = getModelConfigErrorMessage({
+            contextLabel: 'EventBase',
             provider: 'OpenRouter',
             model,
             status: response.status,
@@ -423,7 +424,8 @@ async function _callVLLM(prompt, settings, windowIndex) {
                 'invalid_api_key',
             );
         }
-        const modelConfigError = getEventBaseModelConfigErrorMessage({
+        const modelConfigError = getModelConfigErrorMessage({
+            contextLabel: 'EventBase',
             provider: 'vLLM',
             model,
             status: response.status,
