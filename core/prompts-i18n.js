@@ -482,6 +482,9 @@ const _EXTRACTION_LANG_JIEBA =
    - All string fields (summary, cause, result, characters, locations, factions, items, concepts, keywords, open_threads) MUST be in Simplified Chinese (简体中文).
    - DO NOT convert to Traditional Chinese.
    - Proper nouns: preserve exact form from the excerpt — DO NOT translate, romanize, or transliterate names.
+   - KEYWORDS — compound splitting: Chinese compounds are written without spaces. Add both the full compound
+     AND each component base word as separate keyword entries so partial queries still match.
+     Example: 赎身任务 → ["赎身任务", "赎身", "任务"]
    - Violating this rule makes the output invalid.
 
 `;
@@ -491,6 +494,9 @@ const _EXTRACTION_LANG_JIEBA_TW =
    - All string fields (summary, cause, result, characters, locations, factions, items, concepts, keywords, open_threads) MUST be in Traditional Chinese (繁體中文).
    - DO NOT convert to Simplified Chinese.
    - Proper nouns: preserve exact form from the excerpt — DO NOT translate, romanize, or transliterate names.
+   - KEYWORDS — compound splitting: Chinese compounds are written without spaces. Add both the full compound
+     AND each component base word as separate keyword entries so partial queries still match.
+     Example: 贖身任務 → ["贖身任務", "贖身", "任務"]
    - Violating this rule makes the output invalid.
 
 `;
@@ -499,6 +505,9 @@ const _EXTRACTION_LANG_TINY_SEGMENTER =
 `1. LANGUAGE — MANDATORY:
    - All string fields (summary, cause, result, characters, locations, factions, items, concepts, keywords, open_threads) MUST be in Japanese (日本語).
    - Proper nouns: preserve exact form from the excerpt — DO NOT translate, romanize, or transliterate names.
+   - KEYWORDS — compound splitting: Japanese compounds are written without spaces. Add both the full compound
+     AND each component base word as separate keyword entries so partial queries still match.
+     Example: 魔王城潜入 → ["魔王城潜入", "魔王", "城", "潜入"]
    - Violating this rule makes the output invalid.
 
 `;
@@ -507,6 +516,9 @@ const _EXTRACTION_LANG_KOREAN =
 `1. LANGUAGE — MANDATORY:
    - All string fields (summary, cause, result, characters, locations, factions, items, concepts, keywords, open_threads) MUST be in Korean (한국어).
    - Proper nouns: preserve exact form from the excerpt — DO NOT translate, romanize, or transliterate names.
+   - KEYWORDS — compound splitting: Korean compounds written as a single eojeol may be missed by partial
+     queries. Add both the full compound AND each component base word as separate keyword entries.
+     Example: 마왕성잠입 → ["마왕성잠입", "마왕", "성", "잠입"]
    - Violating this rule makes the output invalid.
 
 `;

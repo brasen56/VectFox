@@ -866,6 +866,17 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
         }
     }
 
+    // Append concepts_any terms to the query text so BM25 naturally boosts events containing
+    // those theme words — without hard-filtering anything out. Dense vector stays clean for
+    // client-side embedding paths because queryVector is already captured above.
+    let effectiveQuery = searchText;
+    if (Array.isArray(filters.concepts_any) && filters.concepts_any.length > 0) {
+        effectiveQuery = `${searchText} ${filters.concepts_any.join(' ')}`;
+        if (settings.eventbase_debug_logging) {
+            console.log(`[VectFox] concepts_any appended to query text: [${filters.concepts_any.join(', ')}]`);
+        }
+    }
+
     // Three-case routing:
     //   A3 — server-side hybrid (Qdrant with prefer_native ON) — dense vector search +
     //         full-corpus payload/text keyword matching via Qdrant scroll, fused in plugin code
@@ -883,7 +894,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
         }
         const queryStart = Date.now();
         try {
-            const result = await hybridSearch(bareCollectionId, searchText, topK, settings, { queryVector, filters });
+            const result = await hybridSearch(bareCollectionId, effectiveQuery, topK, settings, { queryVector, filters });
             const queryLatency = Date.now() - queryStart;
             recordQuery(resolved.backend || settings?.vector_backend || 'standard', queryLatency);
             if (settings.eventbase_debug_logging) {
@@ -910,7 +921,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
     // Backend name for metrics — resolved backend wins, fall back to settings.
     const actualBackendName = resolved.backend || settings?.vector_backend || 'standard';
     try {
-        rawResults = await backend.queryCollection(bareCollectionId, searchText, overfetchAmount, settings, queryVector);
+        rawResults = await backend.queryCollection(bareCollectionId, effectiveQuery, overfetchAmount, settings, queryVector);
         const queryLatency = Date.now() - queryStart;
         recordQuery(actualBackendName, queryLatency);
         if (settings.eventbase_debug_logging) {
@@ -931,7 +942,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
         text: meta.text || ''
     }));
 
-    let finalResults = await scoreResults(resultsForBoost, searchText, topK, settings, bareCollectionId);
+    let finalResults = await scoreResults(resultsForBoost, effectiveQuery, topK, settings, bareCollectionId);
 
     if (settings.eventbase_debug_logging) {
         const idfMode = settings.bm25_use_corpus_idf ? 'corpus-IDF' : 'local-IDF';

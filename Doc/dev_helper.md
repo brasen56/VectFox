@@ -377,16 +377,33 @@ request fails with a Qdrant error, check the server version and set
 
 ---
 
-## 9) Mirrored Function — `extractQueryKeywords`
+## 9) Retrieval Tokenization — Language-Neutral (since 2026-05-29)
 
-| Item             | Value                                                                                                |
-| ---------------- | ---------------------------------------------------------------------------------------------------- |
-| Origin           | `similharity/index.js` lines 54–146                                                                  |
-| vectfox copy     | `core/query-keyword-extractor.js`                                                                    |
-| Exports          | `extractQueryKeywords(text, maxKeywords)`, `isCJKToken(token)`, `RETRIEVAL_KEYWORD_LEVELS`, `DEFAULT_RETRIEVAL_KEYWORD_LEVEL` |
-| Stop-word source | Imports`DEFAULT_STOP_WORD_SET` from `./stop-words.js` (full multi-language list, English + CJK; mirrored from `similharity/stop-words.js`) |
+VectFox's **retrieval** path (BM25 sparse vectors + query keyword extraction) is now language-neutral. Two scripts share one set of primitives so the ingest path and the query path can never drift:
 
-**Keep-in-sync note:** if the extraction algorithm changes in `similharity/index.js` (e.g. anchor budget, bigram fallback, Latin regex), update `core/query-keyword-extractor.js` to match. The console log prefix was changed from `[Qdrant]` to `[vectfox]` — that difference is intentional.
+| Item              | Value                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| Shared primitives | `core/script-segmentation.js` — `CJK_SPAN_RE`, `CJK_CHAR_RE`, `KANA_RE`, `LATIN_TOKEN_RE`, `NON_WORD_RE`, `localeForSpan()`, `getSegmenter()` |
+| Ingest path       | `core/bm25-scorer.js` → `tokenize()` / `encodeSparseVector()` (imports the shared module)            |
+| Query path        | `core/query-keyword-extractor.js` → `extractQueryKeywords()`, `isCJKToken()` (imports the shared module) |
+| Stop-word source  | `DEFAULT_STOP_WORD_SET` from `./stop-words.js` (English + CJK lists)                                 |
+
+### How language neutrality works
+
+- **Space-separated scripts** (Latin, Cyrillic, Greek, Arabic, …) tokenize via Unicode-aware matchers: `LATIN_TOKEN_RE` (`\p{L}…`) for query keywords, `NON_WORD_RE` (`[^\p{L}\p{N}_\s]`) for BM25. Accents survive (`café`, `niño`, `résumé` are no longer stripped to `caf`, `nio`, `resum`).
+- **Space-less scripts** (CJK Han, Kana, Hangul, Thai, Lao, Myanmar, Khmer) are matched by `CJK_SPAN_RE`, routed to the right `Intl.Segmenter` locale by `localeForSpan()`, and fall back to bigrams when the API is unavailable.
+- **Adding a language** = one Unicode range in `CJK_SPAN_RE`/`CJK_CHAR_RE` + one `[/range/, 'locale']` entry in `SCRIPT_LOCALE_MAP`. Nothing else changes.
+
+### Officially supported vs. works-but-unofficial
+
+- **Officially supported: CJK + English.** Their tokens are byte-identical to the pre-2026-05-29 behavior, so no re-indexing is required.
+- **Works but unofficial:** accented Latin (Spanish, French, Vietnamese…), Cyrillic, Greek, Arabic, Thai, etc. now tokenize correctly for BM25, but have **no language-specific stemmer** (Porter is English-only and skipped for CJK) and **no stop-word lists** beyond English + CJK. Quality is "functional, not tuned." Pre-existing collections in these scripts would need re-indexing to match the new tokens.
+
+### Scope boundary ⚠️
+
+This applies to **retrieval/tokenization only**. Activation **Triggers and Advanced Conditions are still English-only and will be demised in future version** — see [§12](#12-trigger--condition-activation--english-only). Dense/vector search has always been language-neutral (embeddings are external).
+
+**Note:** the old `similharity/index.js` copy of `extractQueryKeywords` was deleted (it was dead code — sparse vectors are computed client-side and passed to the server as `sparseQueryVector`). `core/query-keyword-extractor.js` is now the single source of truth; there is no longer a function to keep in sync.
 
 ---
 
@@ -822,19 +839,18 @@ Two distinct buckets of failure:
 
 - **Bucket 1 — `tests/backends.test.js` (20 individual test failures)**
   `vi.mock('../core/providers.js')` factory was missing `getModelFromSettings`. Function was added to `providers.js` after the mock was written; every test path that reached `getModelFromSettings(settings)` threw `[vitest] No "getModelFromSettings" export is defined on the mock`.
-
 - **Bucket 2 — `tests/backend-manager.test.js`, `tests/hybrid-search.test.js`, `tests/world-info-integration.test.js` (file-load failures)**
   Vitest tries to resolve ST relative paths (e.g. `../../../../extensions.js`) that live outside the project root. The test files didn't mock all the SillyTavern host modules their transitive imports needed → module-load fails → file fails to load → tests inside never run (silently hidden in the failing test-file count).
 
 #### Fix summary
 
-| Action | Where | Effect |
-|---|---|---|
-| Added `getModelFromSettings: vi.fn(() => 'test-model')` to providers mock | [tests/backends.test.js:54](../tests/backends.test.js#L54) | Resolved Bucket 1 (20 → 0 test failures) |
-| Removed `@vitest-environment jsdom` directive | [tests/backend-manager.test.js](../tests/backend-manager.test.js) | The jsdom env broke vite's import-analysis pre-pass for the SillyTavern mocks; removing it fixed 21 tests |
-| Added SillyTavern + transitive mocks (extensions.js, script.js, plus `porterStemmer`, `getBackendForCollection`) | [tests/hybrid-search.test.js](../tests/hybrid-search.test.js) | File loads; 56/56 tests pass |
-| Added SillyTavern + transitive mocks, `vi.hoisted` shared state for registry/sourceName/disabled flags, vf_ prefix + _T0 suffix on test collection IDs to match production format | [tests/world-info-integration.test.js](../tests/world-info-integration.test.js) | File loads; 37/37 tests pass |
-| 2 assertion updates for API drift | hybrid-search.test.js (6th `filters` arg added to `backend.hybridQuery`), world-info-integration.test.js (`scope` default changed `'global'` → `'character'`, `isLorebookVectorized` no longer calls `buildLorebookCollectionId`) | Test assertions match shipped behavior |
+| Action                                                                                               | Where                                                                                                | Effect                                                                                               |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Added `getModelFromSettings: vi.fn(() => 'test-model')` to providers mock                            | [tests/backends.test.js:54](../tests/backends.test.js#L54)                                           | Resolved Bucket 1 (20 → 0 test failures)                                                             |
+| Removed `@vitest-environment jsdom` directive                                                        | [tests/backend-manager.test.js](../tests/backend-manager.test.js)                                    | The jsdom env broke vite's import-analysis pre-pass for the SillyTavern mocks; removing it fixed 21 tests |
+| Added SillyTavern + transitive mocks (extensions.js, script.js, plus `porterStemmer`, `getBackendForCollection`) | [tests/hybrid-search.test.js](../tests/hybrid-search.test.js)                                        | File loads; 56/56 tests pass                                                                         |
+| Added SillyTavern + transitive mocks, `vi.hoisted` shared state for registry/sourceName/disabled flags, vf_ prefix + _T0 suffix on test collection IDs to match production format | [tests/world-info-integration.test.js](../tests/world-info-integration.test.js)                      | File loads; 37/37 tests pass                                                                         |
+| 2 assertion updates for API drift                                                                    | hybrid-search.test.js (6th `filters` arg added to `backend.hybridQuery`), world-info-integration.test.js (`scope` default changed `'global'` → `'character'`, `isLorebookVectorized` no longer calls `buildLorebookCollectionId`) | Test assertions match shipped behavior                                                               |
 
 #### **2 real source bugs uncovered and fixed**
 
