@@ -80,7 +80,6 @@ export function openTextCleaningManager() {
                     <div class="vectfox-tcm-section">
                         <div class="vectfox-tcm-section-header">
                             <h4>Built-in Patterns</h4>
-                            <span class="vectfox-tcm-hint">Used when preset is "Custom"</span>
                         </div>
                         <div class="vectfox-tcm-patterns-grid" id="VectFox_tcm_builtin_patterns">
                             ${renderBuiltinPatterns(settings)}
