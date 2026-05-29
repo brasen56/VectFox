@@ -117,6 +117,14 @@ export const BUILTIN_PATTERNS = {
         flags: 'gm',
         builtin: true,
     },
+    strip_mvu_game_system_tags: {
+        id: 'strip_mvu_game_system_tags',
+        name: 'Strip Game-System Guide/Protocol Tags (MVU)',
+        pattern: '<(COT_Guide|JSONPatch_Format|CURRENT_VARIABLE_DATA|Reply_Request|Schema_Syntax|Update_Analysis_Detail|Social_Check_System|encounter_guide|Story_Analysis_Detail|Economic_System|Stat_System|Initiative_System|Trait_Behavior|World_Advancement_Protocol|DC_Determine_Guide|World_Building_Logic|Cognitive_Isolation|Character_Mind_Simulation_Protocol|Conflict_System|Personality_Guide|Intimacy_System|CharacterGenerationProtocol|battle_system_text_rpg|character_attributes_system|combat_calculation_detail|core-points-guide|monster_guide|familiar_system|progression_system|equipment_guide|MoneySystem|Ranking_System|Skill_and_Spell_System|Journey)\\b[^>]*>[\\s\\S]*?</\\1\\s*>',
+        replacement: '',
+        flags: 'gi',
+        builtin: true,
+    },
 };
 
 /**
@@ -175,6 +183,7 @@ export const CLEANING_PRESETS = {
             'strip_mvu_combat_calculation',
             'strip_mvu_story_analysis',
             'strip_mvu_combat_log',
+            'strip_mvu_game_system_tags',
         ],
     },
 };
