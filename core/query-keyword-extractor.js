@@ -63,7 +63,7 @@ export function extractQueryKeywords(searchText, maxKeywords = 50) {
             }
         }
 
-        const latinMatches = sourceText.match(/[a-z][a-z0-9'_-]{2,}/g) || [];
+        const latinMatches = sourceText.match(/\p{L}[\p{L}\d'_-]{2,}/gu) || [];
         for (const tok of latinMatches) {
             if (!STOP_WORDS.has(tok)) {
                 latinFreq.set(tok, (latinFreq.get(tok) || 0) + 1);
