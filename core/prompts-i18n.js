@@ -482,9 +482,17 @@ const _EXTRACTION_LANG_JIEBA =
    - All string fields (summary, cause, result, characters, locations, factions, items, concepts, keywords, open_threads) MUST be in Simplified Chinese (简体中文).
    - DO NOT convert to Traditional Chinese.
    - Proper nouns: preserve exact form from the excerpt — DO NOT translate, romanize, or transliterate names.
-   - KEYWORDS — compound splitting: Chinese compounds are written without spaces. Add both the full compound
-     AND each component base word as separate keyword entries so partial queries still match.
-     Example: 赎身任务 → ["赎身任务", "赎身", "任务"]
+   - KEYWORDS — compound splitting (MANDATORY, applies to EVERY multi-character compound):
+     Chinese compounds are written without spaces, so the retrieval engine can't guess word
+     boundaries. For every multi-character compound you put in keywords, you MUST ALSO emit
+     each component base word as a SEPARATE entry. Not "sometimes" — every time.
+       赎身任务      →  ["赎身任务", "赎身", "任务"]
+       支线任务      →  ["支线任务", "支线", "任务"]
+       公会委托      →  ["公会委托", "公会", "委托"]
+       野外野餐      →  ["野外野餐", "野外", "野餐"]
+     SELF-CHECK before returning: scan your keywords array. For any 2+ character compound
+     with no component entry next to it, ADD the missing components. This is the single
+     most common error — do not skip the check.
    - Violating this rule makes the output invalid.
 
 `;
@@ -494,9 +502,17 @@ const _EXTRACTION_LANG_JIEBA_TW =
    - All string fields (summary, cause, result, characters, locations, factions, items, concepts, keywords, open_threads) MUST be in Traditional Chinese (繁體中文).
    - DO NOT convert to Simplified Chinese.
    - Proper nouns: preserve exact form from the excerpt — DO NOT translate, romanize, or transliterate names.
-   - KEYWORDS — compound splitting: Chinese compounds are written without spaces. Add both the full compound
-     AND each component base word as separate keyword entries so partial queries still match.
-     Example: 贖身任務 → ["贖身任務", "贖身", "任務"]
+   - KEYWORDS — compound splitting (MANDATORY, applies to EVERY multi-character compound):
+     Chinese compounds are written without spaces, so the retrieval engine can't guess word
+     boundaries. For every multi-character compound you put in keywords, you MUST ALSO emit
+     each component base word as a SEPARATE entry. Not "sometimes" — every time.
+       贖身任務      →  ["贖身任務", "贖身", "任務"]
+       支線任務      →  ["支線任務", "支線", "任務"]
+       公會委託      →  ["公會委託", "公會", "委託"]
+       野外野餐      →  ["野外野餐", "野外", "野餐"]
+     SELF-CHECK before returning: scan your keywords array. For any 2+ character compound
+     with no component entry next to it, ADD the missing components. This is the single
+     most common error — do not skip the check.
    - Violating this rule makes the output invalid.
 
 `;
@@ -505,9 +521,17 @@ const _EXTRACTION_LANG_TINY_SEGMENTER =
 `1. LANGUAGE — MANDATORY:
    - All string fields (summary, cause, result, characters, locations, factions, items, concepts, keywords, open_threads) MUST be in Japanese (日本語).
    - Proper nouns: preserve exact form from the excerpt — DO NOT translate, romanize, or transliterate names.
-   - KEYWORDS — compound splitting: Japanese compounds are written without spaces. Add both the full compound
-     AND each component base word as separate keyword entries so partial queries still match.
-     Example: 魔王城潜入 → ["魔王城潜入", "魔王", "城", "潜入"]
+   - KEYWORDS — compound splitting (MANDATORY, applies to EVERY multi-character compound):
+     Japanese compounds are written without spaces, so the retrieval engine can't guess word
+     boundaries. For every multi-character compound you put in keywords, you MUST ALSO emit
+     each component base word as a SEPARATE entry. Not "sometimes" — every time.
+       魔王城潜入       →  ["魔王城潜入", "魔王", "城", "潜入"]
+       身代金交渉       →  ["身代金交渉", "身代金", "交渉"]
+       中心目標         →  ["中心目標", "中心", "目標"]
+       パーティーの任務 →  ["パーティーの任務", "パーティー", "任務"]
+     SELF-CHECK before returning: scan your keywords array. For any 2+ character compound
+     with no component entry next to it, ADD the missing components. This is the single
+     most common error — do not skip the check.
    - Violating this rule makes the output invalid.
 
 `;
@@ -516,9 +540,17 @@ const _EXTRACTION_LANG_KOREAN =
 `1. LANGUAGE — MANDATORY:
    - All string fields (summary, cause, result, characters, locations, factions, items, concepts, keywords, open_threads) MUST be in Korean (한국어).
    - Proper nouns: preserve exact form from the excerpt — DO NOT translate, romanize, or transliterate names.
-   - KEYWORDS — compound splitting: Korean compounds written as a single eojeol may be missed by partial
-     queries. Add both the full compound AND each component base word as separate keyword entries.
-     Example: 마왕성잠입 → ["마왕성잠입", "마왕", "성", "잠입"]
+   - KEYWORDS — compound splitting (MANDATORY, applies to EVERY multi-character compound):
+     Korean compounds written as a single eojeol can't be split by the retrieval engine.
+     For every compound you put in keywords, you MUST ALSO emit each component as a
+     SEPARATE entry. Not "sometimes" — every time.
+       마왕성잠입    →  ["마왕성잠입", "마왕", "성", "잠입"]
+       파티임무      →  ["파티임무", "파티", "임무"]
+       핵심목표      →  ["핵심목표", "핵심", "목표"]
+       아버지찾기    →  ["아버지찾기", "아버지", "찾기"]
+     SELF-CHECK before returning: scan your keywords array. For any compound with no
+     component entry next to it, ADD the missing components. This is the single most
+     common error — do not skip the check.
    - Violating this rule makes the output invalid.
 
 `;
@@ -608,6 +640,16 @@ Each event object MUST have these fields:
 - items: array of strings, EXACT ORIGINAL SCRIPT
 - concepts: array of strings, SAME LANGUAGE AS EXCERPT
 - keywords: array of 8-15 strings, SAME LANGUAGE AS EXCERPT. Search aids used by a keyword retrieval engine — be GENEROUS and INCLUSIVE. Include every distinctive term that a future query about this event might use: key actions/verbs, distinctive objects/items, emotional or thematic tags, unique concepts, and any rare/specific noun that isn't generic filler. DO NOT pad with generic words. Quality matters but err on the side of MORE rather than fewer — sparse keywords cause retrieval misses. CRITICAL: keywords MUST be in the same language as the excerpt (see Rule 1). NEVER output a different language in this field.
+  COMPOUND SPLITTING (Chinese / Japanese / Korean ONLY — skip for English/Latin):
+    The retrieval engine cannot guess word boundaries in CJK text. For EVERY multi-character
+    compound you add (e.g. 支線任務 / 魔王城潜入 / 마왕성잠입), you MUST ALSO emit each
+    component as a SEPARATE entry. Examples:
+      支線任務     →   "支線任務", "支線", "任務"
+      魔王城潜入   →   "魔王城潜入", "魔王", "城", "潜入"
+      마왕성잠입   →   "마왕성잠입", "마왕", "성", "잠입"
+    BEFORE returning, scan your keywords list — for any 2+ character CJK compound that has
+    NO component entry alongside it, ADD the missing components. This is the single most
+    common rule violation; do not skip the self-check.
 - open_threads: array of strings, SAME LANGUAGE AS EXCERPT (unresolved questions/promises)
 - should_persist: boolean (false for ephemeral moments unlikely to matter later)
 
@@ -627,26 +669,26 @@ const _EXTRACTION_EXAMPLES_INTL =
 `;
 
 const _EXTRACTION_EXAMPLES_JIEBA =
-`One event (Simplified Chinese excerpt):
-[{"event_type":"promise_or_oath","importance":9,"summary":"师傅承诺帮梅拉寻找失踪的父亲暗影之翼。","cause":"梅拉在房间中央哭着请求帮助。","result":"寻找暗影之翼成为队伍的核心目标。","characters":["梅拉","师父"],"locations":["星月绿洲顶楼公寓"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["失踪的父亲"],"keywords":["暗影之翼","寻找父亲","承诺","哭泣","请求","失踪","核心目标","队伍任务","誓言","亲情"],"open_threads":["确定暗影之翼是生是死"],"should_persist":true}]
+`One event (Simplified Chinese excerpt) — notice how each multi-character compound in keywords is followed by its components:
+[{"event_type":"promise_or_oath","importance":9,"summary":"师傅承诺帮梅拉寻找失踪的父亲暗影之翼。","cause":"梅拉在房间中央哭着请求帮助。","result":"寻找暗影之翼成为队伍的核心目标。","characters":["梅拉","师父"],"locations":["星月绿洲顶楼公寓"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["失踪的父亲"],"keywords":["暗影之翼","暗影","之翼","寻找父亲","寻找","父亲","承诺","哭泣","请求","失踪","核心目标","核心","目标","队伍任务","队伍","任务","誓言","亲情"],"open_threads":["确定暗影之翼是生是死"],"should_persist":true}]
 
 `;
 
 const _EXTRACTION_EXAMPLES_JIEBA_TW =
-`One event (Traditional Chinese excerpt):
-[{"event_type":"promise_or_oath","importance":9,"summary":"師傅承諾幫梅拉尋找失蹤的父親暗影之翼。","cause":"梅拉在房間中央哭著請求幫助。","result":"尋找暗影之翼成為隊伍的核心目標。","characters":["梅拉","師父"],"locations":["星月綠洲頂樓公寓"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["失蹤的父親"],"keywords":["暗影之翼","尋找父親","承諾","哭泣","請求","失蹤","核心目標","隊伍任務","誓言","親情"],"open_threads":["確定暗影之翼是生是死"],"should_persist":true}]
+`One event (Traditional Chinese excerpt) — notice how each multi-character compound in keywords is followed by its components:
+[{"event_type":"promise_or_oath","importance":9,"summary":"師傅承諾幫梅拉尋找失蹤的父親暗影之翼。","cause":"梅拉在房間中央哭著請求幫助。","result":"尋找暗影之翼成為隊伍的核心目標。","characters":["梅拉","師父"],"locations":["星月綠洲頂樓公寓"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["失蹤的父親"],"keywords":["暗影之翼","暗影","之翼","尋找父親","尋找","父親","承諾","哭泣","請求","失蹤","核心目標","核心","目標","隊伍任務","隊伍","任務","誓言","親情"],"open_threads":["確定暗影之翼是生是死"],"should_persist":true}]
 
 `;
 
 const _EXTRACTION_EXAMPLES_TINY_SEGMENTER =
-`One event (Japanese excerpt):
-[{"event_type":"promise_or_oath","importance":9,"summary":"師匠はメイラの行方不明の父・影の翼を見つけることを約束した。","cause":"メイラが部屋の中央で泣きながら助けを求めた。","result":"影の翼の捜索がパーティーの中心目標となった。","characters":["メイラ","師匠"],"locations":["星月オアシス最上階アパート"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["行方不明の父"],"keywords":["影の翼","父の捜索","約束","泣く","懇願","行方不明","中心目標","パーティーの任務","誓い","親子の絆"],"open_threads":["影の翼の生死を確認する"],"should_persist":true}]
+`One event (Japanese excerpt) — notice how each multi-character compound in keywords is followed by its components:
+[{"event_type":"promise_or_oath","importance":9,"summary":"師匠はメイラの行方不明の父・影の翼を見つけることを約束した。","cause":"メイラが部屋の中央で泣きながら助けを求めた。","result":"影の翼の捜索がパーティーの中心目標となった。","characters":["メイラ","師匠"],"locations":["星月オアシス最上階アパート"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["行方不明の父"],"keywords":["影の翼","影","翼","父の捜索","父","捜索","約束","泣く","懇願","行方不明","行方","不明","中心目標","中心","目標","パーティーの任務","パーティー","任務","誓い","親子の絆","親子","絆"],"open_threads":["影の翼の生死を確認する"],"should_persist":true}]
 
 `;
 
 const _EXTRACTION_EXAMPLES_KOREAN =
-`One event (Korean excerpt):
-[{"event_type":"promise_or_oath","importance":9,"summary":"스승은 메이라의 실종된 아버지 그림자의 날개를 찾아주기로 약속했다.","cause":"메이라가 방 한가운데서 울며 도움을 청했다.","result":"그림자의 날개를 찾는 것이 파티의 핵심 목표가 되었다.","characters":["메이라","스승"],"locations":["성월 오아시스 옥상 아파트"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["실종된 아버지"],"keywords":["그림자의 날개","아버지 찾기","약속","울음","간청","실종","핵심 목표","파티 임무","맹세","부녀의 정"],"open_threads":["그림자의 날개의 생사 확인"],"should_persist":true}]
+`One event (Korean excerpt) — notice how each multi-character compound in keywords is followed by its components:
+[{"event_type":"promise_or_oath","importance":9,"summary":"스승은 메이라의 실종된 아버지 그림자의 날개를 찾아주기로 약속했다.","cause":"메이라가 방 한가운데서 울며 도움을 청했다.","result":"그림자의 날개를 찾는 것이 파티의 핵심 목표가 되었다.","characters":["메이라","스승"],"locations":["성월 오아시스 옥상 아파트"],"factions":[],"DateTime":"2024-05-01T20:30:00Z","items":[],"concepts":["실종된 아버지"],"keywords":["그림자의 날개","그림자","날개","아버지찾기","아버지","찾기","약속","울음","간청","실종","핵심목표","핵심","목표","파티임무","파티","임무","맹세","부녀의 정","부녀","정"],"open_threads":["그림자의 날개의 생사 확인"],"should_persist":true}]
 
 `;
 
