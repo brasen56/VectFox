@@ -175,11 +175,18 @@ const RETRY_CONFIG = {
     maxDelay: RETRY_MAX_DELAY_MS,
     backoffFactor: RETRY_BACKOFF_MULTIPLIER,
     shouldRetry: (error) => {
-        // Retry on network errors and rate limits
+        // Catch AbortSignal.timeout()'s DOMException ("TimeoutError" / message
+        // "signal timed out") before the keyword fallback. The string "timed
+        // out" is a separate word form from "timeout" and the keyword list
+        // missed it, so OpenRouter embedding stalls that tripped ST's HTTP
+        // timeout silently bypassed retry and killed the backfill mid-run.
+        // See production failure 2026-05-30 10:26:26 — Doc/log.txt.
+        if (error?.name === 'TimeoutError') return true;
         const message = error?.message?.toLowerCase() || '';
         const isRetryable =
             message.includes('network') ||
             message.includes('timeout') ||
+            message.includes('timed out') ||
             message.includes('failed to fetch') ||
             message.includes('fetch') ||
             message.includes('suspended') ||
