@@ -249,6 +249,42 @@ The change lives entirely inside `runEventBaseIngestion`. All 3 production calle
 
 ---
 
+## 6.8) Embedding-Call Resilience — Parallel-split + Hedge (since 2026-05-30)
+
+Two related opt-in/default-on features sit inside `insertVectorItems` ([`core/core-vector-api.js`](core/core-vector-api.js)). Both affect every caller — EventBase ingestion AND chunk-based document vectorization in [`core/content-vectorization.js`](core/content-vectorization.js). UI lives in the **Core tab → Embedding section**.
+
+### Parallel-split (default ON, setting `vector_group_embedding_call`)
+
+Each item gets its own HTTP POST to ST's `/api/vector/insert`, fired in parallel waves of up to 16. Containment-focused: a stuck upstream worker only blocks that one item, the rest finish normally. Skipped for local providers (Ollama already uses batch=1) and rate-limited setups (`dynamicRateLimiter` requires serial execution). Checkbox name "Group embedding calls (cheaper, less robust)" — checking opts INTO the legacy batched-POST behavior, where one stuck item can hang a 555-second monster batch (observed pre-fix 2026-05-30).
+
+### Hedge (default OFF, setting `vector_hedge_after_ms`)
+
+If an embedding POST hasn't returned in 15s (the threshold value), fire a duplicate request on a fresh HTTP connection. Race-first-wins via Promise — whichever finishes first settles the call. Late losers harmlessly upsert the same Qdrant point with identical data (hash-deterministic on event_id). Helps multi-upstream gateways (OpenRouter, SiliconFlow behind the vllm slot) recover from connection-level routing stalls in seconds instead of waiting through ST's 120s timeout. Gated to skip `localGpuSources` set — a new connection to Ollama wouldn't change routing.
+
+### Hedge-fatal escape
+
+After 4 fresh-connection attempts in 60s with no success, throws an error with `name === 'HedgeFatalError'` and `isHedgeFatal === true`. Both `RETRY_CONFIG.shouldRetry` and `_insertWithRetry` (the outer EventBase retry in `eventbase-workflow.js`) check this flag and skip retrying — more retries would just trigger another 60s of identical hedging against the same broken upstream. User presses Continue button later to resume; the existing window-cache semantics ensure no duplicates on resume thanks to hash-deterministic Qdrant upserts.
+
+### Composition
+
+| Layer | Behavior with hedge enabled |
+|---|---|
+| Coordinator (EventBase pipelined or serial) | Hedge-fatal bubbles up as a fatal; windows stay unmarked; user resumes via Continue. |
+| Outer `_insertWithRetry` (pipelined mode) | Catches anything except AbortError AND hedge-fatal. Hedge-fatal escapes the 3-attempt outer retry budget. |
+| Inner `AsyncUtils.retry` | `shouldRetry` returns false for hedge-fatal. Otherwise retries on TimeoutError + the keyword set in `RETRY_CONFIG.shouldRetry`. |
+| Hedge (`callWithHedge`) | Primary at t=0, hedge at t=15s, 30s, 45s. Hard fatal cutoff at t=60s. |
+| Backend `insertVectorItems` (similharity → ST → provider → Qdrant) | One call per hedge invocation. |
+
+### Key files
+
+- [`core/core-vector-api.js`](core/core-vector-api.js) — `callWithHedge` helper + `shouldRetry` filter + `makeProcessBatch` wiring
+- [`core/eventbase-workflow.js`](core/eventbase-workflow.js) `_insertWithRetry` — hedge-fatal short-circuit
+- [`ui/ui-manager.js`](ui/ui-manager.js) — Core tab → Embedding section checkboxes + bindings
+- [`index.js`](index.js) — defaults
+- [`plans/embedding-resilience-hedge-and-diagnostics.md`](plans/embedding-resilience-hedge-and-diagnostics.md) — full design history, observed failure modes, and acceptance criteria
+
+---
+
 ## 7) Module Integration Analysis — EventBase Compatibility
 
 Analysis of whether non-EventBase modules should be integrated into the EventBase pipeline.

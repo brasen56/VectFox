@@ -479,6 +479,12 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                 return; // success
             } catch (err) {
                 if (err?.name === 'AbortError' || abortSignal?.aborted) throw err;
+                // Hedge-fatal bypass: the inner hedge already burned ~60s on 4 fresh-connection
+                // attempts in parallel. Outer retry would just trigger another 60s of identical
+                // hedging — same upstream, same routing pool, no new information. Throw up to
+                // the coordinator so user can press Continue later when conditions improve.
+                // See plans/embedding-resilience-hedge-and-diagnostics.md §6.5.
+                if (err?.isHedgeFatal === true) throw err;
                 lastErr = err;
                 console.warn(`[EventBase] Insert batch starting at window ${batchFirstIdx} attempt ${attempt}/3 failed: ${err?.message || err}`);
                 if (attempt < 3) {

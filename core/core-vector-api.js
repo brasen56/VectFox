@@ -168,6 +168,111 @@ function chunkArray(array, size) {
     return chunks;
 }
 
+/**
+ * callWithHedge — fire a duplicate request after a threshold to dodge connection-level
+ * routing stalls on multi-upstream embedding providers (OpenRouter, SiliconFlow behind
+ * the vllm slot, etc.). Race-first-wins via Promise — whoever finishes first settles.
+ *
+ * Why it works: routing affinity at OpenRouter and similar gateways is per-HTTP-connection.
+ * Once your traffic lands on a stuck upstream, the SAME request stays stuck until ST's
+ * 120s timeout fires. A NEW connection at t=15s gets a fresh routing decision and often
+ * lands on a healthy upstream — confirmed 2026-05-30 (attempt 1 hung 120s, identical
+ * payload on attempt 2 succeeded in 1.1s).
+ *
+ * Safety: same input → deterministic embedding → same hash → Qdrant upsert idempotent on
+ * point ID. Whichever attempt wins, the data is correct. Late-arriving losers harmlessly
+ * upsert the same point with identical data.
+ *
+ * Hedge-fatal: if all (maxHedges + 1) attempts fail (or are still in flight) by the hard
+ * cutoff at (maxHedges + 1) × thresholdMs, throw an error with `name === 'HedgeFatalError'`
+ * and `isHedgeFatal === true`. The shouldRetry filter in RETRY_CONFIG checks this flag and
+ * skips retrying — the user can resume manually via Continue button. See
+ * plans/embedding-resilience-hedge-and-diagnostics.md §6.
+ *
+ * @param {Function} fn - Async function to call (each invocation must be safe to repeat)
+ * @param {number} thresholdMs - Time between attempts (e.g., 15000)
+ * @param {number} maxHedges - Number of hedges to fire after primary (e.g., 3)
+ * @param {object} ctx - { debugOn, batchIdx, totalBatches, provider } for logging
+ * @returns {Promise<*>} - Result of the first attempt to succeed
+ */
+async function callWithHedge(fn, thresholdMs, maxHedges, ctx) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const timers = [];
+        const errors = [];
+        const { debugOn, batchIdx, totalBatches, provider } = ctx || {};
+
+        const settle = (kind, val) => {
+            if (settled) return;
+            settled = true;
+            for (const t of timers) clearTimeout(t);
+            kind === 'ok' ? resolve(val) : reject(val);
+        };
+
+        const label = (i) => (i === 0 ? 'primary' : `hedge ${i}/${maxHedges}`);
+
+        const fire = (attemptIdx) => {
+            const start = performance.now();
+            fn().then(
+                (r) => {
+                    if (settled) return; // someone else already won
+                    if (debugOn) {
+                        const elapsed = ((performance.now() - start) / 1000).toFixed(1);
+                        console.log(
+                            `VectFox: hedge — ${label(attemptIdx)} WON for batch ${batchIdx}/${totalBatches} via ${provider} after ${elapsed}s`,
+                        );
+                    }
+                    settle('ok', r);
+                },
+                (e) => {
+                    errors.push({ attemptIdx, error: e });
+                    if (debugOn && !settled) {
+                        const elapsed = ((performance.now() - start) / 1000).toFixed(1);
+                        console.warn(
+                            `VectFox: hedge — ${label(attemptIdx)} FAILED after ${elapsed}s for batch ${batchIdx}/${totalBatches} — ${e?.name || 'Error'}: ${e?.message || e}`,
+                        );
+                    }
+                    // Don't settle on individual failure — later hedges may still succeed
+                },
+            );
+        };
+
+        // Primary at t=0
+        fire(0);
+
+        // Schedule hedges at t=thresholdMs, 2×thresholdMs, ..., maxHedges×thresholdMs
+        for (let i = 1; i <= maxHedges; i++) {
+            timers.push(setTimeout(() => {
+                if (!settled) {
+                    if (debugOn) {
+                        console.warn(
+                            `VectFox: hedge ${i}/${maxHedges} firing at t=${(i * thresholdMs) / 1000}s — batch ${batchIdx}/${totalBatches} via ${provider} (primary still slow)`,
+                        );
+                    }
+                    fire(i);
+                }
+            }, i * thresholdMs));
+        }
+
+        // Hard fatal cutoff at t=(maxHedges + 1) × thresholdMs.
+        // Catches both "all attempts failed" and "all attempts still in flight, none returned"
+        // — either way, after 4 attempts to a routing-variant provider, more retries won't help.
+        timers.push(setTimeout(() => {
+            if (settled) return;
+            const lastError = errors.length ? errors[errors.length - 1].error : null;
+            const tail = lastError
+                ? `last error: ${lastError?.name || 'Error'}: ${lastError?.message || lastError}`
+                : `${maxHedges + 1} attempts still in-flight at cutoff, none returned`;
+            const fatalErr = new Error(
+                `Hedge fatal: ${maxHedges + 1} attempts to ${provider} over ${((maxHedges + 1) * thresholdMs) / 1000}s — ${tail}`,
+            );
+            fatalErr.name = 'HedgeFatalError';
+            fatalErr.isHedgeFatal = true;
+            settle('err', fatalErr);
+        }, (maxHedges + 1) * thresholdMs));
+    });
+}
+
 // Retry configuration for transient failures (matches AsyncUtils.retry signature)
 const RETRY_CONFIG = {
     maxAttempts: RETRY_MAX_ATTEMPTS,
@@ -175,6 +280,13 @@ const RETRY_CONFIG = {
     maxDelay: RETRY_MAX_DELAY_MS,
     backoffFactor: RETRY_BACKOFF_MULTIPLIER,
     shouldRetry: (error) => {
+        // Hedge-fatal errors carry an isHedgeFatal flag. After hedge already
+        // burned 4 fresh-connection attempts in ~60s without success, an
+        // immediate outer retry would just trigger another 60s of hedge —
+        // upstream is genuinely broken for our payload. Throw straight up to
+        // the coordinator so the user can press Continue later. See
+        // plans/embedding-resilience-hedge-and-diagnostics.md §6.5.
+        if (error?.isHedgeFatal === true) return false;
         // Catch AbortSignal.timeout()'s DOMException ("TimeoutError" / message
         // "signal timed out") before the keyword fallback. The string "timed
         // out" is a separate word form from "timeout" and the keyword list
@@ -670,10 +782,10 @@ export async function insertVectorItems(collectionId, items, settings, onProgres
             // (SiliconFlow, vLLM-the-software) or ONE routing decision is bad (OpenRouter) —
             // the stuck item retries in isolation while the rest finish normally.
             //
-            // The `vector_group_embedding_call` setting (UI checkbox currently in the
-            // EventBase tab, but the setting itself is path-agnostic and applies to every
-            // caller of insertVectorItems — EventBase ingestion AND content/document
-            // vectorization in content-vectorization.js). Default unchecked. Checking it
+            // The `vector_group_embedding_call` setting (UI checkbox in the Core tab →
+            // Embedding section — path-agnostic, applies to every caller of insertVectorItems
+            // including EventBase ingestion AND content/document vectorization in
+            // content-vectorization.js). Default unchecked. Checking it
             // opts INTO the legacy production behavior: a single batched POST containing all
             // items. Cheaper (fewer HTTP calls) but ONE stuck item hangs the WHOLE batch —
             // see the 555s monster batches observed 2026-05-30.
@@ -700,6 +812,23 @@ export async function insertVectorItems(collectionId, items, settings, onProgres
 
             if (abortSignal?.aborted) throw Object.assign(new Error('Vectorization stopped by user'), { name: 'AbortError' });
 
+            // Hedge gating — opt-in via `vector_hedge_after_ms` setting (0 = off).
+            // Skipped for local providers where opening a new HTTP connection wouldn't
+            // change routing (Ollama / transformers / llama.cpp / KoboldCpp all land on
+            // the same single endpoint regardless of connection identity).
+            // See plans/embedding-resilience-hedge-and-diagnostics.md §6.
+            const rawHedgeAfterMs = Number(settings?.vector_hedge_after_ms) || 0;
+            const HEDGE_MAX_COUNT = 3;
+            const hedgeEnabled = (
+                rawHedgeAfterMs > 0
+                && !localGpuSources.has(settings.source)
+            );
+            const hedgeAfterMs = hedgeEnabled ? rawHedgeAfterMs : 0;
+
+            if (hedgeEnabled && settings?.eventbase_debug_logging) {
+                console.log(`VectFox: hedge enabled — threshold ${hedgeAfterMs}ms, max ${HEDGE_MAX_COUNT} hedges, total budget ${((HEDGE_MAX_COUNT + 1) * hedgeAfterMs) / 1000}s per insert call`);
+            }
+
             // Factored-out per-batch retry+log closure shared by serial and parallel paths.
             // Each invocation gets its OWN attempt counter and timing — under parallel-split
             // the per-item logs interleave but each line carries `batch X/Y` so they remain
@@ -712,12 +841,22 @@ export async function insertVectorItems(collectionId, items, settings, onProgres
                     const debugOn = !!settings?.eventbase_debug_logging;
                     if (debugOn) {
                         console.log(
-                            `VectFox: insert batch ${batchIdx}/${batches.length} attempt ${attemptCount}/${RETRY_CONFIG.maxAttempts} — POST ${batchItemCount} item(s) via ${settings.source}`,
+                            `VectFox: insert batch ${batchIdx}/${batches.length} attempt ${attemptCount}/${RETRY_CONFIG.maxAttempts} — POST ${batchItemCount} item(s) via ${settings.source}${hedgeEnabled ? ' [hedge armed]' : ''}`,
                         );
                     }
                     try {
                         if (abortSignal?.aborted) throw Object.assign(new Error('Vectorization stopped by user'), { name: 'AbortError' });
-                        await backend.insertVectorItems(collectionId, batch, settings, abortSignal);
+                        const insertCall = () => backend.insertVectorItems(collectionId, batch, settings, abortSignal);
+                        if (hedgeEnabled) {
+                            await callWithHedge(insertCall, hedgeAfterMs, HEDGE_MAX_COUNT, {
+                                debugOn,
+                                batchIdx,
+                                totalBatches: batches.length,
+                                provider: settings.source,
+                            });
+                        } else {
+                            await insertCall();
+                        }
                         if (debugOn && attemptCount > 1) {
                             const elapsed = ((performance.now() - attemptStart) / 1000).toFixed(1);
                             console.log(

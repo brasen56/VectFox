@@ -268,6 +268,22 @@ export function renderSettings(containerId, settings, callbacks) {
                                     </div>
                                     <small class="VectFox_hint">Limit the number of API requests per time interval</small>
                                 </div>
+
+                                <div class="vectfox-form-group" style="margin-top: 12px;">
+                                    <label class="checkbox_label" for="VectFox_vector_group_embedding_call">
+                                        <input type="checkbox" id="VectFox_vector_group_embedding_call" />
+                                        <span>Group embedding calls (cheaper, less robust)</span>
+                                    </label>
+                                    <small class="VectFox_hint">Default (unchecked): each item becomes its own embedding HTTP call, fired in parallel. One stuck upstream worker only blocks that one item; the rest still succeed. More HTTP calls per batch — scales with batch size. Check to send all items in ONE batched embedding call (legacy production behavior, cheaper): saves API call count but ONE stuck item hangs the whole batch (the 555s-monster failure mode). Affects EventBase ingestion AND document vectorization (lorebook, character cards, etc.). Skipped automatically for local providers (Ollama) and rate-limited setups.</small>
+                                </div>
+
+                                <div class="vectfox-form-group" style="margin-top: 12px;">
+                                    <label class="checkbox_label" for="VectFox_vector_hedge_enabled">
+                                        <input type="checkbox" id="VectFox_vector_hedge_enabled" />
+                                        <span>Hedge slow embedding calls (15s threshold, recommended for cloud APIs)</span>
+                                    </label>
+                                    <small class="VectFox_hint">When an embedding HTTP call hasn't returned within 15 seconds, fire a duplicate request on a fresh connection. Whichever returns first wins. Cuts routing-stall recovery from 120s (ST's timeout) to under 20s when the upstream gateway has connection-level routing affinity (OpenRouter, SiliconFlow, etc.). Skipped automatically for local providers (Ollama / transformers / llama.cpp / KoboldCpp) where a new connection wouldn't change routing. Costs up to 2-4× embedding API spend per stall (cheap on per-embedding pricing). Up to 4 attempts total over 60s; if all fail, throws fatal and you can resume via Continue.</small>
+                                </div>
                             </div>
 
                             <!-- ═══════════════════════════════════════════════════════ -->
@@ -919,14 +935,6 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <span>Serial extract→insert (recommended)</span>
                                 </label>
                                 <small class="VectFox_hint">Checked: each batch finishes embedding before the next batch starts extracting (well-tested). Uncheck to overlap extract and insert for ~35% faster throughput — experimental.</small>
-                            </div>
-
-                            <div class="vectfox-form-group">
-                                <label class="checkbox_label" for="VectFox_vector_group_embedding_call">
-                                    <input type="checkbox" id="VectFox_vector_group_embedding_call" />
-                                    <span>Group embedding calls (cheaper, less robust)</span>
-                                </label>
-                                <small class="VectFox_hint">Default (unchecked): each item becomes its own embedding HTTP call, fired in parallel. One stuck upstream worker only blocks that one item; the rest still succeed. More HTTP calls per batch — scales with batch size. Check to send all items in ONE batched embedding call (legacy production behavior, cheaper): saves API call count but ONE stuck item hangs the whole batch (the 555s-monster failure mode). Affects EventBase ingestion AND document vectorization (lorebook, character cards, etc.). Skipped automatically for local providers (Ollama) and rate-limited setups.</small>
                             </div>
 
                             <hr style="margin: 16px 0; opacity:0.2;" />
@@ -3613,14 +3621,27 @@ function bindSettingsEvents(settings, callbacks) {
     // Group embedding-call toggle (default unchecked = parallel-split per item).
     // Checked = legacy batched POST. Path-agnostic — affects both EventBase ingestion
     // and document vectorization via the shared insertVectorItems entry point.
-    // UI lives in EventBase tab for now since chunk path isn't actively configured;
-    // the setting key (`vector_group_embedding_call`) reflects the broader scope.
+    // UI lives in the Core tab → Embedding section (the setting's actual scope).
     // Skipped automatically for local providers (Ollama uses batch=1 per item;
     // rate-limit forces serial via dynamicRateLimiter).
     $('#VectFox_vector_group_embedding_call')
         .prop('checked', !!settings.vector_group_embedding_call)
         .on('change', function() {
             settings.vector_group_embedding_call = $(this).prop('checked');
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+
+    // Hedge toggle — boolean UI maps to a millisecond threshold so power users can tune
+    // via devtools without code changes. Checked → 15000ms (vetted default). Unchecked → 0
+    // (off). The actual hedge logic lives in core-vector-api.js callWithHedge(); the gating
+    // in insertVectorItems skips local providers regardless of this checkbox.
+    // See plans/embedding-resilience-hedge-and-diagnostics.md §6 for the full design.
+    const HEDGE_DEFAULT_THRESHOLD_MS = 15000;
+    $('#VectFox_vector_hedge_enabled')
+        .prop('checked', (Number(settings.vector_hedge_after_ms) || 0) > 0)
+        .on('change', function() {
+            settings.vector_hedge_after_ms = $(this).prop('checked') ? HEDGE_DEFAULT_THRESHOLD_MS : 0;
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });

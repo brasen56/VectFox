@@ -237,6 +237,7 @@ const defaultSettings = {
     eventbase_debug_logging: false,
     eventbase_raw_llm_debug: false,              // Raw LLM reply + parser candidate logs (very noisy, per-window)
     vector_group_embedding_call: false,          // Path-agnostic insert toggle (UI lives in EventBase tab for now). false = parallel-split (1 POST per item, failure-contained). true = legacy batched POST (cheaper, one stuck item hangs whole batch). Affects every call to insertVectorItems (EventBase ingestion AND content/document vectorization).
+    vector_hedge_after_ms: 0,                    // 0 = hedge disabled. Set to 15000 (15s) to fire a duplicate request when an embedding POST hasn't returned by the threshold; race-first-wins. Helps multi-upstream gateways (OpenRouter, SiliconFlow via vllm slot) recover from connection-level routing stalls in seconds instead of 120s. Skipped for local providers (ollama/transformers/llamacpp/koboldcpp). See plans/embedding-resilience-hedge-and-diagnostics.md §6.
     eventbase_debug_qdrant_backend: false,
     debug_vectorizing_log: false,                // Verbose vectorization progress logs in console
     eventbase_custom_prompt: '',                  // Custom extraction prompt (empty = use built-in default)
