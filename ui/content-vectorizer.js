@@ -2725,6 +2725,28 @@ async function _runEventBaseBackfill({ resetCaches = false } = {}) {
             );
             return;
         }
+        // Silent insert loss detected — events made it through the workflow but
+        // the count stored in Qdrant is smaller than expected. This is the
+        // last-line defense against data-loss bugs in the layers beneath us
+        // (hash collisions, plugin-side rejection, etc). Show the user the
+        // counts so they know to investigate before relying on the collection.
+        if (e?.code === 'insert_verification_failed') {
+            console.error('[EventBase] Insert verification failed:', e);
+            await callGenericPopup(
+                `<div style="text-align: left;">
+                    <p><strong>Vectorization stopped — silent data loss detected</strong></p>
+                    <p>The number of events stored in the database is smaller than the number VectFox tried to insert. Some events were dropped between the workflow and Qdrant without any error being raised. <strong>Your collection is incomplete</strong> and should not be trusted until this is resolved.</p>
+                    <p>This is usually one of: (a) a hash collision (two events colliding to the same point ID, where Qdrant treats the second as an overwrite of the first), (b) the Similharity plugin silently rejecting a payload field, or (c) a Qdrant capacity / network issue under the gateway.</p>
+                    <p>Details:</p>
+                    <pre style="white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto;">${StringUtils.escapeHtml(e.message)}</pre>
+                    <p>Suggested next step: delete this collection and re-vectorize after the fix. The console has more details.</p>
+                </div>`,
+                POPUP_TYPE.TEXT,
+                '',
+                { okButton: 'Close' },
+            );
+            return;
+        }
         console.error('[EventBase] Backfill failed:', e);
         toastr.error('EventBase ingestion failed: ' + e.message, 'VectFox');
     } finally {

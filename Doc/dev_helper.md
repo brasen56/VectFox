@@ -164,6 +164,91 @@ Related client-side behavior (vectfox):
 
 ---
 
+## 6.5) EventBase Ingestion — Pipelined Extract / Insert (since 2026-05-29)
+
+Plan: [`plans/eventbase-extract-insert-pipeline.md`](../plans/eventbase-extract-insert-pipeline.md).
+
+The `runEventBaseIngestion` loop in `core/eventbase-workflow.js` used to be a strict serial barrier:
+
+```
+dispatch 8 extracts in parallel → await all → await batched insert → next 8
+```
+
+Extract phase and insert phase touch completely independent infrastructure (the LLM HTTP lane vs the Qdrant HTTP lane). The serial barrier was code structure, not a real constraint — it left ~6s of Qdrant idle time on every cycle (insert finishes, extract waits) AND ~6s of LLM-lane idle time (extracts finish, insert waits).
+
+### What we changed
+
+Introduced a single-slot pipeline coordinator inside `runEventBaseIngestion`. At any moment, at most one extract batch AND one insert batch are in flight. When batch N's extract resolves, its result is queued; the coordinator immediately fires (a) batch N's insert AND (b) batch N+1's extract in the same iteration tick. They run concurrently. Steady-state cycle becomes `max(extract_phase, insert_phase)` instead of `extract_phase + insert_phase`.
+
+Three private helpers inside `runEventBaseIngestion` keep the change localized — no new module, no exported API:
+
+| Helper | Role |
+|---|---|
+| `_runOneExtractBatch(slice, batchFirstIdx)` | Existing per-window extract logic (Promise.allSettled on 8 LLM calls), moved verbatim into a function so the coordinator can call it as a black box. Returns `{ allEvents, hashesToMark, endsExtracted, batchResults, ... }`. |
+| `_insertWithRetry(events, batchFirstIdx)` | Wraps `insertEvents` with up to 3 attempts and exponential-ish backoff (500ms / 1000ms). On exhaustion throws `EventBaseFatalError` with `code: 'insert_failed_max_retries'` carrying Qdrant's error text. UI catch in `ui/content-vectorizer.js::_runEventBaseBackfill` surfaces it via `callGenericPopup`. |
+| `_finalizeBatch(extractResult)` | Calls `_insertWithRetry`, then `markWindowExtracted` + `setVectorizationTip` in that order, then tally + progress updates. The state-mutation order is the "no corrupted state" invariant — we never mark a window as covered before its events are durable in Qdrant. |
+
+### The coordinator (state machine)
+
+Four state variables: `nextBatchFirstIdx` (cursor), `pendingExtract`, `pendingInsert`, `queuedResult`. Order is load-bearing:
+
+```js
+while (true) {
+    // Dispatch INSERT FIRST so queuedResult clears, then dispatch EXTRACT
+    // against the updated state. The reverse order has queuedResult block
+    // the new extract in the same tick the insert is about to consume it.
+    if (!pendingInsert && queuedResult !== null) { /* start insert */ }
+    if (!pendingExtract && nextBatchFirstIdx < windows.length) { /* start extract */ }
+    if (!pendingExtract && !pendingInsert) break;
+
+    const winner = await Promise.race([extractKey, insertKey].filter(Boolean));
+    // extract resolved → set queuedResult
+    // insert resolved → fold tally, fire _updateProgressAfterFinalize
+}
+```
+
+The insert-first-then-extract ordering is a **bug we shipped on the first try and had to fix**. The original version checked `canStartExtract` against the pre-iteration snapshot of `queuedResult`, so when batch N's extract finished and queued its result, the next iteration's extract was blocked by the same queuedResult that was about to drain. This made the pipeline silently regress to serial behavior — 22-second batches instead of 12. The fix (commit on Dev) is the order shown above.
+
+### Measured impact (2026-05-29, 2382-msg reference chat)
+
+Pre-pipeline baseline: ~40 minutes wall time, ~1.7 events/sec.
+
+With pipelining, measured over a 34-batch sample at 24% of the run on a representative 2382-message chat:
+
+| Metric | Value |
+|---|---|
+| Median per-batch delta | 9.5s |
+| Mean per-batch delta | 10.4s |
+| p90 per-batch delta | 14.8s |
+| Stdev | 3.8s |
+
+Projected full-run wall time: **~25 minutes** vs. ~40 minutes baseline — roughly **35% faster**. The math works because LLM extract (~10-12s p50, up to ~22s p99 per window) dominates Qdrant insert (~5-8s) — extract > insert is the regime where pipelining gives maximum benefit (insert hides under next extract).
+
+If extract were faster than insert (which never happens with the current LLM provider mix), pipelining would still help but the win would be insert-bounded instead of extract-bounded. Either way the math holds: steady-state cycle is the longer of the two, not the sum.
+
+### What this design deliberately doesn't do
+
+- **No multi-slot queue.** Single-slot captures the full steady-state win; deeper queue would only add memory pressure and complicate abort. The slow stage always gates throughput regardless of buffer depth.
+- **No speculative re-issue of slow LLM calls.** Even with perfect pipelining, one 22s window in a batch of 8 pins wall time at 22s. That's the next lever if speed becomes critical again — race a duplicate request after some threshold, take whichever returns first. Costs tokens on tail windows only. Tracked as a non-goal in the plan's §7.
+- **No per-window insert.** Tried in prod history before this change and was N× slower because per-window inserts blow up the Similharity plugin's embedding batching. Stays coalesced per-batch.
+- **No data shape changes.** Same EventBase schema, same Qdrant payload, same retrieval semantics. Old events untouched. Zero re-indexing.
+
+### Abort behavior — preserved
+
+Pressing Stop mid-pipeline waits for the in-flight insert to complete before exiting (~6s latency), then fires `progressTracker.complete(false, 'Stopped by user')`. Any in-flight extract is awaited and discarded (its events were never inserted). Any `queuedResult` is discarded (same reason). On the next run, those windows re-extract from a clean state — the fingerprint cache wasn't updated for them, so dedup correctly identifies them as new. This is the "no corrupted state" invariant in action.
+
+### Compatibility with other code paths
+
+The change lives entirely inside `runEventBaseIngestion`. All 3 production callers (auto-sync via `synchronizeChat`, manual backfill via `vectorizeAll`, archive file upload) hit the same helper and get the pipelined behavior for free — they just pass different flags (`isAutoSync`, `suppressAutoSyncPopup`, `parallelWindows`, `collectionIdOverride`). None of those flags interact with the extract/insert ordering. The chunk-base pipeline (lorebook / character / document / URL / wiki / YouTube via `vectorizeContent`) is completely untouched — it has no extract phase to overlap (chunking is synchronous and instant, and the entire chunk list is inserted in one call).
+
+### Key files
+
+- `core/eventbase-workflow.js` — the coordinator + helpers
+- `ui/content-vectorizer.js::_runEventBaseBackfill` — catch branch for the `insert_failed_max_retries` popup
+- `plans/eventbase-extract-insert-pipeline.md` — full design doc, edge-case table, and acceptance criteria
+
+---
+
 ## 7) Module Integration Analysis — EventBase Compatibility
 
 Analysis of whether non-EventBase modules should be integrated into the EventBase pipeline.

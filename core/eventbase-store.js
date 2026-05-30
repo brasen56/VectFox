@@ -159,6 +159,29 @@ export async function insertEvents(events, settings, abortSignal = null, collect
         };
     });
 
+    // Defensive hash-uniqueness check. Qdrant treats same-ID upserts as
+    // overwrites — silently. If two events in this batch produce the same hash,
+    // one of them disappears with no error from any layer (plugin logs "Inserted
+    // N", Qdrant returns 200, we'd never know). The hash widening to 53 bits
+    // makes this collision statistically rare (~birthday-bound at 1.3M points),
+    // but "rare" silent-loss bugs are worse than "occasional" loud ones — so we
+    // assert it explicitly here, throw if it ever happens, and surface the
+    // colliding event_ids to the user instead of dropping their data.
+    const hashSeen = new Map();   // hash → event_id (first occurrence)
+    for (const item of items) {
+        const ev = events.find(e => _eventHash(e.event_id) === item.hash);
+        const evid = ev?.event_id || '(unknown)';
+        if (hashSeen.has(item.hash)) {
+            const prevId = hashSeen.get(item.hash);
+            throw new Error(
+                `EventBase: hash collision inside one insert batch — events "${prevId}" and "${evid}" both hash to ${item.hash}. ` +
+                `One would have been silently overwritten by Qdrant upsert. Aborting batch to prevent data loss. ` +
+                `If this happens repeatedly, the hash function may need to be widened further.`,
+            );
+        }
+        hashSeen.set(item.hash, evid);
+    }
+
     if (debugLog) {
         console.log(`[EventBase] Inserting ${items.length} event(s) into collection "${collectionId}"`);
     }
@@ -707,11 +730,32 @@ export async function ensureEventBaseIndexes(settings) {
  * @param {string} id
  * @returns {number}
  */
+// Two-seed djb2 packed into a 53-bit-safe integer (JavaScript's safe-integer
+// range). Qdrant accepts uint64 point IDs, but JS only round-trips uint53 without
+// loss — we deliberately stay below MAX_SAFE_INTEGER (2^53 - 1) so the value
+// survives JSON.stringify / parseInt on every hop.
+//
+// History: this used to be single-seed djb2 returning a 32-bit unsigned int.
+// In Qdrant's point-ID space (uint64), the 32-bit collisions were rare in theory
+// but devastating in practice — Qdrant treats same-ID upserts as overwrites, so
+// every collision silently destroys one event. A 2026-05-30 backfill of a 2382-
+// message chat sent 524 events to the plugin and only 315 unique IDs landed in
+// Qdrant — a 40% silent data loss rate. Widening to 53 bits eliminates this
+// class of bug for any realistically-sized collection (birthday-bound collision
+// at ~1.3M points vs ~93k for 32-bit). Combined with the post-insert count
+// verification in eventbase-workflow.js _finalizeBatch, any future silent loss
+// surfaces as a fatal popup instead of accumulating quietly.
 function _eventHash(id) {
-    let h = 5381;
+    let h1 = 5381;
+    let h2 = 0xABCDEF;
     for (let i = 0; i < id.length; i++) {
-        h = ((h << 5) + h) ^ id.charCodeAt(i);
-        h >>>= 0;
+        const c = id.charCodeAt(i);
+        h1 = ((h1 << 5) + h1) ^ c;
+        h2 = ((h2 << 5) + h2) ^ c ^ (c << 16);
+        h1 >>>= 0;
+        h2 >>>= 0;
     }
-    return h;
+    // Pack: high 21 bits of h2 + low 32 bits of h1 = 53 bits total.
+    // (2^21 - 1) << 32 + (2^32 - 1) = 2^53 - 1 = Number.MAX_SAFE_INTEGER.
+    return (h2 >>> 11) * 4294967296 + h1;
 }

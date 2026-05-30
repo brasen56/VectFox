@@ -675,6 +675,63 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
         }
     }
 
+    // End-of-run silent-loss check. The per-batch hash uniqueness assertion in
+    // eventbase-store.js insertEvents() catches intra-batch collisions; this
+    // catches CROSS-batch collisions or any other loss mechanism in the layers
+    // beneath us (Similharity plugin silently dropping items, payload validation
+    // rejecting fields, Qdrant accepting but not persisting, etc.).
+    //
+    // History: in May 2026 we discovered a 32-bit djb2 hash collision bug that
+    // silently dropped ~40% of events from a 2382-message backfill. The plugin
+    // logged "Inserted N", Qdrant returned 200, the events were just gone.
+    // The hash was widened to 53 bits — but a "rare" silent-loss bug is worse
+    // than a loud one, so we now actively verify what landed at the end of
+    // every run.
+    //
+    // Cost: one extra HTTP round-trip per ingestion run (not per batch). For a
+    // 25-minute backfill, +0.5s is irrelevant. Skipped on the Standard backend
+    // since this path only exists for Qdrant collections; the Standard backend
+    // has its own atomicity story.
+    if (collectionId && eventsExtracted > 0 && settings?.vector_backend === 'qdrant') {
+        try {
+            const storedHashes = await getSavedHashes(collectionId, settings);
+            const storedCount = Array.isArray(storedHashes) ? storedHashes.length : 0;
+            // The tip-based marker can include events from earlier runs, so we
+            // compare only DELTA: did storedCount grow by AT LEAST eventsExtracted
+            // since this run started? We don't have a pre-run snapshot, so the
+            // weaker check we can do is "stored >= eventsExtracted from this run
+            // plus whatever was there before." If storedCount is LESS than the
+            // events we believe we inserted this run alone, something dropped.
+            if (storedCount < eventsExtracted) {
+                console.warn(
+                    `[EventBase] SILENT LOSS DETECTED: this run inserted ${eventsExtracted} events, ` +
+                    `but the collection holds only ${storedCount} total points. At least ` +
+                    `${eventsExtracted - storedCount} events were dropped between the workflow ` +
+                    `and Qdrant. Investigate the Similharity plugin log for the time range ` +
+                    `of this run.`,
+                );
+                progressTracker.complete(false,
+                    `Silent loss detected: ${eventsExtracted - storedCount} event(s) inserted but not stored. Check console.`,
+                );
+                throw Object.assign(
+                    new Error(`EventBase: silent insert loss — sent ${eventsExtracted} events, only ${storedCount} stored in collection.`),
+                    { code: 'insert_verification_failed', name: 'EventBaseFatalError' },
+                );
+            }
+            if (debugLog) {
+                console.log(`[EventBase] Verification: ${eventsExtracted} inserted this run, ${storedCount} total stored.`);
+            }
+        } catch (verifyErr) {
+            // Only re-throw our own verification failure. Network errors on the
+            // verification round-trip itself shouldn't kill an otherwise-successful
+            // run — they're advisory only.
+            if (verifyErr?.code === 'insert_verification_failed') throw verifyErr;
+            if (debugLog) {
+                console.warn('[EventBase] Verification probe failed (advisory, not fatal):', verifyErr?.message || verifyErr);
+            }
+        }
+    }
+
     progressTracker.complete(true, `EventBase: extracted ${eventsExtracted} event(s) from ${windowsProcessed} window(s)`);
 
     if (debugLog) {
