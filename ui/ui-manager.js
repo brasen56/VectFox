@@ -108,29 +108,35 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <small>Vector Backend</small>
                                 </label>
                                 <!--
-                                    ⚠️ MAINTAINERS: when the user selects "standard", we MUST force two settings
-                                    OFF because the similharity plugin's standard-backend code path cannot handle
-                                    high HTTP concurrency:
-                                      1. vector_hedge_after_ms → 0          (hedge OFF)
-                                      2. eventbase_disable_pipeline → true  (serial extract→insert ON)
-                                    The change handler at the bottom of this file (search "Vector backend selection")
-                                    enforces both, toasts the user, and explains why.
+                                    MAINTAINERS: the "standard" backend (ST's Vectra via similharity plugin)
+                                    has a concurrency problem on the PLUGIN side — concurrent POSTs to
+                                    /api/plugins/similharity/chunks/insert corrupt the Vectra index file
+                                    (the plugin doesn't synchronize per-collection writes). Observed
+                                    2026-05-30 under parallel-split + hedge: variable-position
+                                    truncated-JSON 500s back to the client.
 
-                                    The plugin breaks under our hedge + parallel-split combo: parallel-split fires
-                                    N concurrent POSTs (1 per event), hedge fires up to 3 more duplicates per stuck
-                                    POST. At concurrency=8 windows × ~10 events × 4 attempts = potentially 320
-                                    simultaneous HTTP connections to /api/plugins/similharity/chunks/insert. The
-                                    plugin's HTTP/2 response handling corrupts under that load and returns 500s
-                                    with 2.1MB truncated-JSON bodies (observed 2026-05-30; same byte offset every
-                                    time → consistent buffer-multiplexing bug, not random).
+                                    SOLUTION (shipped 2026-05-30): serialize per-collection writes on the
+                                    CLIENT side inside backends/standard.js#_vectraWriteQueues. The Map
+                                    keys are collectionId; each new insertVectorItems call chains onto the
+                                    previous one for the same collection. Result: the plugin only ever
+                                    sees one in-flight insert per collection, no matter how many concurrent
+                                    callers (parallel-split, hedge duplicates, pipelined batches) we have.
 
-                                    Production at concurrency=8 worked because production was serial extract→insert
-                                    and batched embedding (one POST per batch instead of one per event). The new
-                                    parallel-split + hedge combo is incompatible with the plugin and must stay off
-                                    for standard backend until the plugin is fixed upstream.
+                                    Effect on the new features:
+                                      - hedge: STILL ENABLED, but duplicates queue instead of racing →
+                                        only useful when primary FAILS (then hedge runs after primary
+                                        clears), not when primary is slow
+                                      - parallel-split: STILL ENABLED, but writes serialize → behaves like
+                                        a per-event retry budget rather than true parallelism
+                                      - pipelined: STILL ENABLED, extract can still run while previous
+                                        batch's insert is being serialized through the queue
 
-                                    Qdrant backend uses a different plugin endpoint (/qdrant/...) with different
-                                    code paths and is NOT affected — hedge + parallel-split are fine there.
+                                    Trade-off accepted because the alternative (force-disable all three on
+                                    standard) is worse than serial-queue with all three enabled — see the
+                                    "Vector backend selection" change handler below.
+
+                                    Qdrant backend uses a different plugin endpoint (/qdrant/...) with
+                                    different code paths and does NOT need the queue.
                                 -->
                                 <select id="VectFox_vector_backend" class="vectfox-select">
                                     <option value="standard">Standard (ST's Vectra - file-based)</option>
@@ -2702,41 +2708,19 @@ function bindSettingsEvents(settings, callbacks) {
                 $('#VectFox_qdrant_settings').hide();
             }
 
-            // Standard backend (ST's Vectra via similharity plugin) cannot
-            // tolerate high HTTP concurrency — the plugin's response handling
-            // corrupts under concurrent load (observed 2026-05-30: 2.1MB
-            // truncated-JSON 500s under parallel-split + hedge). Force the
-            // safe settings whenever the user switches TO standard:
-            //   - hedge OFF (no duplicate requests)
-            //   - serial extract→insert (no pipelined coordinator)
-            // The user can still manually flip these back on after if they
-            // want to experiment — we just don't make it the default.
-            // Switching to other backends does NOT reset these — the user's
-            // prior preference is preserved.
-            if (settings.vector_backend === 'standard') {
-                let toastMessages = [];
-                if ((Number(settings.vector_hedge_after_ms) || 0) > 0) {
-                    settings.vector_hedge_after_ms = 0;
-                    $('#VectFox_vector_hedge_enabled').prop('checked', false);
-                    toastMessages.push('hedge OFF');
-                }
-                if (settings.eventbase_disable_pipeline !== true) {
-                    settings.eventbase_disable_pipeline = true;
-                    $('#VectFox_eventbase_disable_pipeline').prop('checked', true);
-                    toastMessages.push('serial extract→insert ON');
-                }
-                if (toastMessages.length) {
-                    try {
-                        toastr.info(
-                            `Standard backend selected — forced ${toastMessages.join(', ')} (similharity plugin can't handle high concurrent load)`,
-                            'VectFox',
-                            { timeOut: 6000 },
-                        );
-                    } catch (_) {}
-                    console.log(`VectFox: Standard backend safe-settings applied — ${toastMessages.join(', ')}`);
-                }
-            }
-
+            // NOTE: standard backend is now safe to use with hedge, parallel-split,
+            // and pipelined mode all enabled. The per-collection write queue in
+            // backends/standard.js#_vectraWriteQueues serializes concurrent POSTs
+            // to the same Vectra collection at the client side, so the plugin only
+            // ever sees one in-flight insert per collection. Earlier versions of
+            // this handler force-disabled those features on standard backend; that
+            // enforcement was removed once the queue shipped (2026-05-30) because
+            // users can now keep all three features on. The trade-off is that the
+            // queue's serialization caps in-flight inserts to 1 per collection —
+            // hedge duplicates queue rather than race, so they help less on standard
+            // than on Qdrant. But the run no longer crashes, and total wall time
+            // is still much better than the legacy batched-POST behavior under
+            // OpenRouter timeouts.
             applyBackendHybridDefaults(settings.vector_backend);
             updateNativeHybridUI();
             console.log(`VectFox: Vector backend changed to ${settings.vector_backend}`);

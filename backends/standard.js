@@ -114,6 +114,36 @@ function getProviderSpecificParams(settings, isQuery = false) {
     return params;
 }
 
+// ----------------------------------------------------------------------------
+// Per-collection write serialization
+// ----------------------------------------------------------------------------
+// The similharity plugin's standard/Vectra path does NOT synchronize concurrent
+// writes to the same collection. Multiple in-flight POSTs to /chunks/insert each
+// load → mutate → write the same JSON-backed index file, and they race. The
+// outcome under load (observed 2026-05-30) is variable-position truncated-JSON
+// 500s back to the client (`Unexpected non-whitespace character after JSON at
+// position X` where X varies because it depends on file size at corruption time)
+// and a corrupted Vectra index on disk.
+//
+// VectFox's parallel-split insert (default since this session) fires N
+// concurrent POSTs per batch (one per event) — great for failure containment on
+// remote providers like Qdrant, fatal for Vectra.
+//
+// Fix: serialize per-collection writes ON THIS SIDE so the plugin only ever
+// sees one in-flight insert per collection at a time. We give up insert-side
+// parallelism for this backend, in exchange for not corrupting the index file.
+// The trade-off is acceptable because the alternative (batched POST with
+// vector_group_embedding_call=true) ALSO serializes — it just bundles items
+// into one HTTP request instead of queueing N. Queueing N lets each event keep
+// its own retry budget and timeout window, which is the parallel-split value
+// proposition.
+//
+// Memory: each call replaces the queue entry. A cleanup .finally() removes the
+// entry only when WE are still the latest — otherwise a later call is still
+// using us as its prev and we'd break the chain. In a steady-state burst the
+// queue stays at 1 entry per active collection; after the burst it goes empty.
+const _vectraWriteQueues = new Map(); // collectionId → Promise (latest tail)
+
 export class StandardBackend extends VectorBackend {
     constructor() {
         super();
@@ -209,7 +239,57 @@ export class StandardBackend extends VectorBackend {
      * Insert vector items into a collection
      * Uses plugin API if available (for metadata support), falls back to native ST API
      */
+    /**
+     * Public insert entry point. Wraps the actual HTTP+Vectra work in a
+     * per-collection promise chain so concurrent callers (parallel-split,
+     * hedge duplicates, multiple in-flight pipelined batches) serialize at
+     * THIS layer. See top-of-file comment on `_vectraWriteQueues` for the
+     * full rationale and trade-offs.
+     *
+     * What this DOES change:
+     *   - Concurrent inserts to the SAME collection queue and run in order
+     *   - Concurrent inserts to DIFFERENT collections still run in parallel
+     *   - A slow embedding inside one request blocks the next queued one
+     *
+     * What this does NOT change:
+     *   - Per-item retry budget (still applies per call)
+     *   - Hedge semantics (still fire duplicates; they just queue too)
+     *   - Abort handling (checked before kicking off, propagates normally)
+     *   - Error propagation (each caller gets its own resolution)
+     */
     async insertVectorItems(collectionId, items, settings, abortSignal = null) {
+        if (items.length === 0) return;
+
+        const prev = _vectraWriteQueues.get(collectionId) || Promise.resolve();
+        // Chain ourselves onto the queue. `.catch(() => {})` absorbs any prior
+        // failure so it doesn't propagate to OUR caller — they only see their
+        // own result. Each caller's own error still surfaces normally.
+        const myTurn = prev.catch(() => {}).then(async () => {
+            // Re-check abort after the wait. The user might have hit Stop while
+            // we were queued behind 7 other inserts.
+            if (abortSignal?.aborted) throw Object.assign(new Error('Vectorization stopped by user'), { name: 'AbortError' });
+            return this._insertVectorItemsImpl(collectionId, items, settings, abortSignal);
+        });
+        _vectraWriteQueues.set(collectionId, myTurn);
+
+        try {
+            return await myTurn;
+        } finally {
+            // Cleanup ONLY if we're still the tail of the queue. If a later
+            // caller already replaced us as the tail, they're using `myTurn`
+            // as their `prev` — deleting would break the chain.
+            if (_vectraWriteQueues.get(collectionId) === myTurn) {
+                _vectraWriteQueues.delete(collectionId);
+            }
+        }
+    }
+
+    /**
+     * Internal — does the actual HTTP POST + response handling. Not called
+     * directly; always goes through `insertVectorItems` so the per-collection
+     * queue serializes concurrent callers.
+     */
+    async _insertVectorItemsImpl(collectionId, items, settings, abortSignal = null) {
         if (items.length === 0) return;
 
         const providerParams = getProviderSpecificParams(settings, false);
