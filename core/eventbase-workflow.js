@@ -99,6 +99,17 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
 
     const CONCURRENCY = Math.min(8, Math.max(1, parallelWindows));
 
+    // Diagnostic toggle: when true, the coordinator collapses back to the
+    // pre-pipeline serial barrier — extract → finalize (insert + mark + tip)
+    // → next extract, with NO concurrency between phases. The pipelined path
+    // (default) still exists and runs when this is false. Set via:
+    //   extension_settings.vectfox.eventbase_disable_pipeline = true
+    // The toggle exists ONLY to answer "did pipelining cause $bug?" by giving
+    // a clean A/B run. There is no UI surface — flip it from devtools, run,
+    // compare. If pipelining is the culprit, the serial run will not show
+    // the symptom. If the symptom persists, pipelining is exonerated.
+    const disablePipeline = settings?.eventbase_disable_pipeline === true;
+
     if (!messages?.length) return { eventsExtracted: 0, windowsProcessed: 0, windowsSkipped: 0 };
 
     // If the fingerprint cache says windows were extracted but Qdrant has no data
@@ -601,7 +612,14 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
         // (either it always was, or we just consumed it). So the only
         // remaining gates on extract are "no extract in flight" + "more
         // windows to process". This is what unlocks the actual overlap.
-        if (!pendingExtract && nextBatchFirstIdx < windows.length) {
+        //
+        // When disablePipeline is true, ALSO block the new extract on
+        // pendingInsert. That forces the serial barrier: the next batch's
+        // LLM calls don't dispatch until the prior batch's insert + mark +
+        // tip have fully landed. Used purely as a diagnostic A/B to isolate
+        // whether pipelining is the cause of an observed problem.
+        const insertBarrier = disablePipeline && pendingInsert !== null;
+        if (!pendingExtract && !insertBarrier && nextBatchFirstIdx < windows.length) {
             const slice = windows.slice(nextBatchFirstIdx, nextBatchFirstIdx + CONCURRENCY);
             const sliceFirstIdx = nextBatchFirstIdx;
             nextBatchFirstIdx += slice.length;
