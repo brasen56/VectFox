@@ -1556,6 +1556,7 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null, {
     startFromMessage = 1,
     parallelWindows = 1,
     progressPlan = null,
+    skipTipFallback = false,
 } = {}) {
     try {
         const chatId = getCurrentChatId();
@@ -1601,6 +1602,7 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null, {
             isAutoSync: false,
             parallelWindows,
             progressPlan,
+            skipTipFallback,
         });
 
         if (chatId !== getCurrentChatId()) {

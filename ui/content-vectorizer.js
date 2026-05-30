@@ -2619,6 +2619,11 @@ async function _runEventBaseBackfill({ resetCaches = false } = {}) {
                 abortSignal: activeVectorizeAbortController.signal,
                 parallelWindows,
                 collectionIdOverride,
+                // When the caller cleared the caches (Reset & Vectorize popup), also
+                // bypass the tip-based fallback in the workflow — otherwise the workflow
+                // re-derives the tip from Qdrant contents and silently fast-forwards past
+                // everything we wanted re-extracted. See 2026-05-30 bug report.
+                skipTipFallback: resetCaches,
             });
 
             if (activeVectorizeAbortController?.signal?.aborted) {
@@ -2692,6 +2697,11 @@ async function _runEventBaseBackfill({ resetCaches = false } = {}) {
                     batchSize: legacyBatchSize,
                     totalChunks: legacyTotalChunks,
                 },
+                // When the caller cleared the caches (Reset & Vectorize popup), also
+                // bypass the tip-based fallback inside runEventBaseIngestion. Otherwise
+                // it re-derives the tip from Qdrant contents and silently fast-forwards.
+                // See 2026-05-30 bug report.
+                skipTipFallback: resetCaches,
             });
 
             if (!activeVectorizeAbortController?.signal?.aborted) {

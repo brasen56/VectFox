@@ -56,7 +56,7 @@ const EVENTBASE_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_eventbase`;
  * @param {{ strategy?: string, batchSize?: number, totalChunks?: number }|null} [params.progressPlan]
  * @returns {Promise<{ eventsExtracted: number, windowsProcessed: number, windowsSkipped: number }>}
  */
-export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null, parallelWindows = 3, isAutoSync = false, suppressAutoSyncPopup = false }) {
+export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null, parallelWindows = 3, isAutoSync = false, suppressAutoSyncPopup = false, skipTipFallback = false }) {
     const debugLog = settings.eventbase_debug_logging;
     const debugVectorizing = settings.debug_vectorizing_log === true;
     const uuid = chatUUID || getChatUUID();
@@ -265,7 +265,18 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // as a fast-forward boundary. This handles the case where the local fingerprint cache
     // was lost (e.g. page reload after re-importing an exported Qdrant collection).
     // Retroactively marks the skipped windows so future runs use the normal cache path.
-    if (fastForwardSkipped === 0 && collectionId) {
+    //
+    // BYPASSED when skipTipFallback=true — caller explicitly requested a from-scratch
+    // re-extraction (Reset & Vectorize popup). Without this guard the fallback would
+    // re-derive the tip from Qdrant contents and silently fast-forward past everything
+    // the user wanted re-extracted, producing the "0 events, X skipped" surprise. See
+    // 2026-05-30 bug report.
+    if (skipTipFallback && fastForwardSkipped === 0 && collectionId) {
+        if (debugLog) {
+            console.log('[EventBase] skipTipFallback=true — bypassing tip-based fast-forward (caller requested fresh re-extraction)');
+        }
+    }
+    if (!skipTipFallback && fastForwardSkipped === 0 && collectionId) {
         try {
             const tip = await ensureVectorizationTip(uuid, collectionId, settings);
             if (typeof tip === 'number' && tip > 0) {
