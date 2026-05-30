@@ -121,6 +121,22 @@ export async function insertEvents(events, settings, abortSignal = null, collect
     // Build embed texts for all events at once (for efficient batched embedding)
     const embedTexts = events.map(e => buildEmbedText(e));
 
+    // Per-item embed-text preview log. Goal: when a batched embedding call
+    // stalls, we need to know WHICH text was in the payload — so if it's a
+    // single-item-induced stall (one unusually-long text, weird tokenization,
+    // safety-trigger content) we can re-embed each in isolation to identify
+    // the bad apple. Logged BEFORE the call so the preceding console lines
+    // tell us the exact payload that the next "FAILED after 120s" refers to.
+    // Format: len + first 80 chars (enough to identify, short enough to scan).
+    if (debugLog) {
+        console.log(`[EventBase] Preparing embedding batch — ${embedTexts.length} item(s):`);
+        for (let i = 0; i < embedTexts.length; i++) {
+            const t = embedTexts[i] || '';
+            const preview = t.slice(0, 80).replace(/\s+/g, ' ');
+            console.log(`  [${i}] len=${t.length} eventId=${events[i]?.event_id || '(no-id)'} text="${preview}${t.length > 80 ? '...' : ''}"`);
+        }
+    }
+
     // Generate embeddings (reuses same provider/model as legacy path)
     const additionalArgs = await getAdditionalArgs(embedTexts, settings);
     const clientEmbeddings = additionalArgs.embeddings || null;
