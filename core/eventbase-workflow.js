@@ -103,17 +103,18 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // extract→insert" checkbox in the EventBase tab).
     //
     // - DEFAULT: pipelined — batch N's insert overlaps batch N+1's extract.
-    //   ~35% faster wall time. Trade-off observed in 2026-05-30 A/B (96
-    //   windows on Gemini Flash): pipelined produced ~44% fewer events per
-    //   window than serial (0.98 vs 1.74). Hypothesis: pipelined mode
-    //   contends for the provider's per-key concurrency budget and silently
-    //   degrades extract response quality on bursty cloud APIs.
+    //   ~35% faster wall time. An earlier 2026-05-30 A/B showed pipelined
+    //   producing ~44% fewer events/window than serial (0.98 vs 1.74) and
+    //   the gap was originally blamed on per-key concurrency contention,
+    //   but it was actually a hedge bug: hedge timers fired during
+    //   in-flight inserts that were still progressing, wiping events out
+    //   of the queue. Bug fixed; pipelined is the safe default now.
     //
-    // - SERIAL opt-in (checkbox): each batch finishes embedding before the
-    //   next batch starts extracting. Safer on slower vector DB backends
-    //   and higher event-yield on bursty cloud APIs. Anything except
-    //   explicit `false` is treated as the new pipelined default; only an
-    //   explicit `true` enables serial mode.
+    // - SERIAL opt-in (checkbox): each batch finishes embedding before
+    //   the next batch starts extracting. Safer if a future regression
+    //   reintroduces the queue-wipe class of bug. Anything except explicit
+    //   `false` is treated as the new pipelined default; only an explicit
+    //   `true` enables serial mode.
     const disablePipeline = settings?.eventbase_disable_pipeline === true;
 
     if (!messages?.length) return { eventsExtracted: 0, windowsProcessed: 0, windowsSkipped: 0 };

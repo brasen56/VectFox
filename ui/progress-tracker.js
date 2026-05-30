@@ -458,14 +458,20 @@ export class ProgressTracker {
             }
         }
 
-        // Calculate speed based on last batch timing (more accurate for streaming)
+        // Calculate speed based on last batch timing (more accurate for streaming).
+        // Guard against tiny `lastBatchTime` values caused by back-to-back progress
+        // callbacks (e.g. when a queued insert flushes microseconds after the
+        // previous one). Those produce display spikes like "2000/s" for one tick.
+        // Anything faster than 100ms isn't real work — fall back to cumulative
+        // average for that tick.
+        const MIN_BATCH_TIME_MS = 100;
         let speed = '0.0';
-        if (this.stats.lastBatchTime && this.stats.lastBatchSize > 0) {
+        if (this.stats.lastBatchTime >= MIN_BATCH_TIME_MS && this.stats.lastBatchSize > 0) {
             // Use last batch performance for real-time speed
             const batchSpeed = (this.stats.lastBatchSize / (this.stats.lastBatchTime / 1000)).toFixed(1);
             speed = batchSpeed;
         } else if (this.stats.embeddedChunks > 0 && this.stats.startTime) {
-            // Fallback to average speed
+            // Fallback to average speed (also used for queue-flush artifact ticks)
             const elapsed = (Date.now() - this.stats.startTime) / 1000;
             speed = elapsed > 0 ? (this.stats.embeddedChunks / elapsed).toFixed(1) : '0.0';
         }

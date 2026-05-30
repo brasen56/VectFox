@@ -249,21 +249,49 @@ The change lives entirely inside `runEventBaseIngestion`. All 3 production calle
 
 ---
 
-## 6.8) Embedding-Call Resilience — Parallel-split + Hedge (since 2026-05-30)
+## 6.8) Embedding-Call Resilience — Group / Hedge / Pipelined (since 2026-05-30)
 
-Two related opt-in/default-on features sit inside `insertVectorItems` ([`core/core-vector-api.js`](core/core-vector-api.js)). Both affect every caller — EventBase ingestion AND chunk-based document vectorization in [`core/content-vectorization.js`](core/content-vectorization.js). UI lives in the **Core tab → Embedding section**.
+Three related features sit inside `insertVectorItems` ([`core/core-vector-api.js`](core/core-vector-api.js)) and the EventBase coordinator ([`core/eventbase-workflow.js`](core/eventbase-workflow.js)). All three affect every embedding caller — EventBase ingestion AND chunk-based document vectorization in [`core/content-vectorization.js`](core/content-vectorization.js). UI lives in the **Core tab → Embedding section** (Group + Hedge) and **EventBase tab** (Serial).
 
-### Parallel-split (default ON, setting `vector_group_embedding_call`)
+### Final defaults shipped 2026-05-30 (fresh install)
 
-Each item gets its own HTTP POST to ST's `/api/vector/insert`, fired in parallel waves of up to 16. Containment-focused: a stuck upstream worker only blocks that one item, the rest finish normally. Skipped for local providers (Ollama already uses batch=1) and rate-limited setups (`dynamicRateLimiter` requires serial execution). Checkbox name "Group embedding calls (cheaper, less robust)" — checking opts INTO the legacy batched-POST behavior, where one stuck item can hang a 555-second monster batch (observed pre-fix 2026-05-30).
+| Checkbox | Setting key | Default | Wire shape |
+|---|---|---|---|
+| Group embedding calls | `vector_group_embedding_call` | ☑ **true** | 1 POST per batch (legacy production shape) |
+| Hedge slow embedding calls | `vector_hedge_after_ms` | ☑ **15000** | Duplicate fires at 15s if primary stalls |
+| Serial extract→insert | `eventbase_disable_pipeline` | ☐ **false** | Pipelined extract↔insert overlap |
 
-### Hedge (default OFF, setting `vector_hedge_after_ms`)
+Defaults flipped twice during 2026-05-30 development. Started with Group=false (parallel-split) on the theory that per-item containment beats batched POSTs. After a 14-batch / 132-event / 141.2s run on standard backend with all 3 features ON showed Group=ON+hedge produced 14/14 primary wins (max 15.3s, median ~4.8s, only one hedge brush), Group was flipped to ON as the new default. The empirical insight: hedge protects against connection-level stalls, and a single batched POST is a smaller blast surface (1 connection per wave) than N parallel POSTs (N connections per wave) when the upstream gateway has connection-affinity routing. Group=OFF remains the one-click rescue path if upstream starts returning batch-wide 500s.
 
-If an embedding POST hasn't returned in 15s (the threshold value), fire a duplicate request on a fresh HTTP connection. Race-first-wins via Promise — whichever finishes first settles the call. Late losers harmlessly upsert the same Qdrant point with identical data (hash-deterministic on event_id). Helps multi-upstream gateways (OpenRouter, SiliconFlow behind the vllm slot) recover from connection-level routing stalls in seconds instead of waiting through ST's 120s timeout. Gated to skip `localGpuSources` set — a new connection to Ollama wouldn't change routing.
+### Group embedding calls (`vector_group_embedding_call`)
+
+**Checked (default):** all items in a batch ship in one POST to ST's `/api/vector/insert`. Matches the legacy production wire shape — cheaper (saves API call count), smaller connection surface for hedge to protect, optimal on healthy cloud APIs. Downside: one stuck item hangs the whole batch (the 555s-monster failure mode observed pre-fix 2026-05-30).
+
+**Unchecked:** parallel-split — each item gets its own HTTP POST, fired in parallel waves of up to 16. Containment-focused: a stuck upstream worker only blocks that one item. N× the connection surface; on bursty cloud APIs with connection-affinity routing this can amplify routing stalls rather than escape them.
+
+Skipped automatically for local providers (Ollama already uses batch=1) and rate-limited setups (`dynamicRateLimiter` requires serial execution). The setting is independent of hedge — see _Composition_ below.
+
+### Hedge slow embedding calls (`vector_hedge_after_ms`)
+
+**Checked (default = 15000ms):** if an embedding POST hasn't returned in 15s, fire a duplicate request on a fresh HTTP connection. Race-first-wins via Promise — whichever finishes first settles the call. Late losers harmlessly upsert the same Qdrant point with identical data (hash-deterministic on event_id). Helps multi-upstream gateways (OpenRouter, SiliconFlow behind the `vllm` slot) recover from connection-level routing stalls in seconds instead of waiting through ST's 120s timeout.
+
+**Unchecked = 0ms:** disabled. Insert call goes directly without hedge wrapper.
+
+Gated to skip `localGpuSources` (Ollama / transformers / llama.cpp / KoboldCpp) regardless of the setting — a new connection to a local single-endpoint server wouldn't change routing. UI label intentionally drops the per-provider list to keep the hint short; the runtime gate is the authoritative behavior.
+
+**Independence from Group setting.** Hedge wraps whatever payload is on the wire — 1 item or 50 items. With Group=ON, one hedge fire rescues the entire batch. With Group=OFF, hedge fires per-item independently. Both work; Group=ON has higher ROI per hedge fire.
 
 ### Hedge-fatal escape
 
-After 4 fresh-connection attempts in 60s with no success, throws an error with `name === 'HedgeFatalError'` and `isHedgeFatal === true`. Both `RETRY_CONFIG.shouldRetry` and `_insertWithRetry` (the outer EventBase retry in `eventbase-workflow.js`) check this flag and skip retrying — more retries would just trigger another 60s of identical hedging against the same broken upstream. User presses Continue button later to resume; the existing window-cache semantics ensure no duplicates on resume thanks to hash-deterministic Qdrant upserts.
+After 4 fresh-connection attempts in 60s with no success, `callWithHedge` throws an error with `name === 'HedgeFatalError'` and `isHedgeFatal === true`. Both `RETRY_CONFIG.shouldRetry` and `_insertWithRetry` (the outer EventBase retry in `eventbase-workflow.js`) check this flag and skip retrying — more retries would just trigger another 60s of identical hedging against the same broken upstream. User presses Continue button later to resume; the existing window-cache semantics ensure no duplicates on resume thanks to hash-deterministic Qdrant upserts.
+
+### Serial extract→insert (`eventbase_disable_pipeline`)
+
+**Unchecked (default):** pipelined coordinator. Batch N's insert overlaps batch N+1's extract via a single-slot queue. ~35% faster wall time when extract dominates insert (the common case). An earlier 2026-05-30 A/B showed pipelined producing ~44% fewer events/window than serial (0.98 vs 1.74) and the gap was originally hypothesized as cloud-API per-key concurrency contention — but it was actually a hedge bug: hedge timers kept firing during in-flight inserts that were still making progress, and the redundant waves wiped events out of the queue. Bug fixed; pipelined is the safe default now.
+
+**Checked:** serial — each batch finishes embedding before the next batch starts extracting. Safer if a future regression reintroduces the queue-wipe class of bug, and slightly higher event-yield on very bursty cloud APIs where pipelining can still create per-key contention.
+
+Read-site semantics: `settings?.eventbase_disable_pipeline === true` (line 129 of `eventbase-workflow.js`). Only an explicit `true` enables serial; missing/false/undefined gives pipelined.
 
 ### Composition
 
@@ -272,26 +300,50 @@ After 4 fresh-connection attempts in 60s with no success, throws an error with `
 | Coordinator (EventBase pipelined or serial) | Hedge-fatal bubbles up as a fatal; windows stay unmarked; user resumes via Continue. |
 | Outer `_insertWithRetry` (pipelined mode) | Catches anything except AbortError AND hedge-fatal. Hedge-fatal escapes the 3-attempt outer retry budget. |
 | Inner `AsyncUtils.retry` | `shouldRetry` returns false for hedge-fatal. Otherwise retries on TimeoutError + the keyword set in `RETRY_CONFIG.shouldRetry`. |
-| Hedge (`callWithHedge`) | Primary at t=0, hedge at t=15s, 30s, 45s. Hard fatal cutoff at t=60s. |
-| Parallel-split wave composite | If ANY individual failure is `isHedgeFatal=true`, the composite Error inherits the flag — outer retry short-circuits instead of burning ~12min/wave on a wave certain to fail again. |
+| Hedge (`callWithHedge`) | Primary at t=0, hedge at t=15s, 30s, 45s. Hard fatal cutoff at t=60s. AbortError short-circuits the entire race so Stop button cancels within microseconds (no 60s of spam). |
+| Parallel-split wave composite (Group=OFF only) | If ANY individual failure is `isHedgeFatal=true`, the composite Error inherits the flag — outer retry short-circuits instead of burning ~12min/wave on a wave certain to fail again. |
 | Backend `insertVectorItems` (similharity → ST → provider → Qdrant) | One call per hedge invocation. |
 
-### Backend-specific safety wiring (Vector Backend dropdown)
+### Standard-backend safety — coalesce + queue (replaces earlier 3-knob enforcement)
 
-The **Standard backend** (ST's Vectra via similharity plugin) cannot tolerate high HTTP concurrency — the plugin's response handling corrupts under concurrent load. Observed 2026-05-30: 12 simultaneous parallel-split POSTs + hedge produced 2.1 MB truncated-JSON 500s from the plugin (`[similharity] chunks/insert error: SyntaxError: Unexpected non-whitespace character after JSON at position 2140978`). Likely HTTP/2 response-buffer multiplexing under concurrent load.
+The **Standard backend** (ST's Vectra via similharity plugin) cannot tolerate high HTTP concurrency — the plugin's response handling corrupts under concurrent load. Observed 2026-05-30 pre-fix: 12 simultaneous parallel-split POSTs + hedge produced 2.1 MB truncated-JSON 500s from the plugin (`[similharity] chunks/insert error: SyntaxError: Unexpected non-whitespace character after JSON at position 2140978`) plus on-disk Vectra index corruption. Likely HTTP/2 response-buffer multiplexing.
 
-To prevent users from running into this, the Vector Backend `<select>` change handler in `ui/ui-manager.js` automatically forces safe settings when the user selects `standard`:
+**Earlier fix (removed):** forced `vector_hedge_after_ms=0` + `eventbase_disable_pipeline=true` via the Vector Backend `<select>` change handler. Worked but disabled features the user wanted. Removed.
 
-- `vector_hedge_after_ms` → 0 (hedge OFF)
-- `eventbase_disable_pipeline` → true (serial extract→insert ON)
+**Current fix (shipped 2026-05-30):** [`backends/standard.js`](backends/standard.js) absorbs concurrent calls into the production wire shape via two layers:
 
-A toast informs the user what changed. Power users can still manually re-enable after if they want to experiment — we don't disable the checkboxes. Switching AWAY from standard does NOT touch these settings — the user's preference for hedge/pipelined is preserved across backend swaps.
+1. **Coalesce** — single-item calls arriving within `COALESCE_DELAY_MS` (5ms) for the same `collectionId` get merged back into one batched POST. This restores the production "1 POST per concurrency window" shape on this backend even when Group=OFF (parallel-split) is active. State: `_pendingCoalesce: Map<collectionId, {items, resolvers, settings, abortSignal, timer}>`.
+2. **Queue** — the resulting batched POSTs serialize per-collection via a Promise chain. Handles hedge duplicates (a 15s-later hedge POST would race the primary if not serialized), multi-item callers that bypass coalesce, and any future concurrent caller. State: `_vectraWriteQueues: Map<collectionId, Promise>`.
+
+Both maps key by `collectionId`, so unrelated collections still run in parallel. Public `insertVectorItems` is unchanged — coalesce + queue are transparent. Existing standard backend users see zero wire-shape difference from production: still 1 batched POST per concurrency window.
+
+Result: standard backend users can run all 3 features (Group / Hedge / Pipelined) at their default values without tripping the plugin bug. Verified 2026-05-30 on a 14-batch run, 0 plugin 500s.
+
+### Empirical evidence (2026-05-30 verification run)
+
+Standard backend, OpenRouter embeddings, Group=ON + Hedge=ON + Pipelined=ON, concurrency=8:
+
+| Metric | Value |
+|---|---|
+| Windows processed | 112 / 1062 (user stopped early) |
+| Events extracted | 132 |
+| Wall time | 141.2s |
+| Throughput | 2.8 events/s |
+| Insert batches | 14 |
+| Hedge fires | 0 |
+| Hedge threshold brushes | 1 (15.3s, primary still won) |
+| Plugin 500s | 0 |
+| TimeoutErrors | 0 |
+| Median primary win | ~4.8s |
+
+Confirms standard backend safety + Group=ON+hedge optimal pairing.
 
 ### Key files
 
-- [`core/core-vector-api.js`](core/core-vector-api.js) — `callWithHedge` helper + `shouldRetry` filter + `makeProcessBatch` wiring
-- [`core/eventbase-workflow.js`](core/eventbase-workflow.js) `_insertWithRetry` — hedge-fatal short-circuit
-- [`ui/ui-manager.js`](ui/ui-manager.js) — Core tab → Embedding section checkboxes + bindings
+- [`core/core-vector-api.js`](core/core-vector-api.js) — `callWithHedge` helper + `shouldRetry` filter + `makeProcessBatch` wiring + AbortError short-circuit
+- [`core/eventbase-workflow.js`](core/eventbase-workflow.js) `_insertWithRetry` — hedge-fatal short-circuit; `disablePipeline` read-site
+- [`backends/standard.js`](backends/standard.js) — coalesce + per-collection write queue
+- [`ui/ui-manager.js`](ui/ui-manager.js) — Core tab → Embedding section (Group, Hedge) + EventBase tab (Serial)
 - [`index.js`](index.js) — defaults
 - [`plans/embedding-resilience-hedge-and-diagnostics.md`](plans/embedding-resilience-hedge-and-diagnostics.md) — full design history, observed failure modes, and acceptance criteria
 
