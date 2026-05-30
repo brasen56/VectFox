@@ -232,7 +232,18 @@ async function callWithHedge(fn, thresholdMs, maxHedges, ctx) {
                             `VectFox: hedge — ${label(attemptIdx)} FAILED after ${elapsed}s for batch ${batchIdx}/${totalBatches} — ${e?.name || 'Error'}: ${e?.message || e}`,
                         );
                     }
-                    // Don't settle on individual failure — later hedges may still succeed
+                    // Abort short-circuit: user pressed Stop, every future hedge would
+                    // also bail with AbortError before even making the HTTP request,
+                    // spamming the console for up to (maxHedges + 1) × thresholdMs (60s
+                    // with defaults). Settle the whole race as failed immediately so
+                    // the scheduled hedge timers' `!settled` check turns them into no-ops.
+                    // Same applies to any abort propagated from the caller's signal.
+                    // See 2026-05-30 bug: hedge kept firing for 60s after Stop.
+                    if (e?.name === 'AbortError') {
+                        settle('err', e);
+                        return;
+                    }
+                    // Don't settle on other individual failures — later hedges may still succeed
                 },
             );
         };
