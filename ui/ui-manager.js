@@ -35,6 +35,7 @@ import { parseRegistryKey } from '../core/collection-ids.js';
 import { getModelField } from '../core/providers.js';
 import { getChunkingStrategies } from '../core/content-types.js';
 import { CJK_TOKENIZER_MODES, setCjkTokenizerMode, ensureJiebaTokenizerLoaded, ensureJiebaTwLoaded } from '../core/bm25-scorer.js';
+import { log } from '../core/log.js';
 
 /**
  * Renders the VectFox settings UI
@@ -47,7 +48,7 @@ import { CJK_TOKENIZER_MODES, setCjkTokenizerMode, ensureJiebaTokenizerLoaded, e
  * @param {Function} callbacks.onRunDiagnostics - Called when "Run Diagnostics" is clicked
  */
 export function renderSettings(containerId, settings, callbacks) {
-    console.log('VectFox UI: Rendering settings...');
+    log.lifecycle('VectFox UI: Rendering settings...');
 
     // Ensure extension_settings.vectfox exists before any UI event handlers fire
     if (!extension_settings.vectfox) {
@@ -864,9 +865,9 @@ export function renderSettings(containerId, settings, callbacks) {
 
                             <label class="checkbox_label" for="VectFox_injection_debug_logging" style="margin-top: 20px;">
                                 <input type="checkbox" id="VectFox_injection_debug_logging" />
-                                <span>Debug Injection Logging (Chunk Path)</span>
+                                <span>Debug Injection Logging</span>
                             </label>
-                            <small class="VectFox_hint">Log [VectFox Injection Control] details to the browser console (useful for diagnosing retrieval/injection issues)</small>
+                            <small class="VectFox_hint">Log injection details (ChunkBase + EventBase) to the browser console (useful for diagnosing retrieval/injection issues)</small>
 
                             <label class="checkbox_label" for="VectFox_debug_verbosity" style="margin-top: 12px; display:block;">
                                 <span>Console verbosity</span>
@@ -1286,24 +1287,24 @@ export function renderSettings(containerId, settings, callbacks) {
 
     // Sanity debug: confirm the generated HTML contains the lock button marker
     try {
-        console.log(`VectFox: renderSettings built HTML contains lock marker:`, String(html).indexOf('VectFox_lock_collection') >= 0);
+        log.trace(`VectFox: renderSettings built HTML contains lock marker:`, String(html).indexOf('VectFox_lock_collection') >= 0);
         const target = document.getElementById(containerId);
-        console.log(`VectFox: renderSettings target container exists:`, !!target, 'containerId=', containerId);
+        log.trace(`VectFox: renderSettings target container exists:`, !!target, 'containerId=', containerId);
     } catch (e) {
-        console.warn('VectFox: renderSettings pre-append debug failed', e);
+        log.warn('VectFox: renderSettings pre-append debug failed', e);
     }
 
     $(`#${containerId}`).append(html);
 
     // Debug: log presence of lock button after rendering and observe for later appearance
     try {
-        console.log(`VectFox: renderSettings appended to ${containerId}. lock button present:`, !!document.getElementById('VectFox_lock_collection'));
+        log.trace(`VectFox: renderSettings appended to ${containerId}. lock button present:`, !!document.getElementById('VectFox_lock_collection'));
         if (!document.getElementById('VectFox_lock_collection')) {
             const containerEl = document.getElementById(containerId);
             if (containerEl && window.MutationObserver) {
                 const mo = new MutationObserver((mutations, obs) => {
                     if (document.getElementById('VectFox_lock_collection')) {
-                        console.log('VectFox: lock button appeared in DOM');
+                        log.trace('VectFox: lock button appeared in DOM');
                         obs.disconnect();
                     }
                 });
@@ -1311,7 +1312,7 @@ export function renderSettings(containerId, settings, callbacks) {
             }
         }
     } catch (e) {
-        console.warn('VectFox: debug check failed', e);
+        log.warn('VectFox: debug check failed', e);
     }
 
     // Bind all events
@@ -1329,7 +1330,7 @@ export function renderSettings(containerId, settings, callbacks) {
     // Initialize health dashboard
     initializeHealthDashboard();
 
-    console.log('VectFox UI: Settings rendered');
+    log.lifecycle('VectFox UI: Settings rendered');
 }
 
 /**
@@ -1539,7 +1540,7 @@ async function executeDiagnostics() {
 
     } catch (error) {
         stopConsoleCapture();
-        console.error('VectFox Diagnostics error:', error);
+        log.error('VectFox Diagnostics error:', error);
         toastr.error('Failed to run diagnostics: ' + error.message);
         showDiagnosticsPhase('selection');
         $('#VectFox_diagnostics_title').text('Run Diagnostics');
@@ -1647,7 +1648,7 @@ async function executeWithWebLlmErrorHandling(func) {
     try {
         return await func();
     } catch (error) {
-        console.error('VectFox: WebLLM operation failed', error);
+        log.error('VectFox: WebLLM operation failed', error);
         if (!(error instanceof Error)) {
             return;
         }
@@ -2084,7 +2085,7 @@ async function showAutoSyncConfirmModal(allMatches, settings) {
                     $modal.find('.vectfox-collection-option').first().css('border-color', 'var(--SmartThemeQuoteColor)');
                 }
             } catch (error) {
-                console.error('VectFox: Failed to delete ghost', error);
+                log.error('VectFox: Failed to delete ghost', error);
                 toastr.error('Failed to delete ghost collection', 'VectFox');
             }
         });
@@ -2181,14 +2182,14 @@ function bindSettingsEvents(settings, callbacks) {
                     const uuid = getChatUUID();
                     if (uuid) await stampAutoSyncMarker(uuid, settings);
                 } catch (err) {
-                    console.warn('[VectFox] Failed to stamp auto-sync marker on enable:', err?.message || err);
+                    log.warn('[VectFox] Failed to stamp auto-sync marker on enable:', err?.message || err);
                 }
 
                 const message = status.state === 'fully-vectorized'
                     ? 'Auto-sync enabled — chat is fully synced'
                     : 'Auto-sync enabled — will catch up on next trigger';
                 toastr.success(message);
-                console.log(`VectFox: Chat auto-sync ENABLED for ${lockKey} (state=${status.state})`);
+                log.lifecycle(`VectFox: Chat auto-sync ENABLED for ${lockKey} (state=${status.state})`);
             } else {
                 // Uncheck — clear the flag and release the chat lock.
                 if (status.state !== 'no-collection') {
@@ -2204,11 +2205,11 @@ function bindSettingsEvents(settings, callbacks) {
                         const uuid = getChatUUID();
                         if (uuid) clearAutoSyncMarker(uuid);
                     } catch (err) {
-                        console.warn('[VectFox] Failed to clear auto-sync marker on disable:', err?.message || err);
+                        log.warn('[VectFox] Failed to clear auto-sync marker on disable:', err?.message || err);
                     }
 
                     toastr.info('Auto-sync disabled for this chat');
-                    console.log(`VectFox: Chat auto-sync DISABLED for ${lockKey}`);
+                    log.lifecycle(`VectFox: Chat auto-sync DISABLED for ${lockKey}`);
                 }
             }
 
@@ -2298,7 +2299,7 @@ function bindSettingsEvents(settings, callbacks) {
                     const detail = data.data
                         ? (typeof data.data === 'string' ? data.data : JSON.stringify(data.data))
                         : '(no detail returned)';
-                    console.warn('[VectFox] Upstream rejected model-list request:', data.data);
+                    log.warn('[VectFox] Upstream rejected model-list request:', data.data);
                     // Common cause is the endpoint not exposing /v1/models at all
                     // (siliconflow, some hosted vLLM-compatible providers do this
                     // even when /v1/chat/completions and /v1/embeddings work fine
@@ -2313,7 +2314,7 @@ function bindSettingsEvents(settings, callbacks) {
                           : Array.isArray(data?.models) ? data.models
                           : null;
                 if (!arr) {
-                    console.warn('[VectFox] Model list response shape unrecognized:', data);
+                    log.warn('[VectFox] Model list response shape unrecognized:', data);
                     throw new Error(`Unrecognized model-list response shape (top-level keys: ${Object.keys(data || {}).join(',') || 'none'})`);
                 }
                 models = arr
@@ -2341,7 +2342,7 @@ function bindSettingsEvents(settings, callbacks) {
             $list.html(options.join('')).show();
             toastr.success(`Loaded ${models.length} models from ${provider}.`);
         } catch (err) {
-            console.error('[VectFox] Model list fetch failed:', err);
+            log.error('[VectFox] Model list fetch failed:', err);
             toastr.error(`Could not fetch model list: ${err?.message || err}`);
         } finally {
             $btn.prop('disabled', false).html(originalHtml);
@@ -2406,13 +2407,13 @@ function bindSettingsEvents(settings, callbacks) {
             try {
                 await writeSecret(SECRET_KEYS.CUSTOM, value);
             } catch (err) {
-                console.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
+                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
                 errors.push('chat-side (CUSTOM)');
             }
             try {
                 await writeSecret(SECRET_KEYS.VLLM, value);
             } catch (err) {
-                console.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
+                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
                 errors.push('embedding-side (VLLM)');
             }
             await readSecretState();
@@ -2461,7 +2462,7 @@ function bindSettingsEvents(settings, callbacks) {
                 await readSecretState();
                 toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
             } catch (err) {
-                console.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
+                log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
                 toastr.error('Failed to save OpenRouter key — see console');
                 return;
             }
@@ -2531,7 +2532,7 @@ function bindSettingsEvents(settings, callbacks) {
                 await readSecretState();
                 toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
             } catch (err) {
-                console.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
+                log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
                 toastr.error('Failed to save OpenRouter key — see console');
                 return;
             }
@@ -2574,13 +2575,13 @@ function bindSettingsEvents(settings, callbacks) {
             try {
                 await writeSecret(SECRET_KEYS.CUSTOM, value);
             } catch (err) {
-                console.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
+                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
                 errors.push('chat-side (CUSTOM)');
             }
             try {
                 await writeSecret(SECRET_KEYS.VLLM, value);
             } catch (err) {
-                console.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
+                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
                 errors.push('embedding-side (VLLM)');
             }
             await readSecretState();
@@ -2728,7 +2729,7 @@ function bindSettingsEvents(settings, callbacks) {
             // OpenRouter timeouts.
             applyBackendHybridDefaults(settings.vector_backend);
             updateNativeHybridUI();
-            console.log(`VectFox: Vector backend changed to ${settings.vector_backend}`);
+            log.lifecycle(`VectFox: Vector backend changed to ${settings.vector_backend}`);
             // Reset health cache so new backend gets properly initialized
             resetBackendHealth();
             // Refresh Cosine weight availability — backend switch may have
@@ -2754,7 +2755,7 @@ function bindSettingsEvents(settings, callbacks) {
             }
 
             // Reset backend health to force re-initialization with new config
-            console.log('VectFox: Qdrant mode changed, forcing re-initialization...');
+            log.lifecycle('VectFox: Qdrant mode changed, forcing re-initialization...');
             resetBackendHealth('qdrant');
 
             // Proactively reinitialize if Qdrant is the current backend
@@ -2767,7 +2768,7 @@ function bindSettingsEvents(settings, callbacks) {
                         'VectFox'
                     );
                 } catch (e) {
-                    console.error('VectFox: Failed to reinitialize Qdrant:', e);
+                    log.error('VectFox: Failed to reinitialize Qdrant:', e);
                     toastr.warning('Failed to reinitialize Qdrant: ' + e.message, 'VectFox');
                 }
             }
@@ -2838,7 +2839,7 @@ function bindSettingsEvents(settings, callbacks) {
                 // truth for presence now.
                 toastr.success('Qdrant API key saved to secret_state');
             } catch (err) {
-                console.error('[VectFox] writeSecret(api_key_qdrant) failed:', err);
+                log.error('[VectFox] writeSecret(api_key_qdrant) failed:', err);
                 toastr.error('Failed to save Qdrant key — see console');
                 return;
             }
@@ -2869,7 +2870,7 @@ function bindSettingsEvents(settings, callbacks) {
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             toggleProviderSettings(settings.source, settings);
-            console.log(`VectFox: Embedding provider changed to ${settings.source}`);
+            log.lifecycle(`VectFox: Embedding provider changed to ${settings.source}`);
             // Reset health cache since provider change may affect backend connectivity
             resetBackendHealth();
         });
@@ -2942,7 +2943,7 @@ function bindSettingsEvents(settings, callbacks) {
             settings.keyword_scoring_method = String($(this).val());
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
-            console.log(`VectFox: Keyword scoring method changed to ${settings.keyword_scoring_method}`);
+            log.lifecycle(`VectFox: Keyword scoring method changed to ${settings.keyword_scoring_method}`);
             updateNativeHybridUI();
         });
 
@@ -2953,7 +2954,7 @@ function bindSettingsEvents(settings, callbacks) {
             settings.hybrid_keyword_level = String($(this).val());
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
-            console.log(`VectFox: Hybrid keyword level changed to ${settings.hybrid_keyword_level}`);
+            log.lifecycle(`VectFox: Hybrid keyword level changed to ${settings.hybrid_keyword_level}`);
         });
 
     // BM25 k1 parameter
@@ -3004,7 +3005,7 @@ function bindSettingsEvents(settings, callbacks) {
             const isWeighted = settings.hybrid_fusion_method === 'weighted';
             $('#VectFox_hybrid_weights').toggle(isWeighted);
             $('#VectFox_hybrid_rrf_settings').toggle(!isWeighted);
-            console.log(`VectFox: Hybrid fusion method changed to ${settings.hybrid_fusion_method}`);
+            log.lifecycle(`VectFox: Hybrid fusion method changed to ${settings.hybrid_fusion_method}`);
         });
     // Initialize visibility based on current method
     const isWeightedMethod = (settings.hybrid_fusion_method || 'rrf') === 'weighted';
@@ -3265,20 +3266,20 @@ function bindSettingsEvents(settings, callbacks) {
             const activeEntries = [];
             const cfg = window.extension_settings?.vectfox || settings;
 
-            console.log('VectFox: Running semantic WI test with messages:', recentMessages);
+            log.trace('VectFox: Running semantic WI test with messages:', recentMessages);
 
             // Primary: use initialized hooks if available
             if (window.VectFox_WorldInfo && typeof window.VectFox_WorldInfo.getSemanticEntries === 'function') {
                 const entries = await window.VectFox_WorldInfo.getSemanticEntries(recentMessages, activeEntries, cfg);
-                console.log('VectFox: Semantic WI test results (via window hooks):', entries);
+                log.trace('VectFox: Semantic WI test results (via window hooks):', entries);
                 if (cfg.world_info_retrieval_popup) toastr.info(`Semantic WI test completed - ${entries.length} entries (see console)`);
 
                 // If no entries found, provide extended diagnostics to help debug
                 if (!entries || entries.length === 0) {
                     try {
-                        console.log('VectFox: No semantic entries — dumping registry and per-collection query info...');
+                        log.trace('VectFox: No semantic entries — dumping registry and per-collection query info...');
                         const registry = getCollectionRegistry();
-                        console.log('VectFox: Collection registry:', registry);
+                        log.trace('VectFox: Collection registry:', registry);
 
                         const coreApi = await import('../core/core-vector-api.js');
                         const metaMod = await import('../core/collection-metadata.js');
@@ -3288,38 +3289,38 @@ function bindSettingsEvents(settings, callbacks) {
                                 const collKey = parseRegistryKey(registryKey).collectionId;
                                 if (!collKey.startsWith('vf_lorebook_')) continue; // focus on lorebooks
                                 const meta = metaMod.getCollectionMeta(collKey);
-                                console.log(`VectFox: Collection meta for ${collKey}:`, meta);
+                                log.trace(`VectFox: Collection meta for ${collKey}:`, meta);
 
                                 // Check saved hashes (true=include metadata)
                                 if (coreApi.getSavedHashes) {
                                     try {
                                         const saved = await coreApi.getSavedHashes(collKey, cfg, true);
-                                        console.log(`VectFox: getSavedHashes for ${collKey}:`, saved && saved.hashes ? saved.hashes.length + ' hashes' : saved);
+                                        log.trace(`VectFox: getSavedHashes for ${collKey}:`, saved && saved.hashes ? saved.hashes.length + ' hashes' : saved);
                                     } catch (hErr) {
-                                        console.warn(`VectFox: getSavedHashes failed for ${collKey}:`, hErr.message);
+                                        log.warn(`VectFox: getSavedHashes failed for ${collKey}:`, hErr.message);
                                     }
                                 }
 
                                 // Run a direct vector query against this collection
                                 const diagQueryText = recentMessages.join('\n');
                                 if (!diagQueryText.trim()) {
-                                    console.log(`VectFox: skipping queryCollection for ${collKey} — no test messages provided`);
+                                    log.trace(`VectFox: skipping queryCollection for ${collKey} — no test messages provided`);
                                 } else {
                                     try {
                                         const qres = await coreApi.queryCollection(collKey, diagQueryText, cfg.world_info_top_k || 3, cfg);
-                                        console.log(`VectFox: queryCollection result for ${collKey}:`, qres);
+                                        log.trace(`VectFox: queryCollection result for ${collKey}:`, qres);
                                     } catch (qErr) {
-                                        console.warn(`VectFox: queryCollection failed for ${collKey}:`, qErr.message);
+                                        log.warn(`VectFox: queryCollection failed for ${collKey}:`, qErr.message);
                                     }
                                 }
                             } catch (inner) {
-                                console.warn('VectFox: Error inspecting collection', collKey, inner.message);
+                                log.warn('VectFox: Error inspecting collection', collKey, inner.message);
                             }
                         }
 
                         if (cfg.world_info_retrieval_popup) toastr.info('Extended WI diagnostics written to console (registry + per-collection queries)');
                     } catch (diagErr) {
-                        console.error('VectFox: Failed to run extended WI diagnostics', diagErr);
+                        log.error('VectFox: Failed to run extended WI diagnostics', diagErr);
                         toastr.error('Failed to run WI diagnostics: ' + (diagErr.message || diagErr));
                     }
                 }
@@ -3335,17 +3336,17 @@ function bindSettingsEvents(settings, callbacks) {
                     throw new Error('WorldInfo module does not export a usable function');
                 }
                 const entries = await fn(recentMessages, activeEntries, cfg);
-                console.log('VectFox: Semantic WI test results (via dynamic import):', entries);
+                log.trace('VectFox: Semantic WI test results (via dynamic import):', entries);
                 if (cfg.world_info_retrieval_popup) toastr.info(`Semantic WI test completed - ${entries.length} entries (see console)`);
                 return;
             } catch (impErr) {
-                console.warn('VectFox: Dynamic import fallback failed:', impErr.message);
+                log.warn('VectFox: Dynamic import fallback failed:', impErr.message);
                 toastr.error('VectFox: WorldInfo hooks not initialized and dynamic import failed: ' + impErr.message);
                 return;
             }
 
         } catch (e) {
-            console.error('VectFox: Semantic WI test failed', e);
+            log.error('VectFox: Semantic WI test failed', e);
             try { toastr.error('Semantic WI test failed: ' + (e.message || String(e))); } catch (_) {}
         }
     });
@@ -3353,10 +3354,10 @@ function bindSettingsEvents(settings, callbacks) {
     $('#VectFox_wi_dump_registry').on('click', function() {
         try {
             const registry = getCollectionRegistry();
-            console.log('VectFox: Collection registry dump:', registry);
+            log.trace('VectFox: Collection registry dump:', registry);
             toastr.info(`Collection registry dumped to console (${registry.length} items)`);
         } catch (e) {
-            console.error('VectFox: Failed to dump registry', e);
+            log.error('VectFox: Failed to dump registry', e);
             toastr.error('Failed to dump registry: ' + e.message);
         }
     });
@@ -3380,7 +3381,7 @@ function bindSettingsEvents(settings, callbacks) {
             }
 
             const first = entries[0];
-            console.log('VectFox: Applying semantic WI entry:', first);
+            log.trace('VectFox: Applying semantic WI entry:', first);
 
             // Best-effort: try importing ST's world-info module and invoking common APIs
             let applied = false;
@@ -3392,12 +3393,12 @@ function bindSettingsEvents(settings, callbacks) {
                     if (worldInfo[name] && typeof worldInfo[name] === 'function') {
                         await worldInfo[name]([first]);
                         applied = true;
-                        console.log(`VectFox: Applied via world-info.${name}`);
+                        log.trace(`VectFox: Applied via world-info.${name}`);
                         break;
                     }
                 }
             } catch (e) {
-                console.debug('VectFox: world-info import failed or method not found', e);
+                log.trace('VectFox: world-info import failed or method not found', e);
             }
 
             // Try global window API fallbacks
@@ -3412,10 +3413,10 @@ function bindSettingsEvents(settings, callbacks) {
                         try {
                             await fn([first]);
                             applied = true;
-                            console.log('VectFox: Applied via global fallback function');
+                            log.trace('VectFox: Applied via global fallback function');
                             break;
                         } catch (e) {
-                            console.debug('VectFox: fallback apply failed', e);
+                            log.trace('VectFox: fallback apply failed', e);
                         }
                     }
                 }
@@ -3432,13 +3433,13 @@ function bindSettingsEvents(settings, callbacks) {
                 await navigator.clipboard.writeText(text);
                 toastr.info('Semantic entry copied to clipboard. Paste into World Info editor to activate.');
             } catch (e) {
-                console.log('VectFox: Clipboard write failed, showing content in console');
-                console.log('Semantic entry content:', text);
+                log.warn('VectFox: Clipboard write failed, showing content in console');
+                log.trace('Semantic entry content:', text);
                 toastr.info('Semantic entry logged to console. Paste into World Info editor to activate.');
             }
 
         } catch (e) {
-            console.error('VectFox: Apply semantic WI failed', e);
+            log.error('VectFox: Apply semantic WI failed', e);
             toastr.error('Failed to apply semantic WI entry: ' + e.message);
         }
     });
@@ -3656,12 +3657,14 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // Chunk-path injection debug — still on the old flag (Phase 2 will fold it
-    // into debug_domain.injection once its read sites migrate).
+    // Injection debug toggle — drives debug_domain.injection, the unified
+    // log.domain('injection') gate for BOTH ChunkBase (chat-vectorization.js)
+    // and EventBase (eventbase-workflow.js) injection diagnostics.
     $('#VectFox_injection_debug_logging')
-        .prop('checked', settings.injection_debug_logging || false)
+        .prop('checked', settings.debug_domain?.injection || false)
         .on('change', function() {
-            settings.injection_debug_logging = $(this).prop('checked');
+            if (!settings.debug_domain) settings.debug_domain = {};
+            settings.debug_domain.injection = $(this).prop('checked');
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
@@ -3954,13 +3957,13 @@ function bindSettingsEvents(settings, callbacks) {
             try {
                 await writeSecret(SECRET_KEYS.CUSTOM, value);
             } catch (err) {
-                console.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
+                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
                 errors.push('chat-side (CUSTOM)');
             }
             try {
                 await writeSecret(SECRET_KEYS.VLLM, value);
             } catch (err) {
-                console.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
+                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
                 errors.push('embedding-side (VLLM)');
             }
             await readSecretState();
@@ -4054,7 +4057,7 @@ function bindSettingsEvents(settings, callbacks) {
                 toastr.info(`No embedding-tagged models found — showing all ${all.length} models.`);
             }
         } catch (err) {
-            console.error('[VectFox] OpenRouter model list fetch failed:', err);
+            log.error('[VectFox] OpenRouter model list fetch failed:', err);
             toastr.error(`Could not fetch model list: ${err?.message || err}`);
         } finally {
             $btn.prop('disabled', false).html(originalHtml);
@@ -4118,7 +4121,7 @@ function bindSettingsEvents(settings, callbacks) {
                     await writeSecret(SECRET_KEYS.OPENROUTER, value);
                     await readSecretState(); // refresh masked state for display
                 } catch (err) {
-                    console.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
+                    log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
                     toastr.error('Failed to save OpenRouter key — see console');
                     return;
                 }
@@ -4187,14 +4190,14 @@ function bindSettingsEvents(settings, callbacks) {
     $('#VectFox_cleanup_corrupted').on('click', callbacks.onCleanupCorrupted);
     $('#VectFox_run_diagnostics').on('click', callbacks.onRunDiagnostics);
     $('#VectFox_database_browser').on('click', () => {
-        console.log('VECTFOX: Database Browser button clicked');
+        log.lifecycle('VECTFOX: Database Browser button clicked');
         try {
             const p = openDatabaseBrowser();
             if (p && typeof p.catch === 'function') {
-                p.catch(err => console.error('VECTFOX: openDatabaseBrowser rejected:', err));
+                p.catch(err => log.error('VECTFOX: openDatabaseBrowser rejected:', err));
             }
         } catch (err) {
-            console.error('VECTFOX: Database Browser click handler threw synchronously:', err);
+            log.error('VECTFOX: Database Browser click handler threw synchronously:', err);
         }
     });
     $('#VectFox_view_results').on('click', () => {
@@ -4228,7 +4231,7 @@ async function initializeCottonTalesIntegration(settings) {
 
     if (cottonTalesInstalled) {
         $('#VectFox_cottontales_section').show();
-        console.log('VectFox: Cotton-Tales detected, showing emotion classification options');
+        log.lifecycle('VectFox: Cotton-Tales detected, showing emotion classification options');
     } else {
         $('#VectFox_cottontales_section').hide();
         return;
@@ -4239,7 +4242,7 @@ async function initializeCottonTalesIntegration(settings) {
     try {
         emotionClassifier = await import('../core/emotion-classifier.js');
     } catch (error) {
-        console.error('VectFox: Failed to load emotion classifier module:', error);
+        log.error('VectFox: Failed to load emotion classifier module:', error);
         return;
     }
 
@@ -4417,10 +4420,10 @@ function renderDiagnosticsContent(results, filter = 'all') {
     const output = $('#VectFox_diagnostics_content');
     output.empty();
 
-    console.log('VectFox UI: Rendering diagnostics with results:', results);
-    console.log('VectFox UI: Version data received:', results.version);
-    console.log('VectFox UI: Extension version:', results.version?.extension);
-    console.log('VectFox UI: Plugin version:', results.version?.plugin);
+    log.lifecycle('VectFox UI: Rendering diagnostics with results:', results);
+    log.trace('VectFox UI: Version data received:', results.version);
+    log.trace('VectFox UI: Extension version:', results.version?.extension);
+    log.trace('VectFox UI: Plugin version:', results.version?.plugin);
 
     const statusIcons = {
         'pass': '<i class="fa-solid fa-circle-check" style="color: var(--vectfox-success);"></i>',
@@ -4784,7 +4787,7 @@ ${categoryNames[category] || category.toUpperCase()}  ${catStats}
     navigator.clipboard.writeText(report).then(() => {
         toastr.success(`Diagnostics report${filterMsg} copied to clipboard`, 'VectFox');
     }).catch(err => {
-        console.error('Failed to copy:', err);
+        log.error('Failed to copy:', err);
         toastr.error('Failed to copy report');
     });
 }
@@ -4827,7 +4830,7 @@ function handleFixAll(checks) {
                 .find('.diagnostic-icon').html(statusIcons.pass);
             $(`.diagnostic-item[data-fix-action="${check.fixAction}"] .diagnostic-fix-btn`).fadeOut(200);
         } catch (e) {
-            console.warn(`Failed to fix: ${check.fixAction}`, e);
+            log.warn(`Failed to fix: ${check.fixAction}`, e);
         }
     });
 

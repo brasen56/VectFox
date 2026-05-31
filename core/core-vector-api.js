@@ -850,7 +850,7 @@ export async function insertVectorItems(collectionId, items, settings, onProgres
                 await AsyncUtils.retry(async () => {
                     attemptCount++;
                     const attemptStart = performance.now();
-                    const debugOn = !!settings?.eventbase_debug_logging;
+                    const debugOn = log.enabled('verbose');
                     log.verbose(
                         `VectFox: insert batch ${batchIdx}/${batches.length} attempt ${attemptCount}/${RETRY_CONFIG.maxAttempts} — POST ${batchItemCount} item(s) via ${settings.source}${hedgeEnabled ? ' [hedge armed]' : ''}`,
                     );
@@ -1117,7 +1117,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
             // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
             if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
                 queryVector = additionalArgs.embeddings[searchText];
-                if (settings.eventbase_debug_logging) {
+                if (log.enabled('lifecycle')) {
                     console.log(`[EventBase] Embedding model (${settings.source}) returned vector: dim=${queryVector.length}, first5=[${queryVector.slice(0, 5).map(v => v.toFixed(4)).join(', ')}], last5=[${queryVector.slice(-5).map(v => v.toFixed(4)).join(', ')}], model=${additionalArgs.model || 'n/a'}`);
                 }
             } else {
@@ -1136,7 +1136,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
     let effectiveQuery = searchText;
     if (Array.isArray(filters.concepts_any) && filters.concepts_any.length > 0) {
         effectiveQuery = `${searchText} ${filters.concepts_any.join(' ')}`;
-        if (settings.eventbase_debug_logging) {
+        if (log.enabled('lifecycle')) {
             console.log(`[VectFox] concepts_any appended to query text: [${filters.concepts_any.join(', ')}]`);
         }
     }
@@ -1152,7 +1152,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
     const useHybridPath = (nativeHybridAvailable && preferNative) || settings.keyword_scoring_method === 'hybrid';
 
     if (useHybridPath) {
-        if (settings.eventbase_debug_logging) {
+        if (log.enabled('lifecycle')) {
             const reason = nativeHybridAvailable && preferNative ? 'native' : 'client-side';
             console.log(`[VectFox] Hybrid search (${reason}), dispatching to hybrid search module`);
         }
@@ -1161,7 +1161,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
             const result = await hybridSearch(bareCollectionId, effectiveQuery, topK, settings, { queryVector, filters });
             const queryLatency = Date.now() - queryStart;
             recordQuery(resolved.backend || settings?.vector_backend || 'standard', queryLatency);
-            if (settings.eventbase_debug_logging) {
+            if (log.enabled('lifecycle')) {
                 const scores = (result.metadata || []).map(m => (m.score ?? 0).toFixed(4));
                 const fusionMethod = (settings.hybrid_fusion_method || 'rrf').toUpperCase();
                 console.log(`[VectFox] Hybrid search (${fusionMethod}) response: ${result.hashes?.length ?? 0} result(s) in ${queryLatency}ms, scores=[${scores.join(', ')}]`);
@@ -1174,7 +1174,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
     }
 
     // Standard vector search flow (A1/A2). Filters are not supported here.
-    if (Object.keys(filters).length > 0 && settings.eventbase_debug_logging) {
+    if (Object.keys(filters).length > 0 && log.enabled('lifecycle')) {
         console.warn('[VectFox] queryCollection: filters ignored on A1/A2 Standard backend path');
     }
     // Overfetch to allow keyword-boosted chunks to surface
@@ -1188,7 +1188,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
         rawResults = await backend.queryCollection(bareCollectionId, effectiveQuery, overfetchAmount, settings, queryVector);
         const queryLatency = Date.now() - queryStart;
         recordQuery(actualBackendName, queryLatency);
-        if (settings.eventbase_debug_logging) {
+        if (log.enabled('lifecycle')) {
             const scores = (rawResults.metadata || []).map(m => (m.score ?? 0).toFixed(4));
             console.log(`[EventBase] Embedding search response: ${rawResults.hashes?.length ?? 0} result(s) in ${queryLatency}ms, scores=[${scores.join(', ')}]`);
         }
@@ -1208,7 +1208,7 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
 
     let finalResults = await scoreResults(resultsForBoost, effectiveQuery, topK, settings, bareCollectionId);
 
-    if (settings.eventbase_debug_logging) {
+    if (log.enabled('lifecycle')) {
         const idfMode = settings.bm25_use_corpus_idf ? 'corpus-IDF' : 'local-IDF';
         finalResults.forEach((r, i) => {
             console.log(`[VectFox] #${i + 1} final=${r.score?.toFixed(4)} vector=${r.vectorScore?.toFixed(4) ?? 'n/a'} bm25=${r.bm25Score?.toFixed(4) ?? 'n/a'} (A1 BM25 re-rank, ${idfMode})`);
@@ -1261,7 +1261,7 @@ async function scoreResults(resultsForBoost, searchText, topK, settings, collect
         try {
             const mod = await import('./corpus-stats.js');
             corpusStats = await mod.getCorpusStats(collectionId, settings);
-            if (!corpusStats && settings.eventbase_debug_logging) {
+            if (!corpusStats && log.enabled('lifecycle')) {
                 console.warn(`[VectFox] Corpus-IDF disabled for ${collectionId}: getCorpusStats returned null (plugin unavailable or /chunks/list failed). Falling back to local-IDF BM25.`);
             }
         } catch (err) {
@@ -1324,7 +1324,7 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
     const useHybridPath = (nativeHybridAvailable && preferNative) || settings.keyword_scoring_method === 'hybrid';
 
     if (useHybridPath) {
-        if (settings.eventbase_debug_logging) {
+        if (log.enabled('lifecycle')) {
             const reason = nativeHybridAvailable && preferNative ? 'native' : 'client-side';
             console.log(`[VectFox] Hybrid search (${reason}) for multi-collection query`);
         }

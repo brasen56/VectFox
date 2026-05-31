@@ -16,6 +16,7 @@ import { getBackend, getBackendForCollection } from '../backends/backend-manager
 import { parseRegistryKey, COLLECTION_PREFIXES } from './collection-ids.js';
 import { createBM25Scorer, porterStemmer } from './bm25-scorer.js';
 import { extractQueryKeywords, RETRIEVAL_KEYWORD_LEVELS, isCJKToken } from './query-keyword-extractor.js';
+import { log } from './log.js';
 
 const KNOWN_BACKENDS = ['standard', 'vectra', 'qdrant'];
 
@@ -74,7 +75,7 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
     const backend = collectionBackend
         ? await getBackendForCollection(collectionBackend, settings)
         : await getBackend(settings);
-    const debugLog = settings?.eventbase_debug_logging;
+    const debugLog = log.enabled('lifecycle');
 
     const {
         fusionMethod = settings.hybrid_fusion_method || 'rrf',

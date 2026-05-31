@@ -20,6 +20,13 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 
+// keyword-boost/bm25-scorer → core/log.js → ../../../../extensions.js
+// (a SillyTavern host path that doesn't resolve under vitest). Mock it.
+vi.mock('../../../../extensions.js', () => ({
+    extension_settings: { vectfox: {} },
+    getContext: vi.fn(() => ({ chat: [], characterId: null })),
+}));
+
 // Mock the SillyTavern substituteParams function (required by keyword-boost.js)
 vi.mock('../../../../../script.js', () => ({
     substituteParams: vi.fn((str) => {

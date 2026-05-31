@@ -26,6 +26,7 @@ import {
     isCollectionActiveForContext,
 } from './collection-metadata.js';
 import { purgeVectorIndex } from './core-vector-api.js';
+import { log } from './log.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
 import {
     getChatUUID,
@@ -140,7 +141,7 @@ export function registerCollection(collectionId) {
             const idLower = String(collectionId).toLowerCase();
             if (idLower.includes(`_${handle}_`)) {
                 setCollectionMeta(collectionId, { creatorHandle: handle });
-                if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Stamped creatorHandle="${handle}" on ${collectionId}`);
+                log.trace(`VectFox: Stamped creatorHandle="${handle}" on ${collectionId}`);
             }
         }
     } catch (e) {
@@ -560,7 +561,7 @@ async function discoverViaPlugin(settings) {
         const data = await response.json();
 
         if (data.success && Array.isArray(data.collections)) {
-            if (settings?.eventbase_debug_logging) console.log(`✅ VectFox: Plugin found ${data.collections.length} collections across all sources`);
+            log.lifecycle(`✅ VectFox: Plugin found ${data.collections.length} collections across all sources`);
 
             // Log the sources found
             const sourcesSummary = {};
@@ -654,7 +655,7 @@ async function discoverViaPlugin(settings) {
             const pluginKeySet = new Set(uniqueKeys);
 
             if (skippedCorruption > 0 || skippedStFile > 0 || skippedInternal > 0) {
-                if (settings?.eventbase_debug_logging) console.log(`   🛡️ Discovery filter excluded ${skippedCorruption} corrupted + ${skippedStFile} ST-native + ${skippedInternal} internal collection(s)`);
+                log.lifecycle(`   🛡️ Discovery filter excluded ${skippedCorruption} corrupted + ${skippedStFile} ST-native + ${skippedInternal} internal collection(s)`);
             }
             if (emptyCount > 0) {
                 console.log(`   ⚠️ ${emptyCount} empty collection(s) with 0 chunks (kept in registry — delete from DB Browser to clean up):`);
@@ -688,11 +689,12 @@ async function discoverViaPlugin(settings) {
                     console.debug(`   ⏭️  Already registered: ${key}`);
                 }
                 registerCollection(key);
-            }            if (newRegistrations > 0 && settings?.eventbase_debug_logging) {
-                console.log(`   ✅ Registered ${newRegistrations} new collections`);
+            }
+            if (newRegistrations > 0) {
+                log.lifecycle(`   ✅ Registered ${newRegistrations} new collections`);
             }
 
-            if (settings?.eventbase_debug_logging) console.log(`   Final registry size: ${getCollectionRegistry().length}\n`);
+            log.lifecycle(`   Final registry size: ${getCollectionRegistry().length}\n`);
 
             return uniqueKeys;
         }
@@ -909,7 +911,7 @@ export async function discoverExistingCollections(settings) {
     const hasPlugin = await checkPluginAvailable();
 
     if (hasPlugin) {
-        if (settings?.eventbase_debug_logging) console.log('VectFox: Using plugin for collection discovery');
+        log.trace('VectFox: Using plugin for collection discovery');
         return await discoverViaPlugin(settings);
     } else {
         console.log('VectFox: Plugin not available, using fallback discovery');
@@ -1005,7 +1007,7 @@ export async function doesChatHaveVectors(settings, overrideChatId, overrideUUID
  * @returns {Promise<object[]>} Array of collection objects
  */
 export async function loadAllCollections(settings, autoDiscover = true) {
-    const debugLog = !!settings?.eventbase_debug_logging;
+    const debugLog = log.enabled('trace');
     console.debug('🐰 VectFox: Loading all collections for Database Browser...');
 
     // Clean up registry first (remove nulls and duplicates)

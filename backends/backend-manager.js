@@ -13,6 +13,7 @@
 import { extension_settings } from '../../../../extensions.js';
 import { StandardBackend } from './standard.js';
 import { QdrantBackend } from './qdrant.js';
+import { log } from '../core/log.js';
 
 // Backend registry - add new backends here
 const BACKENDS = {
@@ -247,7 +248,7 @@ function evictLRUBackendIfNeeded() {
             }
         }
         if (oldestBackend) {
-            console.log(`VectFox: Evicting LRU backend from cache: ${oldestBackend}`);
+            log.lifecycle(`VectFox: Evicting LRU backend from cache: ${oldestBackend}`);
             delete backendInstances[oldestBackend];
             delete backendHealthStatus[oldestBackend];
             delete backendAccessTimestamps[oldestBackend];
@@ -271,7 +272,7 @@ export async function initializeBackend(backendName, settings, throwOnFail = tru
     if (backendInstances[normalizedName] && backendHealthStatus[normalizedName]) {
         // If health cache is stale, re-verify health before returning
         if (isHealthCacheStale(normalizedName)) {
-            console.log(`VectFox: Health cache stale for ${normalizedName}, re-verifying...`);
+            log.lifecycle(`VectFox: Health cache stale for ${normalizedName}, re-verifying...`);
             try {
                 const healthy = await backendInstances[normalizedName].healthCheck();
                 recordHealthCheck(normalizedName, healthy); // VEC-18: Record health check
@@ -281,13 +282,13 @@ export async function initializeBackend(backendName, settings, throwOnFail = tru
                     return backendInstances[normalizedName];
                 } else {
                     // Health check failed, invalidate cache
-                    console.warn(`VectFox: Backend ${normalizedName} health re-check failed, invalidating cache`);
+                    log.warn(`VectFox: Backend ${normalizedName} health re-check failed, invalidating cache`);
                     delete backendInstances[normalizedName];
                     backendHealthStatus[normalizedName] = false;
                     delete backendHealthTimestamps[normalizedName];
                 }
             } catch (error) {
-                console.warn(`VectFox: Backend ${normalizedName} health re-check error:`, error.message);
+                log.warn(`VectFox: Backend ${normalizedName} health re-check error:`, error.message);
                 recordHealthCheck(normalizedName, false); // VEC-18: Record failed health check
                 recordError(normalizedName, error); // VEC-18: Record error
                 delete backendInstances[normalizedName];
@@ -309,11 +310,11 @@ export async function initializeBackend(backendName, settings, throwOnFail = tru
         if (throwOnFail) {
             throw new Error(`Unknown backend: ${backendName} (normalized: ${normalizedName}). Available: ${Object.keys(BACKENDS).join(', ')}`);
         }
-        console.warn(`VectFox: Unknown backend: ${backendName}`);
+        log.warn(`VectFox: Unknown backend: ${backendName}`);
         return null;
     }
 
-    console.log(`VectFox: Initializing ${normalizedName} backend${backendName !== normalizedName ? ` (from alias: ${backendName})` : ''}...`);
+    log.lifecycle(`VectFox: Initializing ${normalizedName} backend${backendName !== normalizedName ? ` (from alias: ${backendName})` : ''}...`);
 
     try {
         // Create and initialize new backend
@@ -328,7 +329,7 @@ export async function initializeBackend(backendName, settings, throwOnFail = tru
             if (throwOnFail) {
                 throw new Error(`Backend ${normalizedName} failed health check`);
             }
-            console.warn(`VectFox: Backend ${normalizedName} failed health check, marking as unavailable`);
+            log.warn(`VectFox: Backend ${normalizedName} failed health check, marking as unavailable`);
             return null;
         }
 
@@ -338,7 +339,7 @@ export async function initializeBackend(backendName, settings, throwOnFail = tru
         backendAccessTimestamps[normalizedName] = Date.now(); // VEC-25: Track access time
         backendHealthTimestamps[normalizedName] = Date.now(); // VEC-33: Track health verification time
 
-        console.log(`VectFox: Successfully initialized ${normalizedName} backend`);
+        log.lifecycle(`VectFox: Successfully initialized ${normalizedName} backend`);
         return backend;
     } catch (error) {
         backendHealthStatus[normalizedName] = false;
@@ -347,7 +348,7 @@ export async function initializeBackend(backendName, settings, throwOnFail = tru
         if (throwOnFail) {
             throw error;
         }
-        console.warn(`VectFox: Failed to initialize ${normalizedName} backend:`, error.message);
+        log.warn(`VectFox: Failed to initialize ${normalizedName} backend:`, error.message);
         return null;
     }
 }
@@ -419,7 +420,7 @@ export function resetBackendHealth(backendName = null) {
         delete backendHealthStatus[normalizedName];
         delete backendInstances[normalizedName];
         delete backendHealthTimestamps[normalizedName]; // VEC-33
-        console.log(`VectFox: Reset backend health status for ${normalizedName}${backendName !== normalizedName ? ` (alias: ${backendName})` : ''}`);
+        log.lifecycle(`VectFox: Reset backend health status for ${normalizedName}${backendName !== normalizedName ? ` (alias: ${backendName})` : ''}`);
     } else {
         // Reset all
         for (const name of Object.keys(backendHealthStatus)) {
@@ -427,7 +428,7 @@ export function resetBackendHealth(backendName = null) {
             delete backendInstances[name];
             delete backendHealthTimestamps[name]; // VEC-33
         }
-        console.log('VectFox: Reset backend health status for all backends');
+        log.lifecycle('VectFox: Reset backend health status for all backends');
     }
 }
 
@@ -445,7 +446,7 @@ export function invalidateBackendHealth(backendName, error = null) {
         backendHealthStatus[normalizedName] = false;
         delete backendHealthTimestamps[normalizedName];
         // Keep the instance but mark as unhealthy - next getBackend call will re-check
-        console.warn(`VectFox: Invalidated health cache for ${normalizedName} due to operation error${error ? `: ${error.message || error}` : ''}`);
+        log.warn(`VectFox: Invalidated health cache for ${normalizedName} due to operation error${error ? `: ${error.message || error}` : ''}`);
     }
 }
 

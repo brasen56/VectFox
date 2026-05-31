@@ -3,7 +3,15 @@
  * Verifies determinism, collision rate, and tokenizer reuse.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// sparse-vector-encoder.js → bm25-scorer.js → core/log.js → ../../../../extensions.js
+// (a SillyTavern host path that doesn't resolve under vitest). Mock it.
+vi.mock('../../../../extensions.js', () => ({
+    extension_settings: { vectfox: {} },
+    getContext: vi.fn(() => ({ chat: [], characterId: null })),
+}));
+
 import {
     encodeSparseVector,
     encodeSparseQuery,

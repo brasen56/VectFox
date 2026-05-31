@@ -35,6 +35,7 @@ import { throwIfModelConfigError } from '../core/model-http-errors.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { getQdrantApiKey } from '../core/api-keys.js';
+import { log } from '../core/log.js';
 
 const BACKEND_TYPE = 'qdrant';
 
@@ -46,7 +47,7 @@ function _warnDimensionMismatch(errorBody) {
     const match = errorBody.match(/expected dim[: ]+(\d+)[^0-9]+(\d+)/i);
     const detail = match ? `Collection needs ${match[1]}-dim vectors; current provider generates ${match[2]}-dim.` : 'Vector dimension mismatch.';
     const msg = `${detail} Re-index the collection or switch back to the original embedding provider.`;
-    console.error('[VectFox] Dimension mismatch — aborting fallback chain:', msg);
+    log.error('[VectFox] Dimension mismatch — aborting fallback chain:', msg);
     // toastr is global in the ST browser context
     if (typeof toastr !== 'undefined') {
         toastr.error(msg, 'Embedding Dimension Mismatch', { timeOut: 10000 });
@@ -137,7 +138,7 @@ export class QdrantBackend extends VectorBackend {
                 host: null,
                 port: null,
             };
-            console.log('VectFox: Initializing Qdrant Cloud:', config.url, legacyPlaintext ? '(using legacy plaintext key — will migrate)' : '(plugin resolves key from secret_state)');
+            log.lifecycle('VectFox: Initializing Qdrant Cloud:', config.url, legacyPlaintext ? '(using legacy plaintext key — will migrate)' : '(plugin resolves key from secret_state)');
         } else {
             // Local mode: use host and port
             config = {
@@ -147,10 +148,10 @@ export class QdrantBackend extends VectorBackend {
                 url: null,
                 apiKey: null,
             };
-            console.log('VectFox: Initializing local Qdrant:', `${config.host}:${config.port}`);
+            log.lifecycle('VectFox: Initializing local Qdrant:', `${config.host}:${config.port}`);
         }
 
-        console.log('VectFox: Sending Qdrant config to Similharity plugin:', JSON.stringify(config));
+        log.lifecycle('VectFox: Sending Qdrant config to Similharity plugin:', JSON.stringify({ ...config, apiKey: config.apiKey ? '***redacted***' : undefined }));
 
         const response = await fetch('/api/plugins/similharity/backend/init/qdrant', {
             method: 'POST',
@@ -164,8 +165,8 @@ export class QdrantBackend extends VectorBackend {
         }
 
         const responseData = await response.json().catch(() => ({}));
-        console.log('VectFox: Qdrant initialization response:', responseData);
-        console.log('VectFox: Using Qdrant backend (production-grade vector search)');
+        log.lifecycle('VectFox: Qdrant initialization response:', responseData);
+        log.lifecycle('VectFox: Using Qdrant backend (production-grade vector search)');
     }
 
     async healthCheck() {
@@ -179,7 +180,7 @@ export class QdrantBackend extends VectorBackend {
             const data = await response.json();
             return data.healthy === true;
         } catch (error) {
-            console.error('[Qdrant] Health check failed:', error);
+            log.error('[Qdrant] Health check failed:', error);
             return false;
         }
     }
@@ -244,7 +245,7 @@ export class QdrantBackend extends VectorBackend {
         }
 
         // Fallback: assume it's a chat with raw ID
-        console.warn('VectFox: Unknown collection ID format:', collectionId);
+        log.warn('VectFox: Unknown collection ID format:', collectionId);
         return {
             type: 'chat',
             sourceId: collectionId
@@ -307,7 +308,7 @@ export class QdrantBackend extends VectorBackend {
             batches.push(items.slice(i, i + BATCH_SIZE));
         }
 
-        console.log(`VectFox Qdrant: Inserting ${items.length} vectors in ${batches.length} batch(es) of up to ${BATCH_SIZE} items`);
+        log.verbose(`VectFox Qdrant: Inserting ${items.length} vectors in ${batches.length} batch(es) of up to ${BATCH_SIZE} items`);
 
         // Process each batch
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
@@ -396,7 +397,7 @@ export class QdrantBackend extends VectorBackend {
                 throw new Error(`[Qdrant] Failed to insert ${items.length} vectors into ${actualCollectionId}: ${response.status} ${response.statusText} - ${errorBody}`);
             }
 
-            console.log(`VectFox Qdrant: Batch ${batchNum}/${batches.length} completed (${batch.length} vectors)`);
+            log.verbose(`VectFox Qdrant: Batch ${batchNum}/${batches.length} completed (${batch.length} vectors)`);
         }
         try {
             // Dynamic import to avoid circular dependency
@@ -410,11 +411,11 @@ export class QdrantBackend extends VectorBackend {
             // to the standard backend in the badge logic.
             registerCollection(buildRegistryKey(collectionId, settings));
         } catch (e) {
-            console.warn('VectFox: Failed to register collection after Qdrant insert:', e);
+            log.warn('VectFox: Failed to register collection after Qdrant insert:', e);
         }
 
         const mode = settings.qdrant_multitenancy ? 'multitenancy' : 'separate';
-        console.log(`VectFox Qdrant: Inserted ${items.length} vectors into ${actualCollectionId} (${mode} mode, content_type: ${strippedCollectionId})`);
+        log.lifecycle(`VectFox Qdrant: Inserted ${items.length} vectors into ${actualCollectionId} (${mode} mode, content_type: ${strippedCollectionId})`);
     }
 
     async deleteVectorItems(collectionId, hashes, settings) {
@@ -472,7 +473,7 @@ export class QdrantBackend extends VectorBackend {
         } else if (searchText?.trim()) {
             body.searchText = searchText;
         } else {
-            console.warn('[Qdrant] No queryVector or searchText provided');
+            log.warn('[Qdrant] No queryVector or searchText provided');
             return { hashes: [], metadata: [] };
         }
 
@@ -495,14 +496,14 @@ export class QdrantBackend extends VectorBackend {
             });
         } catch (error) {
             const failMs = (performance.now() - tNetStart).toFixed(1);
-            console.warn(`[Qdrant timing] queryCollection FAILED after ${failMs}ms (exception): ${error.message}. ${_embedTimeoutHint(settings)}`);
+            log.warn(`[Qdrant timing] queryCollection FAILED after ${failMs}ms (exception): ${error.message}. ${_embedTimeoutHint(settings)}`);
             throw error;
         }
 
         if (!response.ok) {
             const errorBody = await response.text().catch(() => 'No response body');
             const failMs = (performance.now() - tNetStart).toFixed(1);
-            console.warn(`[Qdrant timing] queryCollection FAILED after ${failMs}ms (HTTP ${response.status}). ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 300)}`);
+            log.warn(`[Qdrant timing] queryCollection FAILED after ${failMs}ms (HTTP ${response.status}). ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 300)}`);
             throwIfModelConfigError({
                 contextLabel: 'Embedding',
                 provider: settings.source,
@@ -515,9 +516,9 @@ export class QdrantBackend extends VectorBackend {
         }
 
         const data = await response.json();
-        if (settings.eventbase_debug_logging) {
+        if (log.enabled('verbose')) {
             const totalMs = (performance.now() - tNetStart).toFixed(1);
-            console.log(`[Qdrant timing] queryCollection total=${totalMs}ms (incl. server-side embed via '${settings.source || 'transformers'}'), results=${data.results?.length || 0}`);
+            log.verbose(`[Qdrant timing] queryCollection total=${totalMs}ms (incl. server-side embed via '${settings.source || 'transformers'}'), results=${data.results?.length || 0}`);
         }
 
         // Format results to match expected output
@@ -573,7 +574,7 @@ export class QdrantBackend extends VectorBackend {
                 } else if (searchText?.trim()) {
                     body.searchText = searchText;
                 } else {
-                    console.warn(`[Qdrant] No queryVector or searchText for ${collectionId}`);
+                    log.warn(`[Qdrant] No queryVector or searchText for ${collectionId}`);
                     results[collectionId] = { hashes: [], metadata: [] };
                     continue;
                 }
@@ -609,11 +610,11 @@ export class QdrantBackend extends VectorBackend {
                 } else {
                     const errorBody = await response.text().catch(() => 'No response body');
                     const errorMsg = `${response.status} ${response.statusText} - ${errorBody}`;
-                    console.error(`VectFox: Query failed for ${collectionId}: ${errorMsg}`);
+                    log.error(`VectFox: Query failed for ${collectionId}: ${errorMsg}`);
                     results[collectionId] = { hashes: [], metadata: [], error: errorMsg };
                 }
             } catch (error) {
-                console.error(`Failed to query collection ${collectionId}:`, error);
+                log.error(`Failed to query collection ${collectionId}:`, error);
                 results[collectionId] = { hashes: [], metadata: [], error: error.message };
             }
         }
@@ -649,7 +650,7 @@ export class QdrantBackend extends VectorBackend {
             throw new Error(`[Qdrant] Failed to purge collection ${collectionId}: ${response.status} ${response.statusText} - ${errorBody}`);
         }
 
-        console.log(`VectFox Qdrant: Purged ${actualCollectionId}`);
+        log.lifecycle(`VectFox Qdrant: Purged ${actualCollectionId}`);
     }
 
     async purgeFileVectorIndex(collectionId, settings) {
@@ -658,7 +659,7 @@ export class QdrantBackend extends VectorBackend {
 
     async purgeAllVectorIndexes(settings) {
         // Note: With separate collections per content type, we need to purge each collection individually
-        console.warn('VectFox: purgeAllVectorIndexes now requires calling purgeVectorIndex for each collection');
+        log.warn('VectFox: purgeAllVectorIndexes now requires calling purgeVectorIndex for each collection');
         throw new Error('purgeAllVectorIndexes requires collection IDs - call purgeVectorIndex for each collection instead');
     }
 
@@ -843,14 +844,14 @@ export class QdrantBackend extends VectorBackend {
             const { detectTokenizerMismatch, showTokenizerMismatchModal, applyTokenizerRevert, openCjkTokenizerSetting } = await import('../core/tokenizer-lock.js');
             const mismatch = await detectTokenizerMismatch(settings, actualCollectionId);
             if (mismatch) {
-                const debugLog = settings?.eventbase_debug_logging;
-                if (debugLog) console.log(`[TokenizerLock] Mismatch: collection=${mismatch.saved}, current=${mismatch.current} — prompting user`);
+                const debugLog = log.enabled('lifecycle');
+                if (debugLog) log.lifecycle(`[TokenizerLock] Mismatch: collection=${mismatch.saved}, current=${mismatch.current} — prompting user`);
                 const choice = await showTokenizerMismatchModal(mismatch, actualCollectionId);
                 if (choice === 'revert') {
-                    if (debugLog) console.log(`[TokenizerLock] User chose: Revert to ${mismatch.saved}`);
+                    if (debugLog) log.lifecycle(`[TokenizerLock] User chose: Revert to ${mismatch.saved}`);
                     await applyTokenizerRevert(mismatch.saved, settings);
                 } else if (choice === 'settings' || choice === 'cancel') {
-                    if (debugLog) console.log(`[TokenizerLock] User chose: ${choice === 'settings' ? 'Open Settings' : 'Cancel'} — aborting query`);
+                    if (debugLog) log.lifecycle(`[TokenizerLock] User chose: ${choice === 'settings' ? 'Open Settings' : 'Cancel'} — aborting query`);
                     // Abort the in-flight ST generation so it doesn't continue with
                     // a broken query. Without this the user has to hit ST's Stop
                     // button manually after dismissing the modal.
@@ -858,7 +859,7 @@ export class QdrantBackend extends VectorBackend {
                         const { stopGeneration } = await import('../../../../../script.js');
                         stopGeneration();
                     } catch (e) {
-                        console.warn('[Qdrant] stopGeneration() failed:', e?.message);
+                        log.warn('[Qdrant] stopGeneration() failed:', e?.message);
                     }
                     if (choice === 'settings') openCjkTokenizerSetting();
                     return { hashes: [], metadata: [] };
@@ -867,7 +868,7 @@ export class QdrantBackend extends VectorBackend {
             const { encodeSparseQuery } = await import('../core/sparse-vector-encoder.js');
             sparseQueryVector = encodeSparseQuery(searchText);
         } catch (error) {
-            console.warn('[Qdrant] sparse query setup failed:', error?.message);
+            log.warn('[Qdrant] sparse query setup failed:', error?.message);
             return this.queryCollection(collectionId, searchText, topK, settings);
         }
 
@@ -901,14 +902,14 @@ export class QdrantBackend extends VectorBackend {
             body.filters = mergedFilters;
         }
 
-        if (settings.eventbase_debug_logging) {
+        if (log.enabled('verbose')) {
             const preview = String(searchText || '').replace(/\s+/g, ' ').slice(0, 280);
             try {
                 const { tokenize } = await import('../core/bm25-scorer.js');
                 const terms = [...new Set(tokenize(searchText, { dedupe: false }))];
-                console.log(`[EventBase] Hybrid request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, terms=[${terms.join(', ')}], preview="${preview}"`);
+                log.verbose(`[EventBase] Hybrid request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, terms=[${terms.join(', ')}], preview="${preview}"`);
             } catch {
-                console.log(`[EventBase] Hybrid request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, preview="${preview}"`);
+                log.verbose(`[EventBase] Hybrid request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, preview="${preview}"`);
             }
         }
 
@@ -924,7 +925,7 @@ export class QdrantBackend extends VectorBackend {
             if (response.ok) {
                 const data = await response.json();
                 const totalMs = (performance.now() - tNetStart).toFixed(1);
-                console.log(`[Qdrant timing] total=${totalMs}ms, results=${data.results?.length || 0}`);
+                log.verbose(`[Qdrant timing] total=${totalMs}ms, results=${data.results?.length || 0}`);
 
                 return {
                     hashes: data.results.map(r => r.hash),
@@ -948,10 +949,10 @@ export class QdrantBackend extends VectorBackend {
                 _warnDimensionMismatch(errorBody);
                 return { hashes: [], metadata: [] };
             }
-            console.warn(`[Qdrant timing] hybridQuery FAILED after ${failMs}ms (HTTP ${response.status}), falling back to vector-only. ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 500)}`);
+            log.warn(`[Qdrant timing] hybridQuery FAILED after ${failMs}ms (HTTP ${response.status}), falling back to vector-only. ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 500)}`);
         } catch (error) {
             const failMs = (performance.now() - tNetStart).toFixed(1);
-            console.warn(`[Qdrant timing] hybridQuery FAILED after ${failMs}ms (exception): ${error.message}. ${_embedTimeoutHint(settings)}`);
+            log.warn(`[Qdrant timing] hybridQuery FAILED after ${failMs}ms (exception): ${error.message}. ${_embedTimeoutHint(settings)}`);
         }
 
         return this.queryCollection(collectionId, searchText, topK, settings);
@@ -993,14 +994,14 @@ export class QdrantBackend extends VectorBackend {
             const { detectTokenizerMismatch, showTokenizerMismatchModal, applyTokenizerRevert, openCjkTokenizerSetting } = await import('../core/tokenizer-lock.js');
             const mismatch = await detectTokenizerMismatch(settings, actualCollectionId);
             if (mismatch) {
-                const debugLog = settings?.eventbase_debug_logging;
-                if (debugLog) console.log(`[TokenizerLock] Mismatch: collection=${mismatch.saved}, current=${mismatch.current} — prompting user`);
+                const debugLog = log.enabled('lifecycle');
+                if (debugLog) log.lifecycle(`[TokenizerLock] Mismatch: collection=${mismatch.saved}, current=${mismatch.current} — prompting user`);
                 const choice = await showTokenizerMismatchModal(mismatch, actualCollectionId);
                 if (choice === 'revert') {
-                    if (debugLog) console.log(`[TokenizerLock] User chose: Revert to ${mismatch.saved}`);
+                    if (debugLog) log.lifecycle(`[TokenizerLock] User chose: Revert to ${mismatch.saved}`);
                     await applyTokenizerRevert(mismatch.saved, settings);
                 } else if (choice === 'settings' || choice === 'cancel') {
-                    if (debugLog) console.log(`[TokenizerLock] User chose: ${choice === 'settings' ? 'Open Settings' : 'Cancel'} — aborting query`);
+                    if (debugLog) log.lifecycle(`[TokenizerLock] User chose: ${choice === 'settings' ? 'Open Settings' : 'Cancel'} — aborting query`);
                     // Abort the in-flight ST generation so it doesn't continue with
                     // a broken query. Without this the user has to hit ST's Stop
                     // button manually after dismissing the modal.
@@ -1008,7 +1009,7 @@ export class QdrantBackend extends VectorBackend {
                         const { stopGeneration } = await import('../../../../../script.js');
                         stopGeneration();
                     } catch (e) {
-                        console.warn('[Qdrant] stopGeneration() failed:', e?.message);
+                        log.warn('[Qdrant] stopGeneration() failed:', e?.message);
                     }
                     if (choice === 'settings') openCjkTokenizerSetting();
                     return { hashes: [], metadata: [] };
@@ -1017,7 +1018,7 @@ export class QdrantBackend extends VectorBackend {
             const { encodeSparseQuery } = await import('../core/sparse-vector-encoder.js');
             sparseQueryVector = encodeSparseQuery(searchText);
         } catch (error) {
-            console.warn('[Qdrant] sparse query setup failed (rerank path):', error?.message);
+            log.warn('[Qdrant] sparse query setup failed (rerank path):', error?.message);
             return this.queryCollection(collectionId, searchText, topK, settings);
         }
 
@@ -1046,9 +1047,9 @@ export class QdrantBackend extends VectorBackend {
             body.filters = mergedFilters;
         }
 
-        if (settings.eventbase_debug_logging) {
+        if (log.enabled('verbose')) {
             const preview = String(searchText || '').replace(/\s+/g, ' ').slice(0, 280);
-            console.log(`[EventBase] Hybrid+rerank request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, preview="${preview}"`);
+            log.verbose(`[EventBase] Hybrid+rerank request: collection=${body.collectionId}, topK=${topK}, sparse=${sparseQueryVector.indices.length} tokens, preview="${preview}"`);
         }
 
         const tNetStart = performance.now();
@@ -1063,7 +1064,7 @@ export class QdrantBackend extends VectorBackend {
             if (response.ok) {
                 const data = await response.json();
                 const totalMs = (performance.now() - tNetStart).toFixed(1);
-                console.log(`[Qdrant timing] hybrid+rerank total=${totalMs}ms, results=${data.results?.length || 0}`);
+                log.verbose(`[Qdrant timing] hybrid+rerank total=${totalMs}ms, results=${data.results?.length || 0}`);
 
                 return {
                     hashes: data.results.map(r => r.hash),
@@ -1087,10 +1088,10 @@ export class QdrantBackend extends VectorBackend {
                 _warnDimensionMismatch(errorBody);
                 return { hashes: [], metadata: [] };
             }
-            console.warn(`[Qdrant timing] hybrid+rerank FAILED after ${failMs}ms (HTTP ${response.status}), falling back to hybridQuery. ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 500)}`);
+            log.warn(`[Qdrant timing] hybrid+rerank FAILED after ${failMs}ms (HTTP ${response.status}), falling back to hybridQuery. ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 500)}`);
         } catch (error) {
             const failMs = (performance.now() - tNetStart).toFixed(1);
-            console.warn(`[Qdrant timing] hybrid+rerank FAILED after ${failMs}ms (exception): ${error.message}. ${_embedTimeoutHint(settings)}`);
+            log.warn(`[Qdrant timing] hybrid+rerank FAILED after ${failMs}ms (exception): ${error.message}. ${_embedTimeoutHint(settings)}`);
         }
 
         // Fallback: regular hybridQuery (no server-side rerank). The caller

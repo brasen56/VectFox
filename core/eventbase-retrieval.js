@@ -322,7 +322,7 @@ function _logRerankComparison(colId, queryText, native, js, nativeMs, jsMs, sett
  * @returns {Promise<{ events: object[], debug: object }>}
  */
 export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false }) {
-    const debugLog = settings.eventbase_debug_logging;
+    const debugLog = log.enabled('lifecycle');
 
     const topK = (settings.eventbase_retrieval_top_k || 8) * 2; // overfetch for re-rank
     const minImportance = settings.eventbase_retrieval_min_importance || 1;

@@ -58,8 +58,6 @@ const EVENTBASE_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_eventbase`;
  * @returns {Promise<{ eventsExtracted: number, windowsProcessed: number, windowsSkipped: number }>}
  */
 export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null, parallelWindows = 3, isAutoSync = false, suppressAutoSyncPopup = false, skipTipFallback = false }) {
-    const debugLog = settings.eventbase_debug_logging;
-    const debugVectorizing = settings.debug_vectorizing_log === true;
     const uuid = chatUUID || getChatUUID();
 
     // Respect the global collection pause toggle before doing any extraction,
@@ -87,9 +85,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     ].filter(Boolean);
     const disabledKey = candidateKeys.find(key => key && !isCollectionEnabled(key));
     if (disabledKey) {
-        if (debugLog) {
-            console.log(`[EventBase] Collection paused (key="${disabledKey}") — skipping ingestion`);
-        }
+        log.lifecycle(`[EventBase] Collection paused (key="${disabledKey}") — skipping ingestion`);
         return { eventsExtracted: 0, windowsProcessed: 0, windowsSkipped: 0 };
     }
 
@@ -161,16 +157,14 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // suppressAutoSyncPopup is set by synchronizeChat when the trigger was MESSAGE_SENT
     // (user-send mid-generation) — extraction still runs, only the toast is hidden.
     const popupAllowed = isAutoSync && !suppressAutoSyncPopup && settings.eventbase_autosync_popup !== false;
-    if (debugLog) {
-        console.log(`[EventBase Popup] auto-sync gate: isAutoSync=${isAutoSync}, suppressAutoSyncPopup=${suppressAutoSyncPopup}, eventbase_autosync_popup=${settings.eventbase_autosync_popup} → fire=${popupAllowed}`);
-    }
+    log.verbose(`[EventBase Popup] auto-sync gate: isAutoSync=${isAutoSync}, suppressAutoSyncPopup=${suppressAutoSyncPopup}, eventbase_autosync_popup=${settings.eventbase_autosync_popup} → fire=${popupAllowed}`);
     if (popupAllowed) {
         try { toastr.info('Auto-Sync: extracting events...', 'VectFox', { timeOut: 3000 }); } catch (_) {}
     }
 
-    // Always-on trace so the user can confirm auto-sync ran without enabling debugLog.
+    // Always-on trace so the user can confirm auto-sync ran without enabling debug logging.
     // popupShown=false here means popup was suppressed (e.g. MESSAGE_SENT) — extraction still runs.
-    if (isAutoSync) console.log(`[VectFox AutoSync] running — messages=${messages.length}, popupShown=${popupAllowed}`);
+    if (isAutoSync) log.lifecycle(`[VectFox AutoSync] running — messages=${messages.length}, popupShown=${popupAllowed}`);
 
     let windows = [];
     for (let start = 0; start < messages.length; start += step) {
@@ -207,15 +201,13 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
         if (typeof marker === 'number') {
             const before = windows.length;
             windows = windows.filter(w => w.start >= marker);
-            if (debugLog || before !== windows.length) {
-                console.log(`[EventBase] AutoSync marker filter: ${before} → ${windows.length} windows (marker=${marker})`);
+            if (before !== windows.length) {
+                log.lifecycle(`[EventBase] AutoSync marker filter: ${before} → ${windows.length} windows (marker=${marker})`);
             }
         }
     }
 
-    if (debugLog) {
-        console.log(`[EventBase] Ingestion: ${messages.length} messages → ${windows.length} windows (size=${windowSize}, overlap=${windowOverlap})`);
-    }
+    log.lifecycle(`[EventBase] Ingestion: ${messages.length} messages → ${windows.length} windows (size=${windowSize}, overlap=${windowOverlap})`);
 
     const showProgressModal = !isAutoSync || settings.autosync_show_progress_modal === true;
     if (showProgressModal) {
@@ -265,8 +257,8 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
         fastForwardSkipped,
         hasCollection: !!collectionId,
     });
-    if (!useTipFallback && skipTipFallback && debugLog) {
-        console.log('[EventBase] shouldUseTipFallback=false — caller explicitly opted out (skipTipFallback=true)');
+    if (!useTipFallback && skipTipFallback) {
+        log.lifecycle('[EventBase] shouldUseTipFallback=false — caller explicitly opted out (skipTipFallback=true)');
     }
     if (useTipFallback) {
         try {
@@ -281,19 +273,17 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                 }
                 if (i > 0) {
                     fastForwardSkipped = i;
-                    console.log(`[EventBase] Tip-based fast-forward: skipped ${i} window(s) already in collection (tip=${tip}), starting at window ${i}`);
+                    log.lifecycle(`[EventBase] Tip-based fast-forward: skipped ${i} window(s) already in collection (tip=${tip}), starting at window ${i}`);
                 }
             }
         } catch (e) {
-            console.warn('[EventBase] Tip-based fast-forward probe failed, will re-extract from start:', e?.message || e);
+            log.warn('[EventBase] Tip-based fast-forward probe failed, will re-extract from start:', e?.message || e);
         }
     }
 
     if (fastForwardSkipped > 0) {
         windowsSkipped = fastForwardSkipped;
-        if (debugLog) {
-            console.log(`[EventBase] Fast-forward: skipped ${fastForwardSkipped} already-extracted window(s), starting at window ${fastForwardSkipped}`);
-        }
+        log.lifecycle(`[EventBase] Fast-forward: skipped ${fastForwardSkipped} already-extracted window(s), starting at window ${fastForwardSkipped}`);
     }
     // -----------------------------------------------------------------------
     // Pipelined extract/insert loop (see plans/eventbase-extract-insert-pipeline.md).
@@ -389,17 +379,15 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                 } catch (err) {
                     // User/request cancellation is expected and should not be logged as a failure.
                     if (err?.name === 'AbortError' || abortSignal?.aborted) {
-                        if (debugLog) {
-                            console.log(`[EventBase] Window ${wIdx}: request aborted`);
-                        }
+                        log.verbose(`[EventBase] Window ${wIdx}: request aborted`);
                         return { skipped: true };
                     }
                     if (err instanceof EventBaseFatalError) throw err; // propagate
                     if (err instanceof EventBaseExtractionError) {
-                        console.warn(`[EventBase] Window ${wIdx}: extraction error (skipped) — ${err.message}`);
+                        log.warn(`[EventBase] Window ${wIdx}: extraction error (skipped) — ${err.message}`);
                         return { skipped: false, events: [] };
                     }
-                    console.warn(`[EventBase] Window ${wIdx}: unexpected error (skipped) — ${err.message}`);
+                    log.warn(`[EventBase] Window ${wIdx}: unexpected error (skipped) — ${err.message}`);
                     return { skipped: false, events: [] };
                 }
 
@@ -408,8 +396,8 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
 
                 // Filter by minimum importance
                 const toStore = annotated.filter(e => e.importance >= minImportanceStore);
-                if (debugLog && toStore.length < annotated.length) {
-                    console.log(`[EventBase] Window ${wIdx}: dropped ${annotated.length - toStore.length} event(s) below minImportance=${minImportanceStore}`);
+                if (toStore.length < annotated.length) {
+                    log.verbose(`[EventBase] Window ${wIdx}: dropped ${annotated.length - toStore.length} event(s) below minImportance=${minImportanceStore}`);
                 }
 
                 return { skipped: false, events: toStore, sourceHashes, windowEnd: win.end };
@@ -481,7 +469,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                 // See plans/embedding-resilience-hedge-and-diagnostics.md §6.5.
                 if (err?.isHedgeFatal === true) throw err;
                 lastErr = err;
-                console.warn(`[EventBase] Insert batch starting at window ${batchFirstIdx} attempt ${attempt}/3 failed: ${err?.message || err}`);
+                log.warn(`[EventBase] Insert batch starting at window ${batchFirstIdx} attempt ${attempt}/3 failed: ${err?.message || err}`);
                 if (attempt < 3) {
                     // Backoff bumped from 500/1000ms to 5s/10s. The shorter delays
                     // were too aggressive for the common failure mode we hit in
@@ -558,9 +546,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                     tally.fatalError = err;
                     return tally; // coordinator handles the fatal
                 }
-                if (debugVectorizing || debugLog) {
-                    console.warn('[EventBase] Batch window error:', err?.message || err);
-                }
+                log.warn('[EventBase] Batch window error:', err?.message || err);
             } else {
                 if (result.value?.skipped) {
                     tally.windowsSkipped++;
@@ -779,7 +765,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
             // plus whatever was there before." If storedCount is LESS than the
             // events we believe we inserted this run alone, something dropped.
             if (storedCount < eventsExtracted) {
-                console.warn(
+                log.warn(
                     `[EventBase] SILENT LOSS DETECTED: this run inserted ${eventsExtracted} events, ` +
                     `but the collection holds only ${storedCount} total points. At least ` +
                     `${eventsExtracted - storedCount} events were dropped between the workflow ` +
@@ -794,25 +780,19 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                     { code: 'insert_verification_failed', name: 'EventBaseFatalError' },
                 );
             }
-            if (debugLog) {
-                console.log(`[EventBase] Verification: ${eventsExtracted} inserted this run, ${storedCount} total stored.`);
-            }
+            log.lifecycle(`[EventBase] Verification: ${eventsExtracted} inserted this run, ${storedCount} total stored.`);
         } catch (verifyErr) {
             // Only re-throw our own verification failure. Network errors on the
             // verification round-trip itself shouldn't kill an otherwise-successful
             // run — they're advisory only.
             if (verifyErr?.code === 'insert_verification_failed') throw verifyErr;
-            if (debugLog) {
-                console.warn('[EventBase] Verification probe failed (advisory, not fatal):', verifyErr?.message || verifyErr);
-            }
+            log.warn('[EventBase] Verification probe failed (advisory, not fatal):', verifyErr?.message || verifyErr);
         }
     }
 
     progressTracker.complete(true, `EventBase: extracted ${eventsExtracted} event(s) from ${windowsProcessed} window(s)`);
 
-    if (debugLog) {
-        console.log(`[EventBase] Ingestion complete: extracted=${eventsExtracted}, processed=${windowsProcessed}, skipped=${windowsSkipped}`);
-    }
+    log.lifecycle(`[EventBase] Ingestion complete: extracted=${eventsExtracted}, processed=${windowsProcessed}, skipped=${windowsSkipped}`);
 
     // Record the window size used for this successful run. Vectorize Content →
     // Continue compares against this on the next click to detect window-size
@@ -846,10 +826,9 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
  * collections have no triggers/conditions and would be BLOCKED by the activation filter.
  *
  * @param {string} currentChatId
- * @param {boolean} debugLog
  * @returns {{ collectionId: string, registryKey: string }[]}
  */
-function _gatherArchiveEventCollections(currentChatId, debugLog) {
+function _gatherArchiveEventCollections(currentChatId) {
     if (!currentChatId) return [];
     const registry = getCollectionRegistry();
     const results = [];
@@ -865,13 +844,13 @@ function _gatherArchiveEventCollections(currentChatId, debugLog) {
 
         const pausedKey = candidateKeys.find(key => !isCollectionEnabled(key));
         if (pausedKey) {
-            if (debugLog) console.log(`[EventBase] Archive event collection skipped (paused: "${pausedKey}")`);
+            log.trace(`[EventBase] Archive event collection skipped (paused: "${pausedKey}")`);
             continue;
         }
 
         const isLocked = candidateKeys.some(key => isCollectionLockedToChat(key, currentChatId));
         if (!isLocked) {
-            if (debugLog) console.log(`[EventBase] Archive event collection skipped (not locked to chat): ${colId}`);
+            log.trace(`[EventBase] Archive event collection skipped (not locked to chat): ${colId}`);
             continue;
         }
 
@@ -890,10 +869,9 @@ function _gatherArchiveEventCollections(currentChatId, debugLog) {
  * branching/duplicating a chat).
  *
  * @param {string} currentChatId
- * @param {boolean} debugLog
  * @returns {{ collectionId: string, registryKey: string }[]}
  */
-function _gatherLockedEventBaseCollections(currentChatId, debugLog) {
+function _gatherLockedEventBaseCollections(currentChatId) {
     if (!currentChatId) return [];
     const registry = getCollectionRegistry();
     const results = [];
@@ -908,13 +886,13 @@ function _gatherLockedEventBaseCollections(currentChatId, debugLog) {
 
         const pausedKey = candidateKeys.find(key => !isCollectionEnabled(key));
         if (pausedKey) {
-            if (debugLog) console.log(`[EventBase] Live collection skipped (paused: "${pausedKey}")`);
+            log.trace(`[EventBase] Live collection skipped (paused: "${pausedKey}")`);
             continue;
         }
 
         const isLocked = candidateKeys.some(key => isCollectionLockedToChat(key, currentChatId));
         if (!isLocked) {
-            if (debugLog) console.log(`[EventBase] Live collection skipped (not locked to chat): ${colId}`);
+            log.trace(`[EventBase] Live collection skipped (not locked to chat): ${colId}`);
             continue;
         }
 
@@ -935,7 +913,6 @@ function _gatherLockedEventBaseCollections(currentChatId, debugLog) {
  * @returns {Promise<void>}
  */
 export async function runEventBaseRetrieval({ chat, searchText, settings, chatUUID, dryRun = false, testMessage = null }) {
-    const debugLog = settings.eventbase_debug_logging;
     const uuid = chatUUID || getChatUUID();
     const currentChatId = getCurrentChatId();
 
@@ -944,30 +921,24 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     // in the collection ID exists for write-side collision avoidance, not for
     // read-time activation. A user can lock any EventBase collection to the
     // current chat (e.g. after branching) and we should query it.
-    const lockedLiveCollections = _gatherLockedEventBaseCollections(currentChatId, debugLog);
+    const lockedLiveCollections = _gatherLockedEventBaseCollections(currentChatId);
     const queryEventbase = lockedLiveCollections.length > 0;
 
-    if (debugLog) {
-        console.log(`[EventBase] Live retrieval: uuid=${uuid}, lockedLiveCollections=${lockedLiveCollections.length}, ids=${JSON.stringify(lockedLiveCollections.map(c => c.collectionId))}`);
-    }
+    log.lifecycle(`[EventBase] Live retrieval: uuid=${uuid}, lockedLiveCollections=${lockedLiveCollections.length}, ids=${JSON.stringify(lockedLiveCollections.map(c => c.collectionId))}`);
 
     // --- Find archive event collections locked to this chat ---
-    const archiveCollections = _gatherArchiveEventCollections(currentChatId, debugLog);
+    const archiveCollections = _gatherArchiveEventCollections(currentChatId);
 
     if (!queryEventbase && archiveCollections.length === 0) {
-        if (debugLog) console.log('[EventBase] No live collection and no archive collections — skipping Phase A');
+        log.lifecycle('[EventBase] No live collection and no archive collections — skipping Phase A');
         if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length };
         setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }
 
-    if (debugLog) {
-        console.log(`[EventBase] Phase A: live=${queryEventbase}, archiveCollections=${archiveCollections.length}, searchText length=${searchText?.length}`);
-    }
+    log.verbose(`[EventBase] Phase A: live=${queryEventbase}, archiveCollections=${archiveCollections.length}, searchText length=${searchText?.length}`);
 
-    if (debugLog) {
-        console.log(`[EventBase Popup] on-start gate: retrieval_popup_on_start=${settings.retrieval_popup_on_start}, dryRun=${dryRun} → fire=${!!settings.retrieval_popup_on_start}`);
-    }
+    log.verbose(`[EventBase Popup] on-start gate: retrieval_popup_on_start=${settings.retrieval_popup_on_start}, dryRun=${dryRun} → fire=${!!settings.retrieval_popup_on_start}`);
     if (settings.retrieval_popup_on_start) {
         toastr.info('Retrieving context from EventBase...', 'VectFox Retrieval');
     }
@@ -980,8 +951,8 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     const keywordQuery = testMessage || lastUserMessage?.mes?.trim() || null;
     const effectiveSearchText = testMessage || searchText;
 
-    if (debugLog && keywordQuery) {
-        console.log(`[EventBase] Keyword query (user last message, ${keywordQuery.length} chars):`, keywordQuery.slice(0, 120));
+    if (keywordQuery) {
+        log.verbose(`[EventBase] Keyword query (user last message, ${keywordQuery.length} chars):`, keywordQuery.slice(0, 120));
     }
 
     // --- Query archive event collections in parallel ---
@@ -999,7 +970,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
             if (!hashes?.length) return [];
             return metadata.map((meta, i) => ({ ...meta, _hash: hashes[i] }));
         } catch (err) {
-            console.error(`[EventBase] Archive event collection query failed (${archColId}):`, err);
+            log.error(`[EventBase] Archive event collection query failed (${archColId}):`, err);
             return [];
         }
     });
@@ -1007,8 +978,8 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     const archiveResults = await Promise.all(archiveEventPromises);
     const additionalCandidates = archiveResults.flat();
 
-    if (debugLog && additionalCandidates.length > 0) {
-        console.log(`[EventBase] Queried ${archiveCollections.length} archive event collection(s) → ${additionalCandidates.length} event(s)`);
+    if (additionalCandidates.length > 0) {
+        log.verbose(`[EventBase] Queried ${archiveCollections.length} archive event collection(s) → ${additionalCandidates.length} event(s)`);
     }
 
     // Cross-chat lock: collection UUID embedded in the ID differs from the current chat UUID.
@@ -1040,15 +1011,11 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         skipContextDedup: isCrossChat,
     });
 
-    if (debugLog) {
-        console.log('[EventBase] Retrieval debug:', debug);
-    }
+    log.trace('[EventBase] Retrieval debug:', debug);
 
     if (!events?.length) {
-        if (debugLog) console.log('[EventBase] No events to inject');
-        if (debugLog) {
-            console.log(`[EventBase Popup] no-events branch gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result} → fire=${!!settings.retrieval_popup_on_result}`);
-        }
+        log.lifecycle('[EventBase] No events to inject');
+        log.verbose(`[EventBase Popup] no-events branch gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result} → fire=${!!settings.retrieval_popup_on_result}`);
         if (settings.retrieval_popup_on_result) {
             const rawCount = debug?.rawCount ?? 0;
             const msg = rawCount > 0
@@ -1065,15 +1032,13 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     let injectionText = injectionResult.text;
     const injectedCount = injectionResult.includedCount;
     if (!injectionText) {
-        if (debugLog) console.log('[EventBase] Injection text empty after formatting');
+        log.verbose('[EventBase] Injection text empty after formatting');
         if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length };
         setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }
 
-    if (debugLog) {
-        console.log(`[EventBase Popup] success gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result}, dryRun=${dryRun}, injectedCount=${injectedCount} → fire=${!!settings.retrieval_popup_on_result}`);
-    }
+    log.verbose(`[EventBase Popup] success gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result}, dryRun=${dryRun}, injectedCount=${injectedCount} → fire=${!!settings.retrieval_popup_on_result}`);
     if (settings.retrieval_popup_on_result) {
         toastr.success(`EventBase: ${injectedCount} event(s) injected`, 'VectFox Retrieval');
     }
@@ -1101,14 +1066,14 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     // Inject using the same slot mechanism as legacy chunks
     setExtensionPrompt(EVENTBASE_PROMPT_TAG, injectionText, settings.position, settings.depth, false);
 
-    if (debugLog) {
-        console.log(`[EventBase] Injected ${injectedCount} event(s) (requested ${events.length}), text length: ${injectionText.length}`);
-        console.log(`[EventBase] setExtensionPrompt tag="${EVENTBASE_PROMPT_TAG}" position=${settings.position} depth=${settings.depth}`);
+    if (log.domainEnabled('injection')) {
+        log.domain('injection', 'trace', `[EventBase] Injected ${injectedCount} event(s) (requested ${events.length}), text length: ${injectionText.length}`);
+        log.domain('injection', 'trace', `[EventBase] setExtensionPrompt tag="${EVENTBASE_PROMPT_TAG}" position=${settings.position} depth=${settings.depth}`);
         // Verify the slot is actually populated
         const slotContent = extension_prompts[EVENTBASE_PROMPT_TAG];
-        console.log(`[EventBase] Slot verification — key exists: ${EVENTBASE_PROMPT_TAG in extension_prompts}, value type: ${typeof slotContent?.value}, length: ${slotContent?.value?.length ?? slotContent?.length ?? '?'}`);
-        console.log('[EventBase] extension_prompts keys:', Object.keys(extension_prompts));
-        console.log('[EventBase] Injection preview:', injectionText.slice(0, 300));
+        log.domain('injection', 'trace', `[EventBase] Slot verification — key exists: ${EVENTBASE_PROMPT_TAG in extension_prompts}, value type: ${typeof slotContent?.value}, length: ${slotContent?.value?.length ?? slotContent?.length ?? '?'}`);
+        log.domain('injection', 'trace', '[EventBase] extension_prompts keys:', Object.keys(extension_prompts));
+        log.domain('injection', 'trace', '[EventBase] Injection preview:', injectionText.slice(0, 300));
     }
 
 }

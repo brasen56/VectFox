@@ -12,6 +12,7 @@
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { parseRegistryKey, COLLECTION_PREFIXES, parseCollectionId } from './collection-ids.js';
+import { log } from './log.js';
 
 // ============================================================================
 // COLLECTION METADATA CRUD
@@ -250,7 +251,7 @@ export function setCollectionMeta(collectionId, data) {
     };
 
     saveSettingsDebounced();
-    if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Updated metadata for collection ${collectionId}`);
+    log.trace(`VectFox: Updated metadata for collection ${collectionId}`);
 }
 
 /**
@@ -480,12 +481,12 @@ export function cleanupOrphanedMeta(actualCollectionIds) {
 
     for (const collectionId of orphaned) {
         delete extension_settings.vectfox.collections[collectionId];
-        if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Removed orphaned metadata for ${collectionId}`);
+        log.trace(`VectFox: Removed orphaned metadata for ${collectionId}`);
     }
 
     if (orphaned.length > 0) {
         saveSettingsDebounced();
-        if (extension_settings.vectfox?.eventbase_debug_logging) console.log(`VectFox: Cleaned up ${orphaned.length} orphaned metadata entries`);
+        log.lifecycle(`VectFox: Cleaned up ${orphaned.length} orphaned metadata entries`);
     }
 
     return { removed: orphaned.length, orphanedIds: orphaned };
@@ -575,7 +576,7 @@ export function setCollectionLock(collectionId, chatId) {
 
     setCollectionMeta(collectionId, update);
     _updateChatLockIndex(collectionId, chatId === null ? null : chatId, chatId === null ? '*' : null);
-    console.log(`VectFox: Collection ${collectionId} locks updated:`, update.lockedToChatIds);
+    log.lifecycle(`VectFox: Collection ${collectionId} locks updated:`, update.lockedToChatIds);
 }
 
 /**
@@ -688,7 +689,7 @@ export function setCollectionCharacterLock(collectionId, characterId) {
 
     update.lockedToCharacterIds = locks;
     setCollectionMeta(collectionId, update);
-    console.log(`VectFox: Collection ${collectionId} character locks updated:`, update.lockedToCharacterIds);
+    log.lifecycle(`VectFox: Collection ${collectionId} character locks updated:`, update.lockedToCharacterIds);
 }
 
 /**
@@ -1095,7 +1096,10 @@ async function evaluateAdvancedConditions(meta, context, collectionId) {
 export async function shouldCollectionActivate(collectionId, context) {
     const meta = getCollectionMeta(collectionId);
     const currentChatId = context?.currentChatId;
-    const debug = !!extension_settings.vectfox?.eventbase_debug_logging;
+    // Per-collection activation-filter trace logs (the `if (debug) console.log`
+    // sites below). Gated at Trace via the verbosity dropdown — no longer the
+    // dead eventbase_debug_logging flag.
+    const debug = log.enabled('trace');
 
     // Priority 1: Pause button — global disable, blocks everything
     if (meta.enabled === false) {
@@ -1163,10 +1167,10 @@ export async function filterActiveCollections(collectionIds, context) {
 
     const activeIds = results.filter(r => r.active).map(r => r.id);
 
-    if (extension_settings.vectfox?.eventbase_debug_logging) {
-        console.log(`[VECTFOX Activation Filter] Summary: ${collectionIds.length} collections → ${activeIds.length} active`);
+    if (log.enabled('trace')) {
+        log.trace(`[VECTFOX Activation Filter] Summary: ${collectionIds.length} collections → ${activeIds.length} active`);
         if (activeIds.length > 0) {
-            console.log(`[VECTFOX Activation Filter] Active collections:`, activeIds);
+            log.trace(`[VECTFOX Activation Filter] Active collections:`, activeIds);
         }
     }
 
