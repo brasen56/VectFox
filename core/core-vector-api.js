@@ -1242,7 +1242,7 @@ async function scoreResults(resultsForBoost, searchText, topK, settings, collect
     // A1 — BM25 re-rank over ANN top-K candidates only (no full corpus scan)
     const level = settings?.hybrid_keyword_level || 'balance';
     const maxKeywords = RETRIEVAL_KEYWORD_LEVELS[level]?.maxKeywords ?? 50;
-    const rawKeywords = extractQueryKeywords(searchText, maxKeywords);
+    const rawKeywords = extractQueryKeywords(searchText, maxKeywords, settings?.cjk_tokenizer_mode);
     const queryTokens = rawKeywords.map(token => isCJKToken(token) ? token : porterStemmer(token));
 
     // Optional: full-corpus IDF (A/B toggle in Core → Hybrid Search & BM25).

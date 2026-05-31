@@ -34,7 +34,9 @@ export const KANA_RE = /[぀-ゟ゠-ヿ]/;
  * extraction. \p{L} keeps accented letters (é, ñ, ç, ü, ...) and any other
  * Unicode script's letters. Global + Unicode flags.
  */
-export const LATIN_TOKEN_RE = /\p{L}[\p{L}\d'_-]{2,}/gu;
+// \p{M} keeps combining marks (Indic matras/virama, Arabic harakat, etc.)
+// so Indic/Arabic words tokenize as whole units instead of broken fragments.
+export const LATIN_TOKEN_RE = /[\p{L}\p{M}][\p{L}\p{M}\d'_-]{2,}/gu;
 
 /**
  * Non-word character class (accent-preserving) for strip-and-split
@@ -43,7 +45,7 @@ export const LATIN_TOKEN_RE = /\p{L}[\p{L}\d'_-]{2,}/gu;
  * old ASCII-only /[^\w\s]/g — identical output for ASCII text, but no longer
  * strips accents.
  */
-export const NON_WORD_RE = /[^\p{L}\p{N}_\s]/gu;
+export const NON_WORD_RE = /[^\p{L}\p{M}\p{N}_\s]/gu;
 
 /** Maps a Unicode script range to its BCP-47 locale for Intl.Segmenter. */
 const SCRIPT_LOCALE_MAP = [

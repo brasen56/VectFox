@@ -596,13 +596,22 @@ VectFox's **retrieval** path (BM25 sparse vectors + query keyword extraction) is
 | Shared primitives | `core/script-segmentation.js` — `CJK_SPAN_RE`, `CJK_CHAR_RE`, `KANA_RE`, `LATIN_TOKEN_RE`, `NON_WORD_RE`, `localeForSpan()`, `getSegmenter()` |
 | Ingest path       | `core/bm25-scorer.js` → `tokenize()` / `encodeSparseVector()` (imports the shared module)            |
 | Query path        | `core/query-keyword-extractor.js` → `extractQueryKeywords()`, `isCJKToken()` (imports the shared module) |
-| Stop-word source  | `DEFAULT_STOP_WORD_SET` from `./stop-words.js` (English + CJK lists)                                 |
+| Stop-word source  | Per-mode selection via `core/language-modes.js` (`LANGUAGE_MODES`) + `isStopWord()` in `./stop-words.js`. Each CJK-tokenizer mode declares its `stopLocales` (e.g. `korean`→`['en','ko']`); only those locale lists are consulted. English is the always-on baseline. `DEFAULT_STOP_WORD_SET` (English + CJK union) is kept only as back-compat/fallback. |
 
 ### How language neutrality works
 
 - **Space-separated scripts** (Latin, Cyrillic, Greek, Arabic, …) tokenize via Unicode-aware matchers: `LATIN_TOKEN_RE` (`\p{L}…`) for query keywords, `NON_WORD_RE` (`[^\p{L}\p{N}_\s]`) for BM25. Accents survive (`café`, `niño`, `résumé` are no longer stripped to `caf`, `nio`, `resum`).
 - **Space-less scripts** (CJK Han, Kana, Hangul, Thai, Lao, Myanmar, Khmer) are matched by `CJK_SPAN_RE`, routed to the right `Intl.Segmenter` locale by `localeForSpan()`, and fall back to bigrams when the API is unavailable.
 - **Adding a language** = one Unicode range in `CJK_SPAN_RE`/`CJK_CHAR_RE` + one `[/range/, 'locale']` entry in `SCRIPT_LOCALE_MAP`. Nothing else changes.
+- **Combining marks** (`\p{M}`) are preserved by `LATIN_TOKEN_RE`/`NON_WORD_RE`, so Indic (matras/virama) and Arabic (harakat) words tokenize as whole units instead of broken fragments.
+
+### Per-mode stop-word selection (since 2026-05-31)
+
+Stop-word filtering is **driven by the CJK Tokenizer Mode dropdown**, not a single global union. `core/language-modes.js` holds one record per mode with a `stopLocales` array; `tokenize()` (ingest) and `extractQueryKeywords()` (query) both filter via `isStopWord(token, stopLocalesForMode(mode))`. A Korean collection consults `['en','ko']` only — never the ~2200 Chinese entries it used to. Traditional vs Simplified is disambiguated purely by the `jieba_tw`/`jieba` mode split.
+
+- **Adding a language's stop list** = add `ITS_STOP_WORDS` array + one `xx: ITS_STOP_WORDS` line in `STOP_WORDS_BY_LOCALE` (`stop-words.js`) + one record in `LANGUAGE_MODES`. The dropdown, enum, and selection all derive from that array — no other edits.
+- **A stop list is additive, never required** — a mode whose `stopLocales` reference no installed list just skips the filter; text still tokenizes/indexes/searches.
+- **Migration note (A3/Qdrant only):** existing Qdrant sparse vectors were built with the old union stop list; queries now filter per-mode (always a subset of the union). The only tokens that can drift are another language's stop words appearing inside this collection's text — a coincidence given character-set separation. Not a crash, not data loss, dense search unaffected; self-heals on re-vectorize. A1/A2 (standard) recompute BM25 at query time → zero impact. No version-gating or forced re-vectorize (decision 2026-05-31).
 
 ### Officially supported vs. works-but-unofficial
 

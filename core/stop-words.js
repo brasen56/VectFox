@@ -237,3 +237,45 @@ export function createCombinedStopWordSet(extraWords = []) {
 }
 
 export const DEFAULT_STOP_WORD_SET = createCombinedStopWordSet();
+
+// ── Per-locale registry ───────────────────────────────────────────────────────
+
+/** Locale key → stop-word array. Keys are referenced by LANGUAGE_MODES.stopLocales. */
+export const STOP_WORDS_BY_LOCALE = {
+    en:        ENGLISH_STOP_WORDS,
+    ja:        JAPANESE_STOP_WORDS,
+    ko:        KOREAN_STOP_WORDS,
+    'zh-Hans': SIMPLIFIED_CHINESE_STOP_WORDS,
+    'zh-Hant': TRADITIONAL_CHINESE_STOP_WORDS,
+    // add a language: xx: ITS_STOP_WORDS  (one line)
+};
+
+const _setCache = new Map(); // locale key → Set, built lazily, memoized
+function _setFor(key) {
+    let s = _setCache.get(key);
+    if (!s && STOP_WORDS_BY_LOCALE[key]) { s = new Set(STOP_WORDS_BY_LOCALE[key]); _setCache.set(key, s); }
+    return s || null;
+}
+
+/**
+ * Returns true if `token` is a stop word in ANY of the given locale keys.
+ * No union Set is allocated — each per-locale Set is built once and memoized.
+ * @param {string} token
+ * @param {string[]} localeKeys  e.g. ['en', 'ko']
+ */
+export function isStopWord(token, localeKeys) {
+    for (const k of localeKeys) { const s = _setFor(k); if (s && s.has(token)) return true; }
+    return false;
+}
+
+/**
+ * Build a mutable union Set from a list of locale keys.
+ * Used by getCombinedStopwords (called once per settings change, not in the hot path).
+ * @param {string[]} localeKeys
+ * @returns {Set<string>}
+ */
+export function buildStopSet(localeKeys) {
+    const result = new Set();
+    for (const k of localeKeys) { const s = _setFor(k); if (s) for (const w of s) result.add(w); }
+    return result;
+}

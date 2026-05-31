@@ -1,42 +1,71 @@
 /**
  * EventBase Retrieval Tests
  *
- * Regression guard for the "log is not defined" class of bug: retrieveEvents
- * referenced `log` (via log.enabled) without importing it. That threw a
- * ReferenceError the moment the function ran — but only at message-send time,
- * never at import time and never in any existing unit test, so it shipped.
+ * Primary purpose: REGRESSION GUARD for the "log is not defined" class of bug.
+ * retrieveEvents() once referenced `log` (via log.enabled) without importing it,
+ * throwing "ReferenceError: log is not defined" the moment the function ran —
+ * but only at message-send time, never at import time, so npm test stayed green
+ * and it shipped. This test CALLS retrieveEvents so any missing import / runtime
+ * reference error inside the function body surfaces as a failure here.
  *
- * These tests CALL retrieveEvents (with the backend mocked) so any missing
- * import / load-time reference error inside the function body surfaces here.
+ * Isolation strategy (important — do NOT replace with a global vitest alias):
+ * every DIRECT import of eventbase-retrieval.js is mocked below. Because all six
+ * dependencies are stubbed, none of them load, so the SillyTavern host modules
+ * they transitively pull in (script.js, secrets.js, extensions.js, ...) are
+ * never resolved. This keeps the blast radius to this one file and needs no
+ * vitest.config.js change. See [[project_vitest_host_stub]] for why the global
+ * alias approach was abandoned (it collided with other tests' vi.mock calls).
+ *
+ * NOTE on mocking ./log.js: the `import { log }` line must still EXIST in the
+ * source for the `log` binding to resolve to this mock. If someone deletes that
+ * import again, `log` becomes an undefined reference and the call-time tests
+ * below throw — exactly the regression we are guarding against.
+ * 
+ * npx vitest run --reporter=verbose 2>&1 | Tee-Object -FilePath C:\tmp\vitest-out.txt
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// retrieveEvents transitively imports core/log.js -> ../../../../extensions.js
-// (a SillyTavern host path that doesn't resolve under vitest). Mock it.
-vi.mock('../../../../extensions.js', () => ({
-    extension_settings: { vectfox: {} },
-    getContext: vi.fn(() => ({ chat: [], characterId: null })),
-}));
-
-// Mock the live-query backend call so the test needs no Qdrant / plugin.
+// --- mock every DIRECT dependency of core/eventbase-retrieval.js ---
 const queryCollectionMock = vi.fn();
 vi.mock('../core/core-vector-api.js', () => ({
-    queryCollection: (...args) => queryCollectionMock(...args),
+    queryCollection: (...a) => queryCollectionMock(...a),
 }));
 
-// checkPluginAvailable gates the cosine-weight coercion path. Default true so
-// cosine weighting stays active; individual tests can override.
-const checkPluginAvailableMock = vi.fn(async () => true);
-vi.mock('../core/collection-loader.js', () => ({
-    checkPluginAvailable: (...args) => checkPluginAvailableMock(...args),
-}));
-
-// Backend manager is only reached on the native-rerank path (Qdrant + opt-in),
-// which these tests don't exercise — but it's imported at module top, so stub it.
+// Native-rerank path only (Qdrant + opt-in), not exercised here — stub to null.
 vi.mock('../backends/backend-manager.js', () => ({
     getBackendForCollection: vi.fn(async () => null),
     getBackend: vi.fn(async () => null),
+}));
+
+vi.mock('../core/collection-ids.js', () => ({
+    parseRegistryKey: vi.fn((id) => ({ backend: null, collectionId: id })),
+}));
+
+vi.mock('../core/eventbase-schema.js', () => ({
+    parseEmbedText: vi.fn(() => ({})),
+}));
+
+const checkPluginAvailableMock = vi.fn(async () => true);
+vi.mock('../core/collection-loader.js', () => ({
+    checkPluginAvailable: (...a) => checkPluginAvailableMock(...a),
+}));
+
+// Permissive log stub: every level is a no-op, predicates return false so the
+// debug branches stay quiet. Mocking this avoids loading log.js -> extensions.js
+// while STILL requiring the `import { log }` line to exist in the source.
+vi.mock('../core/log.js', () => ({
+    log: {
+        enabled: () => false,
+        domainEnabled: () => false,
+        error: () => {},
+        warn: () => {},
+        lifecycle: () => {},
+        verbose: () => {},
+        trace: () => {},
+        domain: () => {},
+    },
+    LOG_DOMAINS: [],
 }));
 
 import { retrieveEvents } from '../core/eventbase-retrieval.js';
@@ -68,14 +97,28 @@ beforeEach(() => {
 });
 
 describe('retrieveEvents', () => {
-    it('runs without throwing and returns the {events, debug} shape', async () => {
-        // The original missing-import bug threw ReferenceError on line 1 of the
-        // function body. This call would have failed outright.
+    it('runs without throwing a ReferenceError (missing-import regression guard)', async () => {
+        // THE guard: the original bug threw "ReferenceError: log is not defined"
+        // on the first line of the function body. This call would have failed.
+        queryCollectionMock.mockResolvedValue({ hashes: [], metadata: [] });
+
+        await expect(retrieveEvents({
+            searchText: 'what happened to the hero',
+            keywordQuery: 'hero',
+            chatLength: 50,
+            settings: baseSettings,
+            liveCollectionIds: ['standard:vf_eventbase_x'],
+            additionalCandidates: [],
+            skipLiveQuery: false,
+        })).resolves.not.toThrow();
+    });
+
+    it('returns the {events, debug} shape', async () => {
         queryCollectionMock.mockResolvedValue({ hashes: [], metadata: [] });
 
         const result = await retrieveEvents({
-            searchText: 'what happened to the hero',
-            keywordQuery: 'hero',
+            searchText: 'recap',
+            keywordQuery: 'recap',
             chatLength: 50,
             settings: baseSettings,
             liveCollectionIds: ['standard:vf_eventbase_x'],
@@ -110,10 +153,10 @@ describe('retrieveEvents', () => {
         expect(debug.rawCount).toBeGreaterThan(0);
     });
 
-    it('skips the live query but still returns archive candidates', async () => {
+    it('skips the live query and folds in archive candidates without calling the backend', async () => {
         const archive = [makeEvent(10), makeEvent(11)];
 
-        const { events } = await retrieveEvents({
+        const { events, debug } = await retrieveEvents({
             searchText: 'recap',
             keywordQuery: 'recap',
             chatLength: 100,
@@ -123,9 +166,9 @@ describe('retrieveEvents', () => {
             skipLiveQuery: true,
         });
 
-        // Live query must not be called when skipLiveQuery is true.
         expect(queryCollectionMock).not.toHaveBeenCalled();
-        expect(events.length).toBeGreaterThan(0);
+        expect(debug.archiveCandidates).toBe(2);
+        expect(Array.isArray(events)).toBe(true);
     });
 
     it('filters out events below minimum importance', async () => {

@@ -2,8 +2,9 @@
 // similharity server only receives the pre-computed sparse vector). Shares its
 // script/locale/Latin primitives with the ingest path via script-segmentation.js.
 
-import { DEFAULT_STOP_WORD_SET as STOP_WORDS } from './stop-words.js';
+import { isStopWord } from './stop-words.js';
 import { CJK_SPAN_RE, CJK_CHAR_RE, LATIN_TOKEN_RE, getSegmenter } from './script-segmentation.js';
+import { stopLocalesForMode } from './language-modes.js';
 
 export const RETRIEVAL_KEYWORD_LEVELS = {
     minimal: { label: 'Minimal — 30 keywords', maxKeywords: 30 },
@@ -24,7 +25,8 @@ export const DEFAULT_RETRIEVAL_KEYWORD_LEVEL = 'balance';
  * @param {number} [maxKeywords=50]
  * @returns {string[]}
  */
-export function extractQueryKeywords(searchText, maxKeywords = 50) {
+export function extractQueryKeywords(searchText, maxKeywords = 50, mode = null) {
+    const locales = stopLocalesForMode(mode);
     const text = searchText.toLowerCase();
 
     function tallyTokens(sourceText) {
@@ -43,7 +45,7 @@ export function extractQueryKeywords(searchText, maxKeywords = 50) {
                     const multiChar = segs.filter(s => s.isWordLike && s.segment.length >= 2);
                     if (multiChar.length > 0) {
                         for (const { segment } of multiChar) {
-                            if (!STOP_WORDS.has(segment)) {
+                            if (!isStopWord(segment, locales)) {
                                 cjkFreq.set(segment, (cjkFreq.get(segment) || 0) + 1);
                             }
                         }
@@ -55,7 +57,7 @@ export function extractQueryKeywords(searchText, maxKeywords = 50) {
             if (!usedSegmenter) {
                 for (let i = 0; i + 1 < span.length; i++) {
                     const bigram = span.slice(i, i + 2);
-                    if (!STOP_WORDS.has(bigram)) {
+                    if (!isStopWord(bigram, locales)) {
                         cjkFreq.set(bigram, (cjkFreq.get(bigram) || 0) + 1);
                     }
                 }
@@ -64,7 +66,7 @@ export function extractQueryKeywords(searchText, maxKeywords = 50) {
 
         const latinMatches = sourceText.match(LATIN_TOKEN_RE) || [];
         for (const tok of latinMatches) {
-            if (!STOP_WORDS.has(tok)) {
+            if (!isStopWord(tok, locales)) {
                 latinFreq.set(tok, (latinFreq.get(tok) || 0) + 1);
             }
         }

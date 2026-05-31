@@ -490,7 +490,7 @@ function performBM25Search(results, query, options = {}) {
     // Extract CJK-prioritized keywords then stem Latin tokens to match indexed form
     const level = settings?.hybrid_keyword_level || 'balance';
     const maxKeywords = RETRIEVAL_KEYWORD_LEVELS[level]?.maxKeywords ?? 50;
-    const rawKeywords = extractQueryKeywords(query, maxKeywords);
+    const rawKeywords = extractQueryKeywords(query, maxKeywords, settings?.cjk_tokenizer_mode);
     const queryTokens = rawKeywords.map(token => isCJKToken(token) ? token : porterStemmer(token));
     if (debugLog) console.log(`[HybridSearch] BM25 query tokens (${queryTokens.length}): [${queryTokens.join(', ')}]`);
     const scoredResults = results.map((result, idx) => {

@@ -17,8 +17,9 @@
  */
 
 import TinySegmenter from './vendor/tiny-segmenter-0.2.0.js';
-import { DEFAULT_STOP_WORD_SET } from './stop-words.js';
+import { DEFAULT_STOP_WORD_SET, isStopWord } from './stop-words.js';
 import { CJK_SPAN_RE, KANA_RE, NON_WORD_RE, getSegmenter } from './script-segmentation.js';
+import { CJK_TOKENIZER_MODES, DEFAULT_CJK_TOKENIZER_MODE, stopLocalesForMode, tokenizerForMode } from './language-modes.js';
 import { log } from './log.js';
 
 /**
@@ -31,17 +32,8 @@ const DEFAULT_K1 = 1.5;
 const DEFAULT_B = 0.75;
 const DEFAULT_DELTA = 0.5;
 
-/** CJK tokenizer modes for keyword extraction. */
-const CJK_TOKENIZER_MODES = Object.freeze({
-    intl: 'intl',
-    jieba: 'jieba',
-    jieba_tw: 'jieba_tw',
-    tiny_segmenter: 'tiny_segmenter',
-    korean: 'korean',
-    others: 'others',
-});
-
-const DEFAULT_CJK_TOKENIZER_MODE = CJK_TOKENIZER_MODES.intl;
+// CJK_TOKENIZER_MODES and DEFAULT_CJK_TOKENIZER_MODE are imported from language-modes.js
+// and re-exported below for back-compat with existing importers.
 const JIEBA_WASM_MODULE_URL = 'https://cdn.jsdelivr.net/gh/cxumol/jieba-wasm-html@gh-pages/jieba_rs_wasm.js';
 // Jieba TW (Traditional Chinese) assets — fully vendored under core/vendor/jieba/ so
 // the loader has zero network dependencies once the user picks `jieba_tw` mode.
@@ -385,9 +377,10 @@ function tokenize(text, options = {}) {
     // Combine: CJK single chars are valid tokens (skip minLength filter)
     tokens = tokens.concat(cjkTokens);
 
-    // Remove stop words
+    // Remove stop words — only for the locales this collection's mode actually uses.
     if (removeStopWords) {
-        tokens = tokens.filter(token => !STOP_WORDS.has(token));
+        const locales = stopLocalesForMode(cjkTokenizerMode);
+        tokens = tokens.filter(token => !isStopWord(token, locales));
     }
 
     // Apply Porter stemming (CJK tokens are returned unchanged by porterStemmer)
@@ -914,10 +907,11 @@ function extractCJKTokens(text) {
     if (!spans) return [];
 
     const tokens = [];
+    const _tokenizer = tokenizerForMode(cjkTokenizerMode);
     for (const span of spans) {
         // jieba mode: Chinese-only spans use Jieba if preloaded.
         // Japanese kana spans intentionally stay on Intl/tiny paths.
-        if (cjkTokenizerMode === CJK_TOKENIZER_MODES.jieba && !KANA_RE.test(span)) {
+        if (_tokenizer === 'jieba' && !KANA_RE.test(span)) {
             const jiebaTokens = _segmentWithJieba(span);
             if (jiebaTokens) {
                 for (const tok of jiebaTokens) tokens.push(tok);
@@ -926,7 +920,7 @@ function extractCJKTokens(text) {
         }
 
         // jieba_tw mode: Traditional Chinese spans use Jieba with TW dictionary if preloaded.
-        if (cjkTokenizerMode === CJK_TOKENIZER_MODES.jieba_tw && !KANA_RE.test(span)) {
+        if (_tokenizer === 'jieba_tw' && !KANA_RE.test(span)) {
             const twTokens = _segmentWithJiebaTw(span);
             if (twTokens) {
                 for (const tok of twTokens) tokens.push(tok);
@@ -935,7 +929,7 @@ function extractCJKTokens(text) {
         }
 
         // tiny-segmenter mode: only route kana-containing spans.
-        if (cjkTokenizerMode === CJK_TOKENIZER_MODES.tiny_segmenter && KANA_RE.test(span)) {
+        if (_tokenizer === 'tiny_segmenter' && KANA_RE.test(span)) {
             const tinyTokens = _segmentWithTinySegmenter(span);
             if (tinyTokens) {
                 for (const tok of tinyTokens) tokens.push(tok);

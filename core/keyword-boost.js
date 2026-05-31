@@ -1,6 +1,7 @@
 import { porterStemmer, extractCJKTokens, getCjkTokenizerMode, CJK_TOKENIZER_MODES } from './bm25-scorer.js';
 import { substituteParams } from '../../../../../script.js';
-import { DEFAULT_STOP_WORD_SET } from './stop-words.js';
+import { buildStopSet } from './stop-words.js';
+import { stopLocalesForMode } from './language-modes.js';
 
 /**
  * ============================================================================
@@ -205,7 +206,8 @@ function getEffectiveHeaderSize(config, level, settings) {
  * @returns {Set<string>} Combined stopwords set
  */
 function getCombinedStopwords(settings = null) {
-    const combined = new Set(DEFAULT_STOP_WORD_SET);
+    const mode = settings?.cjk_tokenizer_mode || getCjkTokenizerMode();
+    const combined = buildStopSet(stopLocalesForMode(mode));
 
     // Add custom stopwords if settings provided
     if (settings && settings.custom_stopwords && typeof settings.custom_stopwords === 'string') {
