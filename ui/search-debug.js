@@ -1568,17 +1568,17 @@ export function openQueryTestModal() {
                         <div style="${sectionStyle} border-color:#4a9eff;">
                             <small style="font-weight:bold; color:#4a9eff;">EventBase <span id="VectFox_qtester_meta_eb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
                             <textarea id="VectFox_qtester_output_eb" readonly rows="8"
-                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre;"></textarea>
+                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre-wrap; overflow-wrap:break-word;"></textarea>
                         </div>
                         <div style="${sectionStyle} border-color:#4dbb6e;">
                             <small style="font-weight:bold; color:#4dbb6e;">ChunkBase <span id="VectFox_qtester_meta_cb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
                             <textarea id="VectFox_qtester_output_cb" readonly rows="8"
-                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre;"></textarea>
+                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre-wrap; overflow-wrap:break-word;"></textarea>
                         </div>
                         <div style="${sectionStyle} border-color:#b06fff;">
                             <small style="font-weight:bold; color:#b06fff;">Lorebook WI <span id="VectFox_qtester_meta_lb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
                             <textarea id="VectFox_qtester_output_lb" readonly rows="8"
-                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre;"></textarea>
+                                style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre-wrap; overflow-wrap:break-word;"></textarea>
                         </div>
                     </div>
                 </div>
