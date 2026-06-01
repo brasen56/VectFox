@@ -343,7 +343,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         && settings.hybrid_native_prefer !== false
         && settings.eventbase_native_rerank === true
     );
-    const compareMode = useNativeRerank && settings.eventbase_compare_rerank === true && log.domainEnabled('rerank');
+    const compareMode = useNativeRerank && log.domainEnabled('rerank');
 
     // Detect "no vector scoring" state — Standard backend without the Similharity
     // plugin returns score=0 from the native /api/vector/query path (see

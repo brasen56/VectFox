@@ -859,13 +859,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 ${getHealthIndicatorHtml()}
                             </div>
 
-                            <label class="checkbox_label" for="VectFox_injection_debug_logging" style="margin-top: 20px;">
-                                <input type="checkbox" id="VectFox_injection_debug_logging" />
-                                <span>Debug Injection Logging</span>
-                            </label>
-                            <small class="VectFox_hint">Log injection details (ChunkBase + EventBase) to the browser console (useful for diagnosing retrieval/injection issues)</small>
-
-                            <label class="checkbox_label" for="VectFox_debug_verbosity" style="margin-top: 12px; display:block;">
+                            <label class="checkbox_label" for="VectFox_debug_verbosity" style="margin-top: 20px; display:block;">
                                 <span>Console verbosity</span>
                             </label>
                             <select id="VectFox_debug_verbosity" class="text_pole" style="width: 100%; margin-top: 4px;">
@@ -875,6 +869,12 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <option value="trace">Trace — + per-item detail (~700 lines / 100 windows)</option>
                             </select>
                             <small class="VectFox_hint">Single noise floor for all EventBase / vectorization / insert logging. Errors and warnings always log regardless. Replaces the old Debug Logging + Vectorizing toggles.</small>
+
+                            <label class="checkbox_label" for="VectFox_injection_debug_logging" style="margin-top: 12px;">
+                                <input type="checkbox" id="VectFox_injection_debug_logging" />
+                                <span>Debug Injection Logging</span>
+                            </label>
+                            <small class="VectFox_hint">Log injection details (ChunkBase + EventBase) to the browser console (useful for diagnosing retrieval/injection issues)</small>
 
                             <label class="checkbox_label" for="VectFox_debug_domain_raw_llm" style="margin-top: 12px;">
                                 <input type="checkbox" id="VectFox_debug_domain_raw_llm" />
@@ -3716,10 +3716,11 @@ function bindSettingsEvents(settings, callbacks) {
         });
 
     // Compare-mode toggle (debug-only observability for native rerank).
+    // Drives debug_domain.rerank — read by log.domainEnabled('rerank') in eventbase-retrieval.js.
     $('#VectFox_eventbase_compare_rerank')
-        .prop('checked', !!settings.eventbase_compare_rerank)
+        .prop('checked', _ensureDebugDomain().rerank === true)
         .on('change', function() {
-            settings.eventbase_compare_rerank = $(this).prop('checked');
+            _ensureDebugDomain().rerank = $(this).prop('checked');
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
