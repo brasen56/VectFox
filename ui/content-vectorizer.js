@@ -2489,6 +2489,8 @@ async function startContinueVectorization() {
         return;
     }
 
+    if (window.innerWidth <= 768) $('#vectfox_content_vectorizer_modal').fadeOut(200);
+
     // If no vectors exist yet, just run the normal vectorization
     if (currentContentType === 'chat' && (source.type === 'current' || source.type === 'file')) {
         return _runEventBaseBackfill();
@@ -2859,6 +2861,7 @@ async function startVectorization() {
                 return;
             }
         }
+        if (window.innerWidth <= 768) $('#vectfox_content_vectorizer_modal').fadeOut(200);
         return _runEventBaseBackfill({ resetCaches: true });
     }
 
@@ -2899,6 +2902,7 @@ async function startVectorization() {
         }
     }
 
+    if (window.innerWidth <= 768) $('#vectfox_content_vectorizer_modal').fadeOut(200);
     isVectorizing = true;
     activeVectorizeAbortController = new AbortController();
     updateVectorizeButtonState(true);
