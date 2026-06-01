@@ -132,6 +132,28 @@ export function closeContentVectorizer() {
 }
 
 /**
+ * Hide the Content Vectorizer modal so the progress panel is visible while work runs.
+ *
+ * On touch devices the vectorizer is a full-screen modal that would completely cover
+ * the progress bottom-sheet, so we fade it out. We deliberately use .fadeOut() (NOT
+ * closeContentVectorizer()) so the modal stays in the DOM — downstream code still reads
+ * its inputs (e.g. #vectfox_cv_parallel_windows), and closeContentVectorizer() removes
+ * it for good once the run completes.
+ *
+ * Desktop leaves the modal open; the progress panel floats in the corner and doesn't
+ * obscure it. Uses pointer/hover — NOT viewport width — so high-DPI phones whose CSS
+ * viewport can exceed 768px are still treated as touch devices.
+ *
+ * Call this only AFTER the run is committed (past the isVectorizing guard / early
+ * returns), so the modal never disappears on a path that shows no progress.
+ */
+function hideVectorizerForProgress() {
+    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
+        $('#vectfox_content_vectorizer_modal').fadeOut(200);
+    }
+}
+
+/**
  * Creates the modal HTML
  */
 function createModal() {
@@ -2489,8 +2511,6 @@ async function startContinueVectorization() {
         return;
     }
 
-    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) $('#vectfox_content_vectorizer_modal').fadeOut(200);
-
     // If no vectors exist yet, just run the normal vectorization
     if (currentContentType === 'chat' && (source.type === 'current' || source.type === 'file')) {
         return _runEventBaseBackfill();
@@ -2512,6 +2532,7 @@ async function startContinueVectorization() {
     activeVectorizeAbortController = new AbortController();
     updateVectorizeButtonState(true);
     progressTracker.setCancelHandler(() => stopActiveVectorization());
+    hideVectorizerForProgress();
 
     try {
         const { vectorizeContent } = await import('../core/content-vectorization.js');
@@ -2568,7 +2589,20 @@ async function _runEventBaseBackfill({ resetCaches = false } = {}) {
     activeVectorizeAbortController = new AbortController();
     updateVectorizeButtonState(true);
     progressTracker.setCancelHandler(() => stopActiveVectorization());
-    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) progressTracker.show('EventBase Extraction', 0, 'Windows');
+
+    // Touch devices only — desktop behavior is left exactly as it was. On mobile the
+    // vectorizer is a full-screen modal that covers the progress panel, and the
+    // workflow's own show() runs deep inside runEventBaseIngestion (after cache checks
+    // and several early-return paths). So here we show the panel upfront and fade the
+    // modal out: the bottom-sheet appears immediately and the Action-tab "Progress"
+    // button always has a panel to reopen, even on the workflow's quick-exit paths
+    // (no messages / last window already extracted). On desktop none of this runs —
+    // the panel is shown by the workflow exactly as before, in the corner, with the
+    // modal left open. (hideVectorizerForProgress() is itself touch-gated.)
+    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
+        progressTracker.show('EventBase Extraction', 0, 'Windows');
+    }
+    hideVectorizerForProgress();
 
     try {
         const { runEventBaseIngestion } = await import('../core/eventbase-workflow.js');
@@ -2862,7 +2896,6 @@ async function startVectorization() {
                 return;
             }
         }
-        if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) $('#vectfox_content_vectorizer_modal').fadeOut(200);
         return _runEventBaseBackfill({ resetCaches: true });
     }
 
@@ -2903,11 +2936,11 @@ async function startVectorization() {
         }
     }
 
-    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) $('#vectfox_content_vectorizer_modal').fadeOut(200);
     isVectorizing = true;
     activeVectorizeAbortController = new AbortController();
     updateVectorizeButtonState(true);
     progressTracker.setCancelHandler(() => stopActiveVectorization());
+    hideVectorizerForProgress();
 
     try {
         // Import the appropriate handler

@@ -282,6 +282,10 @@ export class ProgressTracker {
      */
     reopen() {
         if (!this.panel) return false;
+        // Just reveal the existing panel — no re-append. The mobile bottom-sheet rides
+        // a max z-index (mobile.css) so it already layers above any ST drawer without
+        // needing to be last in the DOM, and re-appending would replay the slide-in
+        // animation (the "flash at the top" regression). Desktop is unchanged.
         this.panel.style.display = 'block';
         this.isVisible = true;
         this.refreshCancelButton();
