@@ -147,14 +147,14 @@ export async function testConditionalActivation() {
 
         // Test: Chunk links (soft)
         const chunks = [{ hash: 1001, score: 0.8, text: 'A' }, { hash: 1002, score: 0.6, text: 'B' }];
-        const chunkMetadataMap = { 1001: { links: [{ target: '1002', type: 'soft' }] }, 1002: {} };
+        const chunkMetadataMap = { 1001: { chunkLinks: [{ targetHash: '1002', mode: 'soft' }] }, 1002: {} };
         const linkResult = processChunkLinks(chunks, chunkMetadataMap, 0.15);
         const boostedChunk = linkResult.chunks.find(c => c.hash === 1002);
         addTest('Soft Links', boostedChunk?.softLinked && boostedChunk?.score > 0.6, 'Soft-linked chunk boosted');
 
         // Test: Chunk links (hard)
         const chunks2 = [{ hash: 2001, score: 0.8, text: 'A' }];
-        const chunkMetadataMap2 = { 2001: { links: [{ target: '2002', type: 'hard' }] } };
+        const chunkMetadataMap2 = { 2001: { chunkLinks: [{ targetHash: '2002', mode: 'hard' }] } };
         const linkResult2 = processChunkLinks(chunks2, chunkMetadataMap2, 0.15);
         addTest('Hard Links', linkResult2.missingHardLinks?.includes(2002), 'Missing hard link detected');
 

@@ -103,7 +103,7 @@ const defaultCollectionMeta = {
  * CHUNK-ONLY FEATURES:
  * Only make sense at chunk-level, not collection-level.
  *
- * - links:            Hard/soft links to other chunks
+ * - chunkLinks:       Hard/soft links to other chunks ({ targetHash, mode: 'hard'|'soft' })
  *                     - hard: Target chunk MUST appear if source appears
  *                     - soft: Target chunk gets score boost if source appears
  *                     Each chunk defines its own links independently.
@@ -332,7 +332,7 @@ export function isCollectionAutoSyncEnabled(collectionId) {
 // ============================================================================
 // Chunk metadata is stored per-hash and can include:
 // - conditions: { ... }     - Conditional activation rules
-// - links: []               - Soft/hard links to other chunks
+// - chunkLinks: []          - Soft/hard links to other chunks ({ targetHash, mode })
 // - disabled: boolean       - Exclude from results
 // - isSummary: boolean      - Dual-vector summary chunk
 // - parentHash: string      - Parent chunk for summaries

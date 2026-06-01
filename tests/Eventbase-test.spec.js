@@ -50,8 +50,8 @@ import { existsSync } from 'fs';
 // This override only affects THIS test file — it doesn't mutate the config
 // for any other suite.
 // ---------------------------------------------------------------------------
-//const TEST_TARGET_URL = null;
-const TEST_TARGET_URL = 'http://localhost:8000';
+const TEST_TARGET_URL = null;
+//const TEST_TARGET_URL = 'http://localhost:8000';
 
 if (TEST_TARGET_URL) {
     test.use({ baseURL: TEST_TARGET_URL });
@@ -273,12 +273,12 @@ test.afterAll(async () => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function runTestInPage(testFn) {
+async function runTestInPage(testFn, arg) {
     const logs = [];
     const handler = msg => logs.push({ type: msg.type(), text: msg.text() });
     sharedPage.on('console', handler);
     try {
-        await sharedPage.evaluate(testFn);
+        await sharedPage.evaluate(testFn, arg);
     } catch (err) {
         logs.push({ type: 'error', text: `page.evaluate threw: ${err.message}` });
     }
@@ -3725,6 +3725,330 @@ test('TEST 019 — WI / AutoSync refresh smoke: refresh paths do not mutate lock
             } catch (cleanupErr) {
                 console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`);
             }
+        }
+    });
+    assertPassed(logs);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// TEST 020 / 021 — per-chunk override is BACKEND-FIRST (survives ext_settings wipe)
+// ═══════════════════════════════════════════════════════════════════
+//
+// Validates the read-source refactor (plans/chunk-metadata-read-source-fix.md):
+// per-chunk user overrides (context/xmlTag/keywords/conditions/...) are served
+// from the vector backend payload, NOT from extension_settings. This is the one
+// behavior the rest of the suite never checked — it asserts result COUNTS and the
+// chunk TEXT in injectionText, but never that a per-chunk OVERRIDE flows from the
+// backend, and never that it survives losing the ext_settings copy.
+//
+// Flow (per backend):
+//   1. vectorize a 1-entry lorebook (gives a real collection + chunk).
+//   2. updateChunkMetadata(hash, {context, xmlTag}) → writes the override to the
+//      BACKEND ONLY (this API does not touch ext_settings).
+//   3. queryCollection → confirm the backend SERVES the override via retrieval.
+//   4. seed an ext_settings entry, then deleteChunkMetadata → wipe it (simulates a
+//      reinstall / profile reset / second machine).
+//   5. queryCollection again → the override MUST still come back from the backend.
+//      If it vanishes, backend-first is broken (data only lived in ext_settings).
+//
+// The merge-precedence rules (backend wins over ext_settings, enabled:false
+// survives, 0 is valid, etc.) are covered by tests/chunk-metadata-read-source.test.js.
+// This pair proves the data-layer half end-to-end against a live backend.
+async function overrideBackendFirstBody({ BACKEND, LABEL }) {
+    const TEST = `${LABEL} [BackendFirst:${BACKEND}]`;
+    const base = '/scripts/extensions/third-party/VectFox/';
+    const { vectorizeContent, deleteContentCollection } = await import(base + 'core/content-vectorization.js');
+    const { deleteCollectionMeta, getChunkMetadata, saveChunkMetadata, deleteChunkMetadata } = await import(base + 'core/collection-metadata.js');
+    const { unregisterCollection } = await import(base + 'core/collection-loader.js');
+    const { updateChunkMetadata } = await import(base + 'core/core-vector-api.js');
+    const { getBackend } = await import(base + 'backends/backend-manager.js');
+    const { extension_settings } = await import('/scripts/extensions.js');
+
+    const vf = extension_settings?.vectfox;
+    if (!vf) { console.error(`${TEST} [FAIL] VectFox settings not found`); return; }
+
+    const settings = { ...vf, vector_backend: BACKEND };
+    const ts = Date.now();
+    const CTX = `VF_CTX_${ts}`;
+    const TAG = `vfmem${ts}`;
+    const testEntries = [{
+        uid: `vf_test_020_${ts}`,
+        comment: 'Glimmerwisp Conclave',
+        key: ['glimmerwisp', 'conclave'],
+        content: `The Glimmerwisp Conclave ${ts} convenes beneath the Hollow Aqueduct to debate the tideglass accords. Only sworn lanternkeepers may attend.`,
+    }];
+
+    let collectionId = null;
+    let registryKey = null;
+    try {
+        let res;
+        try {
+            res = await vectorizeContent({
+                contentType: 'lorebook',
+                source: { type: 'file', name: `__vf_playwright_test_020_${BACKEND}__`, entries: testEntries },
+                settings: { ...settings, strategy: 'per_entry', scope: 'chat' },
+            });
+        } catch (err) { console.error(`${TEST} [FAIL] vectorizeContent threw: ${err.message}`); return; }
+        if (!res?.success || !res.collectionId) { console.error(`${TEST} [FAIL] Vectorization failed`); return; }
+        collectionId = res.collectionId;
+        registryKey = `${BACKEND === 'qdrant' ? 'qdrant' : 'vectra'}:${collectionId}`;
+        console.log(`${TEST} Vectorized ${res.chunkCount} chunk(s) → ${registryKey}`);
+
+        const backend = await getBackend(settings);
+
+        // Resolve the chunk's hash via listChunks (plugin path on both backends).
+        let listResult;
+        try { listResult = await backend.listChunks(collectionId, settings, { limit: 10 }); }
+        catch (err) { console.error(`${TEST} [FAIL] listChunks threw: ${err.message}`); return; }
+        const items = listResult?.items ?? [];
+        if (!items.length) { console.error(`${TEST} [FAIL] listChunks returned 0 items`); return; }
+        const hash = items[0].hash;
+        console.log(`${TEST} Target chunk hash=${hash}`);
+
+        // (1) Write the override to the BACKEND ONLY.
+        try { await updateChunkMetadata(collectionId, hash, { context: CTX, xmlTag: TAG }, settings); }
+        catch (err) { console.error(`${TEST} [FAIL] updateChunkMetadata threw: ${err.message}`); return; }
+
+        const fetchOurChunk = async () => {
+            const q = await backend.queryCollection(collectionId, `glimmerwisp conclave hollow aqueduct tideglass ${ts}`, 10, settings);
+            const rows = q?.metadata ?? [];
+            return rows.find(m => String(m.hash) === String(hash)) || null;
+        };
+
+        // (2) Backend serves the override via retrieval.
+        let row = await fetchOurChunk();
+        if (!row) { console.error(`${TEST} [FAIL] Query did not return our chunk after override write`); return; }
+        if (row.context !== CTX || row.xmlTag !== TAG) {
+            console.error(`${TEST} [FAIL] Backend did not return the override — context="${row.context}", xmlTag="${row.xmlTag}" (expected "${CTX}"/"${TAG}")`);
+            return;
+        }
+        console.log(`${TEST} ✓ Backend serves override via retrieval (context + xmlTag present)`);
+
+        // (3) Simulate the legacy dual-write state, then WIPE ext_settings.
+        saveChunkMetadata(String(hash), { context: 'EXT_DECOY', xmlTag: 'extdecoy' });
+        deleteChunkMetadata(String(hash));
+        if (getChunkMetadata(String(hash)) !== null) { console.error(`${TEST} [FAIL] ext_settings entry not cleared`); return; }
+        console.log(`${TEST} ext_settings entry wiped (simulating reinstall) ✓`);
+
+        // (4) Backend-first: override must STILL come back from the backend.
+        row = await fetchOurChunk();
+        if (!row) { console.error(`${TEST} [FAIL] Query did not return our chunk after ext_settings wipe`); return; }
+        if (row.context !== CTX || row.xmlTag !== TAG) {
+            console.error(`${TEST} [FAIL] Override LOST after ext_settings wipe — context="${row.context}", xmlTag="${row.xmlTag}". Backend-first is NOT working (data only lived in ext_settings).`);
+            return;
+        }
+        console.log(`${TEST} [PASS] ${BACKEND}: per-chunk override is backend-first — survived ext_settings deletion`);
+    } finally {
+        try {
+            if (collectionId) {
+                await deleteContentCollection(collectionId);
+                try {
+                    const stdBackend = await getBackend({ ...vf, vector_backend: 'standard' });
+                    await stdBackend._purgeCollectionFolderForTestCleanup(collectionId, vf);
+                } catch (e) { console.warn(`${TEST} [WARN] folder-cleanup helper failed: ${e.message}`); }
+                if (registryKey) { deleteCollectionMeta(registryKey); unregisterCollection(registryKey); }
+                unregisterCollection(collectionId);
+                console.log(`${TEST} Cleanup ✓`);
+            }
+        } catch (cleanupErr) { console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`); }
+    }
+}
+
+test('TEST 020 — Qdrant: per-chunk override is backend-first (survives ext_settings wipe)', async () => {
+    await skipIfQdrantUnavailable();
+    const logs = await runTestInPage(overrideBackendFirstBody, { BACKEND: 'qdrant', LABEL: 'TEST 020' });
+    assertPassed(logs);
+});
+
+test('TEST 021 — Standard+plugin: per-chunk override is backend-first (survives ext_settings wipe)', async () => {
+    await skipIfNoPlugin();
+    const logs = await runTestInPage(overrideBackendFirstBody, { BACKEND: 'standard', LABEL: 'TEST 021' });
+    assertPassed(logs);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// TEST 022 — Injection path: per-chunk wrapping (R4) + condition filtering (R2),
+//            read backend-first, observed in the actual rearrangeChat dry-run output
+// ═══════════════════════════════════════════════════════════════════
+//
+// TEST 020/021 prove the DATA layer (backend stores+serves the override). This one
+// proves the INJECTION layer: that a per-chunk override actually changes what gets
+// injected, via the real chat-chunk pipeline rearrangeChat() → buildNestedInjectionText().
+//
+// Why a 'document' collection: rearrangeChat queries ChunkBase collections via
+// gatherCollectionsToQuery, which EXCLUDES vf_lorebook_/vf_eventbase_/vf_archiveevent_.
+// A 'document' (vf_document_) collection is a non-excluded ChunkBase collection, so it
+// flows through the conditions (R2) → links (R3) → wrapping (R4) stages and the dry-run
+// returns the formatted injectionText.
+//
+// Phases:
+//   1. R4 — set {context, xmlTag} on the backend → injectionText wraps the chunk.
+//   2. backend-first — wipe ext_settings → wrapping persists (came from the backend).
+//   3. R2 — set a guaranteed-FAIL per-chunk condition → chunk is excluded from injection.
+//
+// Standard+plugin only: the injection readers (R2/R4) are backend-agnostic — they read
+// chunk.metadata regardless of backend — and TEST 020/021 already cover that both backends
+// serve the payload. So one backend exercises the reader logic fully.
+//
+// Not covered here: position/depth (R5) placement — buildNestedInjectionText doesn't encode
+// position/depth (applied later by injectChunksIntoPrompt, non-dry-run only); R5's resolution
+// logic is covered by the vitest cascade test. Links (R3) end-to-end is left to the unit
+// test of the real processChunkLinks.
+test('TEST 022 — Standard+plugin: context/xmlTag wrapping + condition filter through retrieval (backend-first)', async () => {
+    await skipIfNoPlugin();
+    const logs = await runTestInPage(async () => {
+        const TEST = 'TEST 022 [InjectionWrap]';
+        const base = '/scripts/extensions/third-party/VectFox/';
+        const { vectorizeContent, deleteContentCollection } = await import(base + 'core/content-vectorization.js');
+        const { rearrangeChat } = await import(base + 'core/chat-vectorization.js');
+        const { updateChunkMetadata, queryCollection } = await import(base + 'core/core-vector-api.js');
+        const { getChunkMetadata, saveChunkMetadata, deleteChunkMetadata, deleteCollectionMeta, shouldCollectionActivate, setLock, setCollectionEnabled } = await import(base + 'core/collection-metadata.js');
+        const { unregisterCollection } = await import(base + 'core/collection-loader.js');
+        const { getBackend } = await import(base + 'backends/backend-manager.js');
+        const { extension_settings } = await import('/scripts/extensions.js');
+
+        const vf = extension_settings?.vectfox;
+        if (!vf) { console.error(`${TEST} [FAIL] VectFox settings not found`); return; }
+
+        const ctx = window.SillyTavern?.getContext?.() ?? window.getContext?.() ?? {};
+        const currentChatId = ctx.chatId ? String(ctx.chatId) : null;
+        if (!currentChatId) { console.warn(`${TEST} [WARN] No active chat — open a chat first`); return; }
+        const context = { currentChatId, currentCharacterId: ctx.characterId != null ? String(ctx.characterId) : null };
+        const chat = ctx.chat ?? [];
+
+        const ts = Date.now();
+        const SENTINEL = `Glimmerwhisp_${ts}`;
+        const CTX = `VF_PROMPT_CTX_${ts}`;
+        const TAG = `vfmem${ts}`;
+        const docText = `The ${SENTINEL} resonates beneath the Hollow Aqueduct, where lanternkeepers guard the tideglass accords against the drifting mist.`;
+        const testMessage = `${SENTINEL} hollow aqueduct lanternkeepers tideglass mist`;
+
+        // threshold 0 + generous topK so our single chunk always passes the similarity gate.
+        const rcSettings = { ...vf, vector_backend: 'standard', score_threshold: 0, top_k: 20, enabled_world_info: false };
+
+        let collectionId = null;
+        let registryKey = null;
+        try {
+            let res;
+            try {
+                res = await vectorizeContent({
+                    contentType: 'document',
+                    source: { type: 'paste', content: docText, name: `__vf_playwright_test_022__${ts}` },
+                    settings: { ...vf, vector_backend: 'standard', scope: 'chat' },
+                });
+            } catch (err) { console.error(`${TEST} [FAIL] vectorizeContent threw: ${err.message}`); return; }
+            if (!res?.success || !res.collectionId) { console.error(`${TEST} [FAIL] Vectorization failed`); return; }
+            collectionId = res.collectionId;
+            registryKey = `vectra:${collectionId}`;
+            console.log(`${TEST} Vectorized ${res.chunkCount} chunk(s) → ${registryKey}`);
+
+            // Make sure the collection is enabled AND active for this chat so rearrangeChat queries it.
+            try { setCollectionEnabled(registryKey, true); } catch {}
+            if (!(await shouldCollectionActivate(registryKey, context))) {
+                const lr = setLock(registryKey, { kind: 'chat', op: 'add', target: currentChatId }, { settings: vf });
+                if (!lr?.success || !(await shouldCollectionActivate(registryKey, context))) {
+                    console.error(`${TEST} [FAIL] Document collection not active for chat — cannot exercise rearrangeChat`); return;
+                }
+            }
+
+            const backend = await getBackend({ ...vf, vector_backend: 'standard' });
+            const list = await backend.listChunks(collectionId, vf, { limit: 20 });
+            const items = list?.items ?? [];
+            const target = items.find(i => (i.text || '').includes(SENTINEL)) || items[0];
+            if (!target) { console.error(`${TEST} [FAIL] listChunks returned no chunk`); return; }
+            const hash = target.hash;
+            console.log(`${TEST} Target chunk hash=${hash}`);
+
+            const dryInject = async () => {
+                const r = await rearrangeChat(chat, rcSettings, 'normal', { dryRun: true, testMessage });
+                return (r && r.injectionText) || '';
+            };
+
+            // Diagnostics: which query path will rearrangeChat take?
+            console.log(`${TEST} [DIAG] keyword_scoring_method=${rcSettings.keyword_scoring_method}, hybrid_native_prefer=${rcSettings.hybrid_native_prefer}, bm25_use_corpus_idf=${rcSettings.bm25_use_corpus_idf}`);
+
+            // ── Phase 1: write the override to the backend ──
+            await updateChunkMetadata(collectionId, hash, { context: CTX, xmlTag: TAG }, rcSettings);
+
+            // Phase 1a — does the BACKEND itself serve the override? (mirrors TEST 021)
+            {
+                const direct = await backend.queryCollection(collectionId, testMessage, 20, rcSettings);
+                const drow = (direct?.metadata ?? []).find(m => String(m.hash) === String(hash));
+                console.log(`${TEST} [DIAG] backend.queryCollection: found=${!!drow}, context=${JSON.stringify(drow?.context)}, xmlTag=${JSON.stringify(drow?.xmlTag)}`);
+                if (!drow || drow.context !== CTX || drow.xmlTag !== TAG) {
+                    console.error(`${TEST} [FAIL] Phase 1a: backend.queryCollection did NOT return the override — persistence/query issue at the backend layer (context=${JSON.stringify(drow?.context)}).`);
+                    return;
+                }
+                console.log(`${TEST} Phase 1a ✓ backend serves override directly`);
+            }
+
+            // Phase 1b — does the core queryCollection path (BM25/hybrid) preserve it?
+            {
+                const core = await queryCollection(registryKey, testMessage, 20, rcSettings);
+                const crow = (core?.metadata ?? []).find(m => String(m.hash) === String(hash));
+                console.log(`${TEST} [DIAG] core queryCollection: found=${!!crow}, context=${JSON.stringify(crow?.context)}, xmlTag=${JSON.stringify(crow?.xmlTag)}`);
+                if (!crow || crow.context !== CTX || crow.xmlTag !== TAG) {
+                    console.error(`${TEST} [FAIL] Phase 1b: core queryCollection (BM25/hybrid re-rank) DROPPED the override — context=${JSON.stringify(crow?.context)}. This is where it's lost.`);
+                    return;
+                }
+                console.log(`${TEST} Phase 1b ✓ core query path preserves override`);
+            }
+
+            // Phase 1c — does the actual injection wrap the chunk?
+            let inj = await dryInject();
+            // DIAG: inspect the chunk mid-pipeline (window.VectFox_LastSearch is set after the
+            // links stage, before dedup). Tells us if metadata.context survived into the pipeline.
+            {
+                const ls = (window.VectFox_LastSearch?.chunks) || [];
+                const lc = ls.find(c => String(c.hash) === String(hash)) || ls[0];
+                console.log(`${TEST} [DIAG] LastSearch chunk: found=${!!lc}, metadata.context=${JSON.stringify(lc?.metadata?.context)}, metadata.xmlTag=${JSON.stringify(lc?.metadata?.xmlTag)}, metaKeys=${lc?.metadata ? Object.keys(lc.metadata).join(',') : 'n/a'}`);
+            }
+            const wrapped = inj.includes(`<${TAG}>`) && inj.includes(`</${TAG}>`) && inj.includes(CTX) && inj.includes(SENTINEL);
+            if (!wrapped) {
+                console.error(`${TEST} [FAIL] Phase 1c: injection not wrapped despite query returning the override — hasTag=${inj.includes(`<${TAG}>`)}, hasCtx=${inj.includes(CTX)}, hasSentinel=${inj.includes(SENTINEL)}. Preview: ${inj.slice(0, 300)}`);
+                return;
+            }
+            console.log(`${TEST} Phase 1c ✓ R4 wrapping applied in injection (context + <${TAG}> present)`);
+
+            // ── Phase 2: backend-first — wipe ext_settings, wrapping must persist ──
+            saveChunkMetadata(String(hash), { context: 'EXT_DECOY', xmlTag: 'extdecoy' });
+            deleteChunkMetadata(String(hash));
+            if (getChunkMetadata(String(hash)) !== null) { console.error(`${TEST} [FAIL] ext_settings entry not cleared`); return; }
+            inj = await dryInject();
+            if (!(inj.includes(`<${TAG}>`) && inj.includes(CTX))) {
+                console.error(`${TEST} [FAIL] Phase 2: wrapping LOST after ext_settings wipe — backend-first not working in the injection path. Preview: ${inj.slice(0, 300)}`);
+                return;
+            }
+            console.log(`${TEST} Phase 2 ✓ backend-first: wrapping survived ext_settings wipe`);
+
+            // ── Phase 3: R2 per-chunk condition — a guaranteed-FAIL condition must EXCLUDE the chunk ──
+            await updateChunkMetadata(collectionId, hash, {
+                conditions: { enabled: true, logic: 'AND', rules: [{ type: 'messageCount', settings: { count: 999999, operator: 'gte' } }] },
+            }, rcSettings);
+            inj = await dryInject();
+            if (inj.includes(SENTINEL)) {
+                console.error(`${TEST} [FAIL] Phase 3: chunk still injected despite a failing per-chunk condition (R2 not filtering from backend payload). Preview: ${inj.slice(0, 300)}`);
+                return;
+            }
+            console.log(`${TEST} Phase 3 ✓ R2 per-chunk condition filtered the chunk out of injection`);
+
+            console.log(`${TEST} [PASS] Injection path: R4 wrapping + backend-first + R2 condition filter all driven by the backend payload`);
+        } finally {
+            try {
+                if (collectionId) {
+                    try { setLock(registryKey, { kind: 'chat', op: 'clear' }, { settings: vf }); } catch {}
+                    await deleteContentCollection(collectionId);
+                    try {
+                        const stdBackend = await getBackend({ ...vf, vector_backend: 'standard' });
+                        await stdBackend._purgeCollectionFolderForTestCleanup(collectionId, vf);
+                    } catch (e) { console.warn(`${TEST} [WARN] folder-cleanup helper failed: ${e.message}`); }
+                    if (registryKey) { deleteCollectionMeta(registryKey); unregisterCollection(registryKey); }
+                    unregisterCollection(collectionId);
+                    console.log(`${TEST} Cleanup ✓`);
+                }
+            } catch (cleanupErr) { console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`); }
         }
     });
     assertPassed(logs);

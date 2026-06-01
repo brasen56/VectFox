@@ -206,9 +206,10 @@ async function applyChunkConditions(chunks, chat, settings) {
 
     // Check if any chunks have conditions (from chunk metadata)
     const chunksWithConditions = filtered.map(chunk => {
-        const chunkMeta = getChunkMetadata(chunk.hash);
-        if (chunkMeta?.conditions?.enabled) {
-            return { ...chunk, conditions: chunkMeta.conditions };
+        // Backend payload is source of truth; ext_settings is the legacy fallback.
+        const conditions = chunk.metadata?.conditions || getChunkMetadata(chunk.hash)?.conditions;
+        if (conditions?.enabled) {
+            return { ...chunk, conditions };
         }
         return chunk;
     });
@@ -811,16 +812,19 @@ async function applyGroupsAndLinksStage(chunks, activeCollections, settings, deb
     const beforeCount = chunks.length;
     let processedChunks = [...chunks];
 
-    // Build metadata map for chunks that have explicit links
-    const chunkMetadataMap = new Map();
+    // Build metadata map for chunks that have explicit links.
+    // Backend payload (chunk.metadata.chunkLinks) is source of truth; ext_settings is the
+    // legacy fallback. NOTE: processChunkLinks indexes this as a PLAIN OBJECT (map[hash]),
+    // so it must be a {} — not a Map (a Map indexed with [] is always undefined).
+    const chunkMetadataMap = {};
     for (const chunk of processedChunks) {
-        const meta = getChunkMetadata(chunk.hash) || {};
-        if (meta.links && meta.links.length > 0) {
-            chunkMetadataMap.set(String(chunk.hash), meta);
+        const links = chunk.metadata?.chunkLinks || getChunkMetadata(chunk.hash)?.chunkLinks;
+        if (links && links.length > 0) {
+            chunkMetadataMap[String(chunk.hash)] = { chunkLinks: links };
         }
     }
 
-    if (chunkMetadataMap.size > 0) {
+    if (Object.keys(chunkMetadataMap).length > 0) {
         const linkResult = processChunkLinks(processedChunks, chunkMetadataMap, settings.group_soft_boost || 0.15);
         processedChunks = linkResult.chunks;
 
@@ -967,8 +971,11 @@ function buildNestedInjectionText(chunks, settings) {
         // Build chunk texts with per-chunk wrapping
         const chunkTexts = collChunks.map(chunk => {
             const chunkMeta = getChunkMetadata(chunk.hash) || {};
-            const chunkContext = chunkMeta.context ? substituteParams(chunkMeta.context) : '';
-            const chunkXmlTag = chunkMeta.xmlTag || '';
+            const dbMeta = chunk.metadata || {};
+            // Backend payload is source of truth; ext_settings is the legacy fallback.
+            const rawContext = dbMeta.context || chunkMeta.context;
+            const chunkContext = rawContext ? substituteParams(rawContext) : '';
+            const chunkXmlTag = dbMeta.xmlTag || chunkMeta.xmlTag || '';
             const text = chunk.text || '(text not available)';
 
             // Build chunk with optional wrapping
@@ -1029,11 +1036,12 @@ function buildNestedInjectionText(chunks, settings) {
  */
 function resolveChunkInjectionPosition(chunk, settings) {
     const chunkMeta = getChunkMetadata(chunk.hash) || {};
+    const dbMeta = chunk.metadata || {};
     const collMeta = getCollectionMeta(chunk.collectionId) || {};
 
-    // Cascade: chunk → collection → global
-    const position = chunkMeta.position ?? collMeta.position ?? settings.position ?? 0;
-    const depth = chunkMeta.depth ?? collMeta.depth ?? settings.depth ?? 2;
+    // Cascade: chunk (backend payload → ext_settings fallback) → collection → global
+    const position = dbMeta.position ?? chunkMeta.position ?? collMeta.position ?? settings.position ?? 0;
+    const depth = dbMeta.depth ?? chunkMeta.depth ?? collMeta.depth ?? settings.depth ?? 2;
 
     return { position, depth };
 }

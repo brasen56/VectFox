@@ -107,10 +107,19 @@ function normalizeKeywords(keywords) {
 
 function getChunkData(chunk) {
     const stored = getChunkMetadata(chunk.hash) || {};
+    const dbMeta = chunk.metadata || {};
 
-    // User overrides take priority, then fall back to DB-stored keywords
-    const dbKeywords = chunk.metadata?.keywords || chunk.keywords || [];
-    const keywords = stored.keywords !== undefined ? stored.keywords : dbKeywords;
+    // Backend (Vectra/Qdrant payload) is the source of truth; extension_settings is a legacy
+    // fallback for entries the backend lacks (e.g. pre-fix text-edited chunks — see
+    // plans/chunk-metadata-read-source-fix.md). pick: first non-null wins. pickStr: also
+    // treats '' as absent so an empty string means "use fallback", not "explicitly blank".
+    const pick = (a, b) => (a !== undefined && a !== null ? a : b);
+    const pickStr = (a, b) => (a !== undefined && a !== null && a !== '' ? a : b);
+
+    // keywords: prefer non-empty backend array, then ext_settings override, then raw chunk keywords
+    const keywords = (Array.isArray(dbMeta.keywords) && dbMeta.keywords.length > 0)
+        ? dbMeta.keywords
+        : (stored.keywords !== undefined ? stored.keywords : (chunk.keywords || []));
 
     return {
         hash: chunk.hash,
@@ -119,18 +128,19 @@ function getChunkData(chunk) {
         score: chunk.score || 1,
         similarity: chunk.similarity || 1,
         messageAge: chunk.messageAge,
-        enabled: stored.enabled !== false,
+        // enabled defaults true; an explicit false (from either store) must survive
+        enabled: pick(dbMeta.enabled, stored.enabled) !== false,
         keywords: normalizeKeywords(keywords),
-        conditions: stored.conditions || { enabled: false, logic: 'AND', rules: [] },
-        chunkLinks: stored.chunkLinks || [],
-        summaries: stored.summaries || [],
-        name: stored.name || chunk.metadata?.name || null,
+        conditions: dbMeta.conditions || stored.conditions || { enabled: false, logic: 'AND', rules: [] },
+        chunkLinks: dbMeta.chunkLinks || stored.chunkLinks || [],
+        summaries: stored.summaries || [], // client-only (dual-vector summaries), unchanged
+        name: pickStr(dbMeta.name, stored.name) ?? null,
         // Prompt context (existing)
-        context: stored.context || chunk.metadata?.context || '',
-        xmlTag: stored.xmlTag || chunk.metadata?.xmlTag || '',
-        // Injection position/depth (null = use collection/global default)
-        position: stored.position ?? chunk.metadata?.position ?? null,
-        depth: stored.depth ?? chunk.metadata?.depth ?? null,
+        context: pickStr(dbMeta.context, stored.context) ?? '',
+        xmlTag: pickStr(dbMeta.xmlTag, stored.xmlTag) ?? '',
+        // Injection position/depth (null = use collection/global default; 0 is a valid value)
+        position: pick(dbMeta.position, stored.position) ?? null,
+        depth: pick(dbMeta.depth, stored.depth) ?? null,
         // EventBase-specific fields (read-only, from DB payload)
         eventType: chunk.metadata?.event_type || null,
         importance: chunk.metadata?.importance ?? null,
@@ -214,6 +224,13 @@ async function saveAllChanges() {
                 // Send metadata updates (keywords, conditions, etc.) to backend
                 try {
                     await updateChunkMetadata(currentCollectionId, hash, metadataUpdates, currentSettings);
+                    // Keep the in-memory backend payload fresh so backend-first reads
+                    // (getChunkData) reflect the save without a full reload from the backend.
+                    allChunks.forEach(c => {
+                        if (c.hash === hash) {
+                            c.metadata = { ...(c.metadata || {}), ...metadataUpdates };
+                        }
+                    });
                 } catch (e) {
                     console.warn('VectFox: Failed to update metadata in backend:', e);
                     // Don't fail - local metadata was already saved
@@ -1088,17 +1105,27 @@ function bindDetailEvents() {
 
             // Insert new with new hash (keep as number for Qdrant compatibility)
             const newHash = getStringHash(newText);
+            // Carry existing metadata onto the NEW backend point. Re-embedding creates a
+            // fresh point with a new hash; the backend is the source of truth, so the
+            // payload must be carried over — merge the backend payload over any legacy
+            // ext_settings entry. Without this, text-editing wipes name/context/keywords
+            // etc. See plans/chunk-metadata-read-source-fix.md (R8).
+            const oldStored = getChunkMetadata(String(chunk.hash)) || {};
+            const carriedMeta = { ...oldStored, ...(chunk.metadata || {}) };
+            delete carriedMeta.hash;
+            delete carriedMeta.text;
             await insertVectorItems(currentCollectionId, [{
                 hash: newHash,
                 text: newText,
-                index: chunk.index
+                index: chunk.index,
+                metadata: carriedMeta,
             }], currentSettings);
 
-            // Update metadata (use string keys for metadata storage)
-            const oldMeta = getChunkMetadata(String(chunk.hash));
-            if (oldMeta) {
+            // Mirror to ext_settings (legacy cache; read path is backend-first). Phase B
+            // may drop this once the backend carry above is validated.
+            if (Object.keys(oldStored).length > 0) {
                 deleteChunkMetadata(String(chunk.hash));
-                saveChunkMetadata(String(newHash), { ...oldMeta });
+                saveChunkMetadata(String(newHash), { ...oldStored });
             }
 
             // Update local state
@@ -1339,17 +1366,27 @@ function openTextEditor(chunk) {
 
             // Insert new with new hash (keep as number for Qdrant compatibility)
             const newHash = getStringHash(newText);
+            // Carry existing metadata onto the NEW backend point. Re-embedding creates a
+            // fresh point with a new hash; the backend is the source of truth, so the
+            // payload must be carried over — merge the backend payload over any legacy
+            // ext_settings entry. Without this, text-editing wipes name/context/keywords
+            // etc. See plans/chunk-metadata-read-source-fix.md (R8).
+            const oldStored = getChunkMetadata(String(chunk.hash)) || {};
+            const carriedMeta = { ...oldStored, ...(chunk.metadata || {}) };
+            delete carriedMeta.hash;
+            delete carriedMeta.text;
             await insertVectorItems(currentCollectionId, [{
                 hash: newHash,
                 text: newText,
-                index: chunk.index
+                index: chunk.index,
+                metadata: carriedMeta,
             }], currentSettings);
 
-            // Update metadata (use string keys for metadata storage)
-            const oldMeta = getChunkMetadata(String(chunk.hash));
-            if (oldMeta) {
+            // Mirror to ext_settings (legacy cache; read path is backend-first). Phase B
+            // may drop this once the backend carry above is validated.
+            if (Object.keys(oldStored).length > 0) {
                 deleteChunkMetadata(String(chunk.hash));
-                saveChunkMetadata(String(newHash), { ...oldMeta });
+                saveChunkMetadata(String(newHash), { ...oldStored });
             }
 
             // Update local state - update hash but keep same uniqueId for selection

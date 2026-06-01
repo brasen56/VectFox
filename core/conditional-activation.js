@@ -317,7 +317,7 @@ function evaluateMessageCountCondition(rule, context) {
 // They depend on information about other chunks in the current result set.
 //
 // Types:
-// - links: Hard/soft links to other chunks
+// - chunkLinks: Hard/soft links to other chunks ({ targetHash, mode: 'hard'|'soft' })
 // - scoreThreshold: Per-chunk minimum similarity score override
 // - recency: Message age filter
 // - frequency: Activation limits/cooldown
@@ -334,7 +334,7 @@ function evaluateMessageCountCondition(rule, context) {
  * add links on both chunks. For one-way, only add on the source chunk.
  *
  * @param {object[]} chunks Array of chunks from search results
- * @param {object} chunkMetadataMap Map of hash -> chunk metadata (includes links)
+ * @param {object} chunkMetadataMap Plain object of hash -> chunk metadata (includes chunkLinks)
  * @param {number} softBoost Score boost for soft links (default 0.15)
  * @returns {object} { chunks: processedChunks, hardLinkedHashes: Set }
  */
@@ -343,18 +343,19 @@ export function processChunkLinks(chunks, chunkMetadataMap, softBoost = 0.15) {
     const hardLinkedHashes = new Set();
     const softBoosts = new Map(); // hash -> total boost
 
-    // First pass: collect all hard links and soft boosts
+    // First pass: collect all hard links and soft boosts.
+    // Links use the visualizer's shape: chunkLinks: [{ targetHash, mode: 'hard'|'soft' }].
     for (const chunk of chunks) {
         const meta = chunkMetadataMap[chunk.hash];
-        if (!meta?.links || meta.links.length === 0) continue;
+        if (!meta?.chunkLinks || meta.chunkLinks.length === 0) continue;
 
-        for (const link of meta.links) {
-            const targetHash = parseInt(link.target);
+        for (const link of meta.chunkLinks) {
+            const targetHash = parseInt(link.targetHash);
 
-            if (link.type === 'hard') {
+            if (link.mode === 'hard') {
                 // Hard link: target MUST be included
                 hardLinkedHashes.add(targetHash);
-            } else if (link.type === 'soft') {
+            } else if (link.mode === 'soft') {
                 // Soft link: accumulate boost for target
                 const currentBoost = softBoosts.get(targetHash) || 0;
                 softBoosts.set(targetHash, currentBoost + softBoost);

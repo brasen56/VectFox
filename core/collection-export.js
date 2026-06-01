@@ -297,6 +297,15 @@ export async function exportMultipleCollections(collectionIds, settings) {
                         speaker: meta.speaker,
                         isUser: meta.isUser,
                         messageId: meta.messageId,
+                        // Per-chunk user overrides — backend is the source of truth, so these
+                        // must roundtrip via the payload (not just ext_settings/chunkMeta).
+                        name: meta.name,
+                        context: meta.context,
+                        xmlTag: meta.xmlTag,
+                        position: meta.position,
+                        depth: meta.depth,
+                        enabled: meta.enabled,
+                        chunkLinks: meta.chunkLinks,
                     },
                 }));
 
