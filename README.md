@@ -377,6 +377,13 @@ Use **Qdrant vector database** for any ultra fast and accurate delopment — A3 
 
 ## 💾 Installation
 
+> **Recommended: Use Qdrant Cloud (Free)**
+> A free Qdrant Cloud account is available at https://qdrant.tech/ — it includes **4 GB of storage**, which comfortably fits **100 000+ messages** with no cost. After registration you receive an **API URL** and **API Key** that you paste directly into VectFox — no server to manage.
+>
+> We encourage Qdrant over the Standard backend because it uses the **A3 hybrid search algorithm**, which is materially more accurate than A1/A2 — especially for CJK and long-form narratives.
+>
+> Prefer lower latency? A **local Qdrant installation** is significantly faster (no network round-trip). See [Doc/Qdrant_install.md](Doc/Qdrant_install.md) for setup instructions.
+
 ### Step 1: Install the Extension
 
 1. Open SillyTavern in your browser
@@ -394,15 +401,19 @@ That's it! VectFox will be downloaded and enabled automatically.
 
 **Required if using Qdrant backend.** Optional if using the Standard backend, but installing it unlocks additional functionality even there:
 
-| Feature | Standard without plugin | Standard with plugin |
-|---|---|---|
-| Event search & injection | ✅ Full functionality | ✅ Full functionality |
-| Embedding & vectorization | ✅ Works | ✅ Works |
-| Rich metadata (keywords, importance) | ❌ Not stored | ✅ Stored & used in search |
-| View Chunks in Database Browser | ❌ Not available | ✅ Available |
-| Edit individual chunks | ❌ Not available | ✅ Available |
+| Feature | Standard without plugin | Standard with plugin | **Qdrant (Cloud or Local)** ⭐ |
+|---|---|---|---|
+| Event search & injection | ✅ Full functionality | ✅ Full functionality | ✅ Full functionality |
+| Embedding & vectorization | ✅ Works | ✅ Works | ✅ Works |
+| Keywords stored in DB (boost search) | ❌ Saved to local settings only | ✅ Stored in vector DB | ✅ Stored in vector DB |
+| Event importance score | ❌ Lost (native API drops metadata) | ⚠️ Stored, not used in re-rank | ✅ Stored & used in re-rank |
+| View Chunks in Database Browser | ❌ Not available | ✅ Available | ✅ Available |
+| Edit individual chunks | ❌ Not available | ✅ Available | ✅ Available |
+| Search algorithm | A1/A2 hybrid | A1/A2 hybrid | **A3 hybrid (best accuracy)** |
+| Scales to large datasets | ⚠️ Degrades past ~10 k | ⚠️ Degrades past ~10 k | ✅ 100 k+ messages, stays fast |
+| Setup | None | Plugin install | Free cloud account **or** [local install](Doc/Qdrant_install.md) |
 
-If you are on the Standard backend and do not install the plugin, event search and injection still work correctly — you just won't have chunk inspection or keyword metadata.
+If you are on the Standard backend and do not install the plugin, event search and injection still work correctly — you just won't have chunk inspection or keyword metadata. For the best retrieval quality, **Qdrant is strongly recommended** — the free cloud tier at https://qdrant.tech/ requires no local setup at all.
 
 ```bash
 Open Command prompt on Windows or Terminal on Linux/Mac or Get into Console if you are on docker

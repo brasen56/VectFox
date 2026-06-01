@@ -124,13 +124,19 @@ function getChunkData(chunk) {
         conditions: stored.conditions || { enabled: false, logic: 'AND', rules: [] },
         chunkLinks: stored.chunkLinks || [],
         summaries: stored.summaries || [],
-        name: stored.name || null,
+        name: stored.name || chunk.metadata?.name || null,
         // Prompt context (existing)
-        context: stored.context || '',
-        xmlTag: stored.xmlTag || '',
+        context: stored.context || chunk.metadata?.context || '',
+        xmlTag: stored.xmlTag || chunk.metadata?.xmlTag || '',
         // Injection position/depth (null = use collection/global default)
-        position: stored.position ?? null,
-        depth: stored.depth ?? null,
+        position: stored.position ?? chunk.metadata?.position ?? null,
+        depth: stored.depth ?? chunk.metadata?.depth ?? null,
+        // EventBase-specific fields (read-only, from DB payload)
+        eventType: chunk.metadata?.event_type || null,
+        importance: chunk.metadata?.importance ?? null,
+        concepts: chunk.metadata?.concepts || [],
+        openThreads: chunk.metadata?.open_threads || [],
+        eventItems: chunk.metadata?.items || [],
     };
 }
 
@@ -678,6 +684,50 @@ function renderDetailPanel() {
                     </button>
                 </div>
             </div>
+
+            <!-- EventBase Metadata Section (read-only) -->
+            ${isEventBase ? `
+            <div class="vectfox-detail-section vectfox-eventbase-meta">
+                <div class="vectfox-detail-section-title">
+                    <i class="fa-solid fa-database"></i> Event Metadata
+                    <span class="vectfox-section-hint">(extracted by EventBase)</span>
+                </div>
+                <div class="vectfox-eventbase-meta-grid">
+                    <div class="vectfox-meta-row">
+                        <span class="vectfox-meta-label">Type</span>
+                        <span class="vectfox-meta-value">${data.eventType
+                            ? `<span class="vectfox-event-type-badge">${StringUtils.escapeHtml(data.eventType)}</span>`
+                            : '<span class="vectfox-meta-empty">—</span>'}</span>
+                    </div>
+                    <div class="vectfox-meta-row">
+                        <span class="vectfox-meta-label">Importance</span>
+                        <span class="vectfox-meta-value">${data.importance != null
+                            ? `<span class="vectfox-importance-badge vectfox-imp-${Math.min(10, Math.max(1, Math.round(data.importance)))}">${data.importance}<span class="vectfox-imp-scale">/10</span></span>`
+                            : '<span class="vectfox-meta-empty">—</span>'}</span>
+                    </div>
+                    <div class="vectfox-meta-row">
+                        <span class="vectfox-meta-label">Concepts</span>
+                        <span class="vectfox-meta-value">${data.concepts.length
+                            ? data.concepts.map(c => `<span class="vectfox-concept-tag">${StringUtils.escapeHtml(c)}</span>`).join('')
+                            : '<span class="vectfox-meta-empty">—</span>'}</span>
+                    </div>
+                    <div class="vectfox-meta-row">
+                        <span class="vectfox-meta-label">Items</span>
+                        <span class="vectfox-meta-value">${data.eventItems.length
+                            ? data.eventItems.map(it => `<span class="vectfox-concept-tag">${StringUtils.escapeHtml(it)}</span>`).join('')
+                            : '<span class="vectfox-meta-empty">—</span>'}</span>
+                    </div>
+                    ${data.openThreads.length ? `
+                    <div class="vectfox-meta-row vectfox-meta-row-full">
+                        <span class="vectfox-meta-label">Open Threads</span>
+                        <ul class="vectfox-open-threads-list">
+                            ${data.openThreads.map(t => `<li>${StringUtils.escapeHtml(t)}</li>`).join('')}
+                        </ul>
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+            ` : ''}
 
             <!-- Status Section -->
             ${showEnabledToggle ? `

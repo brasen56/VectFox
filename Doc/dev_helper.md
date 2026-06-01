@@ -1148,3 +1148,26 @@ If a future contributor sees broken-looking tests in the suite, the playbook is:
 - They'd need to manually edit `settings.json` to change `source` to a supported value, OR pick a different provider from the dropdown which writes a valid value
 
 **To finish**: open a separate plan in `plans/remove-bananabread-provider.md` and do the ~300 LOC sweep when there's appetite. Targets: strip `'bananabread'` from `clientSideEmbeddingSources` arrays first (kills the bulk of the reranking and embedding paths), then walk back through diagnostics + backend cases + the docs section + the rerank checkbox handler. No urgency — the partial state is stable and audit-defensible.
+
+### 16.4 Purge redundant `vectfox_chunk_meta_*` keys from `extension_settings` — deferred to ~2026-09
+
+**Status**: Deferred. Do **not** implement before ~2026-09 (≈3 months after 2026-06-01).
+**Depends on**: `plans/chunk-metadata-read-source-fix.md` Phase B having shipped and run in the wild for a while.
+
+**Background**: Per-chunk metadata (`name`, `context`, `xmlTag`, `position`, `depth`, `keywords`, `conditions`, `links`, `enabled`) was dual-written to both the vector backend (Vectra-via-plugin / Qdrant) **and** `extension_settings['vectfox_chunk_meta_*']` since day one. That was the wrong design for the plugin/Qdrant paths — the backend is the durable, portable source of truth and `extension_settings` was only ever the *required* store for the long-gone Standard-no-plugin browser path. The read-source fix flips every reader to backend-first and (Phase B) stops the dual write. See `plans/chunk-metadata-read-source-fix.md`.
+
+**What this cleanup is**: once Phase B has been live long enough that we're confident no reader still falls back to `extension_settings` for the targeted fields, write a one-shot purge that removes the now-orphaned `vectfox_chunk_meta_*` keys from `settings.json`.
+
+**Why deferred, not now**:
+
+- Phase A/B keep the ext_settings **read fallback** specifically to protect any chunk whose backend payload lacks a field — chiefly chunks text-edited under the old R8 path, whose annotations live only in ext_settings (see `plans/chunk-metadata-read-source-fix.md` §4.6/§5). Purging immediately would remove that safety net before we've validated the backend-first paths in real usage.
+- No reconciliation pass was run (intentional — dual-write means the backend already mirrors ext_settings for everything except R8 text-edited chunks). Give the backend-first paths a few months of real traffic before pulling the fallback.
+
+**Backfill decision (user, 2026-06-01): NONE.** We do **not** backfill the R8 orphan set before purging. Losing those chunks' annotations does not break anything — fields degrade to defaults and the chunk text is preserved. The user accepts the loss of post-import annotations on text-edited chunks (re-annotatable). So this purge can run after the soak as a straight delete, no backfill stage.
+
+**When implementing (≈2026-09)**:
+
+- Iterate `extension_settings.vectfox`, match the `vectfox_chunk_meta_` prefix (see `getAllChunkMetadata()` in [core/collection-metadata.js:396](../core/collection-metadata.js#L396)), delete those keys, `saveSettingsDebounced()`.
+- Gate it: only purge fields that Phase B confirmed are backend-authoritative. If any field is still client-only (e.g. `summaries`, or some genuinely local UI state), preserve those keys/sub-fields.
+- Per `CLAUDE.md`, this is migration logic — **confirm with the user before adding it**, and consider a one-time guarded run (versioned flag) rather than something that fires on every load.
+- Tripwire: a user who downgrades to a pre-Phase-B build after the purge would lose their per-chunk overrides from the UI's perspective *only if* that old build read ext_settings-first — which it did. The backend still has the data; the old build just wouldn't show/use it. Acceptable, but note it in the purge's release notes.
