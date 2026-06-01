@@ -37,6 +37,13 @@ qdrant.js
 bm25-score.js
 ui-manager.js
 eventbase-workflow.js
+eventbase-retrieval.js
+eventbase-store.js
+collection-loader.js
+hybrid-search.js
+keyword-boost.js
+standard.js
+agentic-retrieval.js
 
 
 """

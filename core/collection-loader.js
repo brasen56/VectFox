@@ -111,14 +111,14 @@ function _sanitizeHandleId(name) { return sanitizeHandleId(name); }
 
 export function registerCollection(collectionId) {
     if (!collectionId) {
-        console.warn('VectFox: Attempted to register null/undefined collectionId, skipping');
+        log.warn('VectFox: Attempted to register null/undefined collectionId, skipping');
         return;
     }
     const registry = getCollectionRegistry();
     const isNew = !registry.includes(collectionId);
     if (isNew) {
         registry.push(collectionId);
-        console.log(`VectFox: Registered collection: ${collectionId}`);
+        log.verbose(`VectFox: Registered collection: ${collectionId}`);
     }
 
     // Stamp the creator's persona handle on the collection metadata so the DB Browser can
@@ -145,7 +145,7 @@ export function registerCollection(collectionId) {
             }
         }
     } catch (e) {
-        console.warn('VectFox: failed to stamp creatorHandle:', e?.message);
+        log.warn('VectFox: failed to stamp creatorHandle:', e?.message);
     }
 
     if (isNew) {
@@ -228,10 +228,10 @@ export function unregisterCollection(collectionId) {
     const index = registry.indexOf(collectionId);
     if (index !== -1) {
         registry.splice(index, 1);
-        console.log(`VectFox: Unregistered collection: ${collectionId}`);
+        log.verbose(`VectFox: Unregistered collection: ${collectionId}`);
         saveSettingsDebounced(); // Persist to disk!
     } else {
-        console.log(`VectFox: Collection not found in registry: ${collectionId}`);
+        log.verbose(`VectFox: Collection not found in registry: ${collectionId}`);
     }
 }
 
@@ -255,16 +255,16 @@ export async function deleteCollection(collectionId, settings, registryKey = nul
     let registryDeleted = false;
     let metadataDeleted = false;
 
-    console.log(`VectFox: Deleting collection ${collectionId} (registry key: ${registryKey || collectionId})`);
+    log.verbose(`VectFox: Deleting collection ${collectionId} (registry key: ${registryKey || collectionId})`);
 
     // Step 1: Delete vectors from backend (most important - actual data)
     try {
         await purgeVectorIndex(collectionId, settings);
         vectorsDeleted = true;
-        console.log(`VectFox: ✓ Deleted vectors for ${collectionId}`);
+        log.verbose(`VectFox: ✓ Deleted vectors for ${collectionId}`);
     } catch (error) {
         errors.push(`Vectors: ${error.message}`);
-        console.warn(`VectFox: ✗ Failed to delete vectors for ${collectionId}:`, error.message);
+        log.warn(`VectFox: ✗ Failed to delete vectors for ${collectionId}:`, error.message);
         // Continue anyway - registry/metadata cleanup is still valuable
     }
 
@@ -279,20 +279,20 @@ export async function deleteCollection(collectionId, settings, registryKey = nul
         }
 
         registryDeleted = true;
-        console.log(`VectFox: ✓ Unregistered ${collectionId}`);
+        log.verbose(`VectFox: ✓ Unregistered ${collectionId}`);
     } catch (error) {
         errors.push(`Registry: ${error.message}`);
-        console.warn(`VectFox: ✗ Failed to unregister ${collectionId}:`, error.message);
+        log.warn(`VectFox: ✗ Failed to unregister ${collectionId}:`, error.message);
     }
 
     // Step 3: Delete metadata
     try {
         deleteCollectionMeta(collectionId);
         metadataDeleted = true;
-        console.log(`VectFox: ✓ Deleted metadata for ${collectionId}`);
+        log.verbose(`VectFox: ✓ Deleted metadata for ${collectionId}`);
     } catch (error) {
         errors.push(`Metadata: ${error.message}`);
-        console.warn(`VectFox: ✗ Failed to delete metadata for ${collectionId}:`, error.message);
+        log.warn(`VectFox: ✗ Failed to delete metadata for ${collectionId}:`, error.message);
     }
 
     // Step 4: Clear EventBase window fingerprint cache if this is an EventBase collection.
@@ -313,11 +313,11 @@ export async function deleteCollection(collectionId, settings, registryKey = nul
     const success = vectorsDeleted && registryDeleted && metadataDeleted;
 
     if (success) {
-        console.log(`VectFox: ✓ Fully deleted collection ${collectionId}`);
+        log.verbose(`VectFox: ✓ Fully deleted collection ${collectionId}`);
     } else {
         // VEC-28: Warn about partial deletion to prevent zombie collections
         const warningMsg = `VectFox: ⚠️ PARTIAL DELETION of ${collectionId} - may create zombie collection. Errors: ${errors.join(', ')}`;
-        console.error(warningMsg);
+        log.error(warningMsg);
         // Only treat as critical failure if ALL steps failed
         if (!vectorsDeleted && !registryDeleted && !metadataDeleted) {
             throw new Error(`Complete deletion failure for ${collectionId}: ${errors.join(', ')}`);
@@ -338,7 +338,7 @@ export async function deleteCollection(collectionId, settings, registryKey = nul
  */
 export function clearCollectionRegistry() {
     extension_settings.vectfox.vectfox_collection_registry = [];
-    console.log('VectFox: Cleared collection registry');
+    log.lifecycle('VectFox: Cleared collection registry');
     saveSettingsDebounced(); // Persist to disk!
 }
 
@@ -351,7 +351,7 @@ export function cleanupCollectionRegistry() {
     extension_settings.vectfox.vectfox_collection_registry = cleaned;
     const removed = registry.length - cleaned.length;
     if (removed > 0) {
-        console.log(`VectFox: Cleaned registry - removed ${removed} invalid/duplicate entries`);
+        log.lifecycle(`VectFox: Cleaned registry - removed ${removed} invalid/duplicate entries`);
         saveSettingsDebounced(); // Persist to disk!
     }
     return removed;
@@ -393,7 +393,7 @@ export function cleanupTestCollections() {
 
     const cleaned = registry.filter(id => {
         if (isTestEntry(id)) {
-            console.log(`VectFox: Removing test collection from registry: ${id}`);
+            log.verbose(`VectFox: Removing test collection from registry: ${id}`);
             return false;
         }
         return id != null;
@@ -403,7 +403,7 @@ export function cleanupTestCollections() {
     let didMutate = false;
     if (removed > 0) {
         extension_settings.vectfox.vectfox_collection_registry = cleaned;
-        console.log(`VectFox: Cleaned ${removed} test collection entries from registry`);
+        log.lifecycle(`VectFox: Cleaned ${removed} test collection entries from registry`);
         didMutate = true;
     }
 
@@ -430,7 +430,7 @@ export function cleanupTestCollections() {
             }
         }
         if (indexOrphans > 0) {
-            console.log(`VectFox: Pruned ${indexOrphans} stale test entries from chat_lock_index across ${indexChatsScanned} chat(s)`);
+            log.lifecycle(`VectFox: Pruned ${indexOrphans} stale test entries from chat_lock_index across ${indexChatsScanned} chat(s)`);
             didMutate = true;
         }
     }
@@ -523,7 +523,7 @@ export async function checkPluginAvailable() {
         if (response.ok) {
             const data = await response.json();
             pluginAvailable = data.status === 'ok';
-            console.log(`VectFox: Plugin ${pluginAvailable ? 'detected' : 'not found'} (v${data.version || 'unknown'})`);
+            log.lifecycle(`VectFox: Plugin ${pluginAvailable ? 'detected' : 'not found'} (v${data.version || 'unknown'})`);
         } else {
             pluginAvailable = false;
         }
@@ -544,7 +544,7 @@ let pluginCollectionData = null;
  */
 async function discoverViaPlugin(settings) {
     try {
-        console.debug('🔍 VectFox: Requesting collection discovery from plugin...');
+        log.trace('🔍 VectFox: Requesting collection discovery from plugin...');
 
         // Plugin now scans ALL sources, not just the current one
         const response = await fetch(`/api/plugins/similharity/collections`, {
@@ -553,8 +553,8 @@ async function discoverViaPlugin(settings) {
         });
 
         if (!response.ok) {
-            console.warn(`⚠️ VectFox: Plugin collections endpoint failed (status: ${response.status})`);
-            console.log('   💡 Make sure the Similharity plugin is installed and running');
+            log.warn(`⚠️ VectFox: Plugin collections endpoint failed (status: ${response.status})`);
+            log.verbose('   💡 Make sure the Similharity plugin is installed and running');
             return [];
         }
 
@@ -568,7 +568,7 @@ async function discoverViaPlugin(settings) {
             data.collections.forEach(c => {
                 sourcesSummary[c.source] = (sourcesSummary[c.source] || 0) + 1;
             });
-            console.debug('   Sources:', Object.entries(sourcesSummary).map(([s, count]) => `${s}: ${count}`).join(', '));
+            log.trace('   Sources:', Object.entries(sourcesSummary).map(([s, count]) => `${s}: ${count}`).join(', '));
 
             // Cache the plugin data (includes chunk counts, sources, AND backends)
             // Key format: "backend:source:collectionId" to handle same collection in multiple backends
@@ -588,7 +588,7 @@ async function discoverViaPlugin(settings) {
                 let collectionId = collection.id;
                 if (collectionId.startsWith(`${backend}:`)) {
                     collectionId = collectionId.substring(backend.length + 1);
-                    console.debug(`   🔧 Stripped backend prefix from collection ID: ${collection.id} → ${collectionId}`);
+                    log.trace(`   🔧 Stripped backend prefix from collection ID: ${collection.id} → ${collectionId}`);
                 }
 
                 // Skip corrupted/ST-native/internal IDs at discovery time
@@ -597,7 +597,7 @@ async function discoverViaPlugin(settings) {
                     if (filterReason === 'corrupted-prefix-stacked') skippedCorruption++;
                     else if (filterReason === 'st-native-file') skippedStFile++;
                     else if (filterReason === 'internal-system') skippedInternal++;
-                    console.debug(`   ⛔ Skipping ${collectionId} (${filterReason})`);
+                    log.trace(`   ⛔ Skipping ${collectionId} (${filterReason})`);
                     continue;
                 }
 
@@ -608,7 +608,7 @@ async function discoverViaPlugin(settings) {
                     emptyList.push(buildRegistryKey(collectionId, backend));
                 }
 
-                console.debug(`   - ${buildRegistryKey(collectionId, backend)} (${collection.chunkCount} chunks)`);
+                log.trace(`   - ${buildRegistryKey(collectionId, backend)} (${collection.chunkCount} chunks)`);
 
                 const collectionData = {
                     chunkCount: collection.chunkCount,
@@ -632,7 +632,7 @@ async function discoverViaPlugin(settings) {
                 const existingCount = existing?.chunkCount || 0;
                 if (!existing || incomingCount > existingCount) {
                     if (existing && existingCount !== incomingCount) {
-                        console.debug(`   🔀 Collision on ${cacheKey}: keeping ${incomingCount} chunks (source=${collectionData.source}) over ${existingCount} (source=${existing.source})`);
+                        log.trace(`   🔀 Collision on ${cacheKey}: keeping ${incomingCount} chunks (source=${collectionData.source}) over ${existingCount} (source=${existing.source})`);
                     }
                     pluginCollectionData[cacheKey] = collectionData;
                     uniqueKeys.push(cacheKey);
@@ -658,13 +658,13 @@ async function discoverViaPlugin(settings) {
                 log.lifecycle(`   🛡️ Discovery filter excluded ${skippedCorruption} corrupted + ${skippedStFile} ST-native + ${skippedInternal} internal collection(s)`);
             }
             if (emptyCount > 0) {
-                console.log(`   ⚠️ ${emptyCount} empty collection(s) with 0 chunks (kept in registry — delete from DB Browser to clean up):`);
-                emptyList.forEach(id => console.log(`      - ${id}`));
+                log.verbose(`   ⚠️ ${emptyCount} empty collection(s) with 0 chunks (kept in registry — delete from DB Browser to clean up):`);
+                emptyList.forEach(id => log.trace(`      - ${id}`));
             }
 
-            console.debug(`\n📋 VectFox: Updating registry...`);
-            console.debug(`   Current registry has ${currentRegistry.length} entries`);
-            console.debug(`   Plugin discovered ${uniqueKeys.length} collections`);
+            log.trace(`\n📋 VectFox: Updating registry...`);
+            log.trace(`   Current registry has ${currentRegistry.length} entries`);
+            log.trace(`   Plugin discovered ${uniqueKeys.length} collections`);
 
             // The plugin probes every standard (vectra) and qdrant collection that
             // actually exists. Anything in the registry that was NOT found = stale.
@@ -672,9 +672,9 @@ async function discoverViaPlugin(settings) {
             const updatedRegistry = getCollectionRegistry();
             const staleEntries = updatedRegistry.filter(key => !pluginKeySet.has(key));
             if (staleEntries.length > 0) {
-                console.debug(`   🗑️  Removing ${staleEntries.length} stale registry entries:`);
+                log.trace(`   🗑️  Removing ${staleEntries.length} stale registry entries:`);
                 for (const staleKey of staleEntries) {
-                    console.debug(`      - ${staleKey}`);
+                    log.trace(`      - ${staleKey}`);
                     unregisterCollection(staleKey);
                 }
             }
@@ -684,9 +684,9 @@ async function discoverViaPlugin(settings) {
             for (const key of uniqueKeys) {
                 if (!getCollectionRegistry().includes(key)) {
                     newRegistrations++;
-                    console.debug(`   ➕ Registering: ${key}`);
+                    log.trace(`   ➕ Registering: ${key}`);
                 } else {
-                    console.debug(`   ⏭️  Already registered: ${key}`);
+                    log.trace(`   ⏭️  Already registered: ${key}`);
                 }
                 registerCollection(key);
             }
@@ -699,7 +699,7 @@ async function discoverViaPlugin(settings) {
             return uniqueKeys;
         }
     } catch (error) {
-        console.error('VectFox: Plugin discovery failed:', error);
+        log.error('VectFox: Plugin discovery failed:', error);
     }
 
     return [];
@@ -763,11 +763,11 @@ export async function cleanupCorruptedCollections() {
         result.stFile = targets.filter(t => t.reason === 'st-native-file').length;
 
         if (targets.length === 0) {
-            console.log('VECTFOX cleanup: no corrupted or ST-native file collections found on disk');
+            log.lifecycle('VECTFOX cleanup: no corrupted or ST-native file collections found on disk');
             return result;
         }
 
-        console.log(`VECTFOX cleanup: purging ${targets.length} collection(s) (${result.corruption} corrupted, ${result.stFile} ST-native file)`);
+        log.lifecycle(`VECTFOX cleanup: purging ${targets.length} collection(s) (${result.corruption} corrupted, ${result.stFile} ST-native file)`);
 
         for (const target of targets) {
             try {
@@ -790,17 +790,17 @@ export async function cleanupCorruptedCollections() {
                 unregisterCollection(target.registryKey);
 
                 result.purged.push({ key: target.registryKey, ok: true });
-                console.log(`   ✅ Purged ${target.registryKey} (${target.reason})`);
+                log.verbose(`   ✅ Purged ${target.registryKey} (${target.reason})`);
             } catch (err) {
                 result.purged.push({ key: target.registryKey, ok: false, error: err.message });
-                console.warn(`   ❌ Failed to purge ${target.registryKey}: ${err.message}`);
+                log.warn(`   ❌ Failed to purge ${target.registryKey}: ${err.message}`);
             }
         }
 
         // Reset plugin cache so a subsequent discovery sees the fresh state
         pluginAvailable = null;
     } catch (error) {
-        console.error('VECTFOX cleanup: failed', error);
+        log.error('VECTFOX cleanup: failed', error);
         throw error;
     }
 
@@ -840,7 +840,7 @@ async function discoverViaFallback(settings) {
     const discovered = [];
     const probed = new Set();
 
-    console.log('VectFox: Running fallback discovery (no plugin)...');
+    log.lifecycle('VectFox: Running fallback discovery (no plugin)...');
 
     // 1. Validate existing registry entries - remove stale ones
     const registry = getCollectionRegistry();
@@ -860,11 +860,11 @@ async function discoverViaFallback(settings) {
             if (!discovered.includes(registryKey)) {
                 discovered.push(registryKey);
             }
-            console.log(`VectFox: Verified registry entry: ${collectionId} (${result.count} chunks)`);
+            log.verbose(`VectFox: Verified registry entry: ${collectionId} (${result.count} chunks)`);
         } else {
             // Remove stale entry
             unregisterCollection(registryKey);
-            console.log(`VectFox: Removed stale registry entry: ${registryKey}`);
+            log.verbose(`VectFox: Removed stale registry entry: ${registryKey}`);
         }
     }
 
@@ -882,7 +882,7 @@ async function discoverViaFallback(settings) {
             if (result.exists) {
                 registerCollection(charCollectionId);
                 discovered.push(charCollectionId);
-                console.log(`VectFox: Discovered character collection: ${charCollectionId} (${result.count} chunks)`);
+                log.verbose(`VectFox: Discovered character collection: ${charCollectionId} (${result.count} chunks)`);
             }
         }
     }
@@ -898,7 +898,7 @@ async function discoverViaFallback(settings) {
     // Note: Without filesystem access, we can't discover collections with unknown IDs
     // The registry is our primary source of truth for non-current-chat collections
 
-    console.log(`VectFox: Fallback discovery complete. Found ${discovered.length} collections.`);
+    log.lifecycle(`VectFox: Fallback discovery complete. Found ${discovered.length} collections.`);
     return discovered;
 }
 
@@ -914,7 +914,7 @@ export async function discoverExistingCollections(settings) {
         log.trace('VectFox: Using plugin for collection discovery');
         return await discoverViaPlugin(settings);
     } else {
-        console.log('VectFox: Plugin not available, using fallback discovery');
+        log.lifecycle('VectFox: Plugin not available, using fallback discovery');
         return await discoverViaFallback(settings);
     }
 }
@@ -940,7 +940,7 @@ export async function doesChatHaveVectors(settings, overrideChatId, overrideUUID
     // Use unified pattern builder from collection-ids.js
     const searchPatterns = buildChatSearchPatterns(chatId, uuid);
 
-    console.log(`VectFox: Searching for chat vectors. UUID: ${uuid}, Patterns:`, searchPatterns);
+    log.verbose(`VectFox: Searching for chat vectors. UUID: ${uuid}, Patterns:`, searchPatterns);
 
     // Collect ALL matching collections, then pick the best one
     // This handles ghost collections (empty) vs real collections (has chunks)
@@ -975,7 +975,7 @@ export async function doesChatHaveVectors(settings, overrideChatId, overrideUUID
                 source,
                 backend
             });
-            console.log(`VectFox: Found matching collection ${collectionId} (${chunkCount} chunks, backend: ${backend})`);
+            log.verbose(`VectFox: Found matching collection ${collectionId} (${chunkCount} chunks, backend: ${backend})`);
         }
     }
 
@@ -985,7 +985,7 @@ export async function doesChatHaveVectors(settings, overrideChatId, overrideUUID
         matchingCollections.sort((a, b) => b.chunkCount - a.chunkCount);
 
         const best = matchingCollections[0];
-        console.log(`VectFox: Found ${matchingCollections.length} matching collection(s), best is ${best.collectionId} with ${best.chunkCount} chunks`);
+        log.verbose(`VectFox: Found ${matchingCollections.length} matching collection(s), best is ${best.collectionId} with ${best.chunkCount} chunks`);
 
         return {
             hasVectors: true,
@@ -996,7 +996,7 @@ export async function doesChatHaveVectors(settings, overrideChatId, overrideUUID
         };
     }
 
-    console.log('VectFox: No vectors found for current chat');
+    log.verbose('VectFox: No vectors found for current chat');
     return { hasVectors: false, collectionId: null, registryKey: null, chunkCount: 0 };
 }
 
@@ -1007,8 +1007,7 @@ export async function doesChatHaveVectors(settings, overrideChatId, overrideUUID
  * @returns {Promise<object[]>} Array of collection objects
  */
 export async function loadAllCollections(settings, autoDiscover = true) {
-    const debugLog = log.enabled('trace');
-    console.debug('🐰 VectFox: Loading all collections for Database Browser...');
+    log.trace('🐰 VectFox: Loading all collections for Database Browser...');
 
     // Clean up registry first (remove nulls and duplicates)
     cleanupCollectionRegistry();
@@ -1019,7 +1018,7 @@ export async function loadAllCollections(settings, autoDiscover = true) {
     }
 
     const registry = getCollectionRegistry();
-    console.debug(`VectFox: Registry contains ${registry.length} collection(s):`, registry);
+    log.trace(`VectFox: Registry contains ${registry.length} collection(s):`, registry);
 
     const collections = [];
     const hasPlugin = pluginAvailable === true;
@@ -1037,7 +1036,7 @@ export async function loadAllCollections(settings, autoDiscover = true) {
             // won't duplicate, won't overwrite an existing handle, and only saves for truly new entries.
             registerCollection(registryKey);
 
-            if (debugLog) console.log(`VectFox: Loading collection: ${collectionId} (backend: ${registryBackend || 'unknown'}, source: ${registrySource || 'unknown'})`);
+            log.trace(`VectFox: Loading collection: ${collectionId} (backend: ${registryBackend || 'unknown'}, source: ${registrySource || 'unknown'})`);
 
             // First check stored metadata for user-defined contentType (authoritative source)
             const storedMeta = getCollectionMeta(registryKey) || getCollectionMeta(collectionId);
@@ -1051,7 +1050,7 @@ export async function loadAllCollections(settings, autoDiscover = true) {
                 const writeKey = collectionsMap[registryKey] ? registryKey : collectionId;
                 setCollectionMeta(writeKey, { scope: 'character' });
                 storedMeta.scope = 'character';
-                console.log(`VectFox: Migrated ${collectionId} from scope='global' to scope='character'`);
+                log.verbose(`VectFox: Migrated ${collectionId} from scope='global' to scope='character'`);
             }
 
             // `storedMeta.scope` is already auto-resolved by getCollectionMeta
@@ -1063,7 +1062,7 @@ export async function loadAllCollections(settings, autoDiscover = true) {
                 scope: storedMeta.scope,
                 rawId: parsedMeta.rawId,
             };
-            if (debugLog) console.log(`VectFox:   Type: ${metadata.type}, Scope: ${metadata.scope}${storedMeta.contentType ? ' (from stored meta)' : ' (parsed from ID)'}`);
+            log.trace(`VectFox:   Type: ${metadata.type}, Scope: ${metadata.scope}${storedMeta.contentType ? ' (from stored meta)' : ' (parsed from ID)'}`);
 
             let chunkCount = 0;
             let hashes = [];
@@ -1076,7 +1075,7 @@ export async function loadAllCollections(settings, autoDiscover = true) {
             // Cache key is "backend:collectionId" (same as registryKey for plugin-managed collections)
             const cacheKey = registryKey;
             if (hasPlugin && pluginCollectionData && pluginCollectionData[cacheKey]) {
-                if (debugLog) console.log(`VectFox:   Using plugin mode - getting data from cache`);
+                log.trace(`VectFox:   Using plugin mode - getting data from cache`);
                 const cacheData = pluginCollectionData[cacheKey];
                 source = cacheData.source;
                 backend = cacheData.backend;
@@ -1091,45 +1090,45 @@ export async function loadAllCollections(settings, autoDiscover = true) {
                     model = preferredModel;
                     const modelInfo = models.find(m => m.path === preferredModel);
                     chunkCount = modelInfo?.chunkCount || 0;
-                    console.log(`VectFox:   Using user's preferred model: ${model}`);
+                    log.verbose(`VectFox:   Using user's preferred model: ${model}`);
                 } else {
                     // Use plugin's default (most chunks)
                     model = cacheData.model || '';
                     chunkCount = cacheData.chunkCount || 0;
                 }
 
-                if (debugLog) console.log(`VectFox:   Plugin reported ${chunkCount} chunks (backend: ${backend}, source: ${source}, models: ${models.length})`);
+                log.trace(`VectFox:   Plugin reported ${chunkCount} chunks (backend: ${backend}, source: ${source}, models: ${models.length})`);
             } else {
                 // Fallback mode: registry key tells us the backend. If it's qdrant, query
                 // qdrant directly. Otherwise try standard first.
                 const registryBk = registryBackend || settings.vector_backend || 'standard';
-                console.log(`VectFox:   Using fallback mode - backend from registry: ${registryBk}`);
+                log.verbose(`VectFox:   Using fallback mode - backend from registry: ${registryBk}`);
                 const fallbackSettings = { ...settings, vector_backend: registryBk };
                 try {
                     hashes = await getSavedHashes(collectionId, fallbackSettings);
                     chunkCount = hashes?.length || 0;
-                    console.log(`VectFox:   Found ${chunkCount} hashes via ${registryBk} backend`);
+                    log.verbose(`VectFox:   Found ${chunkCount} hashes via ${registryBk} backend`);
                 } catch (standardError) {
                     // Try the currently-configured backend if different
                     if (settings.vector_backend && settings.vector_backend !== registryBk) {
-                        console.log(`VectFox:   ${registryBk} backend failed, trying ${settings.vector_backend}`);
+                        log.verbose(`VectFox:   ${registryBk} backend failed, trying ${settings.vector_backend}`);
                         try {
                             hashes = await getSavedHashes(collectionId, settings);
                             chunkCount = hashes?.length || 0;
-                            console.log(`VectFox:   Found ${chunkCount} hashes via ${settings.vector_backend}`);
+                            log.verbose(`VectFox:   Found ${chunkCount} hashes via ${settings.vector_backend}`);
                         } catch (altError) {
-                            console.warn(`VectFox:   Both backends failed for ${collectionId}`);
+                            log.warn(`VectFox:   Both backends failed for ${collectionId}`);
                             chunkCount = 0;
                         }
                     } else {
-                        console.warn(`VectFox:   ${registryBk} backend failed for ${collectionId}`);
+                        log.warn(`VectFox:   ${registryBk} backend failed for ${collectionId}`);
                         chunkCount = 0;
                     }
                 }
             }
 
             const displayName = getCollectionDisplayName(collectionId, metadata);
-            if (debugLog) console.log(`VectFox:   Display name: ${displayName}`);
+            log.trace(`VectFox:   Display name: ${displayName}`);
 
             // Metadata is stored under the registry-key form ("backend:id") so it
             // stays consistent with setCollectionLock, cleanupOrphanedMeta, and the
@@ -1153,23 +1152,23 @@ export async function loadAllCollections(settings, autoDiscover = true) {
                 model: model,               // Primary model path for vectra lookups
                 models: models              // All available models [{name, path, chunkCount}]
             });
-            if (debugLog) console.log(`VectFox:   ✓ Added to collections list`);
+            log.trace(`VectFox:   ✓ Added to collections list`);
         } catch (error) {
-            console.error(`VectFox: Failed to load collection ${registryKey}`, error);
-            console.error(`VectFox:   Error details:`, error.message);
-            console.error(`VectFox:   Stack:`, error.stack);
+            log.error(`VectFox: Failed to load collection ${registryKey}`, error);
+            log.error(`VectFox:   Error details:`, error.message);
+            log.error(`VectFox:   Stack:`, error.stack);
             // Continue loading other collections
         }
     }
 
-    if (debugLog) console.log(`\n✅ VectFox: Loaded ${collections.length} non-empty collections for Database Browser`);
+    log.trace(`\n✅ VectFox: Loaded ${collections.length} non-empty collections for Database Browser`);
     if (collections.length === 0 && registry.length > 0) {
-        console.debug(`⚠️ VectFox: ${registry.length} collections in registry but all are empty!`);
-        console.debug(`   💡 Collections need to have vectorized chunks to appear in Database Browser`);
-        console.debug(`   💡 Try vectorizing your chat or content first`);
+        log.trace(`⚠️ VectFox: ${registry.length} collections in registry but all are empty!`);
+        log.trace(`   💡 Collections need to have vectorized chunks to appear in Database Browser`);
+        log.trace(`   💡 Try vectorizing your chat or content first`);
     } else if (collections.length === 0 && registry.length === 0) {
-        console.debug(`ℹ️ VectFox: No collections registered yet`);
-        console.debug(`   💡 Collections are created when you vectorize chat messages or documents`);
+        log.trace(`ℹ️ VectFox: No collections registered yet`);
+        log.trace(`   💡 Collections are created when you vectorize chat messages or documents`);
     }
 
     return collections;

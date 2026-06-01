@@ -2621,9 +2621,10 @@ function bindSettingsEvents(settings, callbacks) {
         });
 
     $('#VectFox_agentic_debug')
-        .prop('checked', !!settings.agentic_retrieval_debug_logging)
+        .prop('checked', settings.debug_domain?.agent || false)
         .on('change', function() {
-            settings.agentic_retrieval_debug_logging = $(this).prop('checked');
+            if (!settings.debug_domain) settings.debug_domain = {};
+            settings.debug_domain.agent = $(this).prop('checked');
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });

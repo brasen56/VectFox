@@ -2,6 +2,7 @@ import { porterStemmer, extractCJKTokens, getCjkTokenizerMode, CJK_TOKENIZER_MOD
 import { substituteParams } from '../../../../../script.js';
 import { buildStopSet } from './stop-words.js';
 import { stopLocalesForMode } from './language-modes.js';
+import { log } from './log.js';
 
 /**
  * ============================================================================
@@ -432,7 +433,7 @@ export function extractTextKeywords(text, options = {}) {
     }
 
     if (result.length > 0) {
-        console.debug(`[VectFox Keyword Extraction] Extracted text keywords (${level} level): [${result.map(k => `${k.text}(${k.weight.toFixed(2)}x, freq:${k.frequency})`).join(', ')}] from: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+        log.trace(`[VectFox Keyword Extraction] Extracted text keywords (${level} level): [${result.map(k => `${k.text}(${k.weight.toFixed(2)}x, freq:${k.frequency})`).join(', ')}] from: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
     }
 
     return result;
@@ -501,7 +502,7 @@ export function extractChatKeywords(text, options = {}) {
     }
 
     if (keywords.length > 0) {
-        console.debug(`[VectFox Keyword Extraction] Extracted chat keywords: [${keywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}] from text: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+        log.trace(`[VectFox Keyword Extraction] Extracted chat keywords: [${keywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}] from text: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
     }
 
     return keywords;
@@ -690,7 +691,7 @@ export function extractBM25Keywords(text, options = {}) {
     }));
 
     if (keywords.length > 0) {
-        console.debug(`[VectFox BM25 Keywords] Level=${level}, scanned ${scanText.length}/${text.length} chars, ${sentences.length} sentences → [${keywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}]`);
+        log.trace(`[VectFox BM25 Keywords] Level=${level}, scanned ${scanText.length}/${text.length} chars, ${sentences.length} sentences → [${keywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}]`);
     }
 
     return keywords;
@@ -907,7 +908,7 @@ export function extractSmartKeywords(text, options = {}) {
 
     if (keywords.length > 0) {
         const entityCount = keywords.filter(k => k.isEntity).length;
-        console.debug(`[VectFox Smart Keywords] Level=${level}, ${keywords.length} keywords (${entityCount} entities) → [${keywords.map(k => `${k.text}(${k.type})`).join(', ')}]`);
+        log.trace(`[VectFox Smart Keywords] Level=${level}, ${keywords.length} keywords (${entityCount} entities) → [${keywords.map(k => `${k.text}(${k.type})`).join(', ')}]`);
     }
 
     return keywords;
@@ -1012,14 +1013,11 @@ export function applyKeywordBoost(results, query, options = {}) {
     const {
         diminishingReturns = true,
         perKeywordCap = true,
-        debug = false,
     } = options;
 
     const queryLower = query.toLowerCase();
 
-    if (debug) {
-        console.log(`[VectFox Keyword Boost] Starting keyword boost for query: "${query}" (diminishing=${diminishingReturns}, cap=${perKeywordCap})`);
-    }
+    log.verbose(`[VectFox Keyword Boost] Starting keyword boost for query: "${query}" (diminishing=${diminishingReturns}, cap=${perKeywordCap})`);
 
     const boosted = results.map(result => {
         const rawKeywords = result.keywords || result.metadata?.keywords || [];
@@ -1058,11 +1056,11 @@ export function applyKeywordBoost(results, query, options = {}) {
             finalBoost = rawBoost;
         }
 
-        if (debug && matchedKeywords.length > 0) {
+        if (matchedKeywords.length > 0) {
             const scaleInfo = diminishingReturns
                 ? ` (raw=${rawBoost.toFixed(2)}x, scale=${(MATCH_SCALING_FACTORS[Math.min(matchedKeywords.length, 3)] * 100).toFixed(0)}%)`
                 : '';
-            console.log(`[VectFox Keyword Boost] Result matched ${matchedKeywords.length} keyword(s): [${matchedKeywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}] → boost: ${finalBoost.toFixed(2)}x${scaleInfo}, score: ${result.score.toFixed(4)} → ${(result.score * finalBoost).toFixed(4)}`);
+            log.trace(`[VectFox Keyword Boost] Result matched ${matchedKeywords.length} keyword(s): [${matchedKeywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}] → boost: ${finalBoost.toFixed(2)}x${scaleInfo}, score: ${result.score.toFixed(4)} → ${(result.score * finalBoost).toFixed(4)}`);
         }
 
         return {
@@ -1081,10 +1079,8 @@ export function applyKeywordBoost(results, query, options = {}) {
     // Sort by boosted score
     boosted.sort((a, b) => b.score - a.score);
 
-    if (debug) {
-        const boostedCount = boosted.filter(r => r.keywordBoosted).length;
-        console.log(`[VectFox Keyword Boost] Applied keyword boosts to ${boostedCount}/${boosted.length} results (diminishing=${diminishingReturns})`);
-    }
+    const boostedCount = boosted.filter(r => r.keywordBoosted).length;
+    log.verbose(`[VectFox Keyword Boost] Applied keyword boosts to ${boostedCount}/${boosted.length} results (diminishing=${diminishingReturns})`);
 
     return boosted;
 }

@@ -92,7 +92,7 @@ export async function ensureVectorizationTip(chatUUID, collectionId, settings) {
         _vectorizationTipByUuid.set(chatUUID, tip);
         return tip;
     } catch (err) {
-        console.warn(`[EventBase VectorizationTip] probe failed for ${collectionId} — falling back to marker:`, err?.message || err);
+        log.warn(`[EventBase VectorizationTip] probe failed for ${collectionId} — falling back to marker:`, err?.message || err);
         return null;
     }
 }
@@ -378,7 +378,7 @@ export async function stampAutoSyncMarker(chatUUID, settings) {
                 if (typeof end === 'number' && end > maxEnd) maxEnd = end;
             }
         } catch (err) {
-            console.warn(`[EventBase AutoSyncMarker] listChunks failed for ${candidates[0].collectionId} — falling back to chat-tail marker:`, err?.message || err);
+            log.warn(`[EventBase AutoSyncMarker] listChunks failed for ${candidates[0].collectionId} — falling back to chat-tail marker:`, err?.message || err);
         }
     }
 
@@ -388,7 +388,7 @@ export async function stampAutoSyncMarker(chatUUID, settings) {
     store.eventbase_autosync_start_marker[chatUUID] = marker;
     saveSettingsDebounced();
 
-    console.log(`[EventBase] AutoSyncMarker stamped: uuid=${chatUUID}, marker=${marker} (maxEnd=${maxEnd}, chatLength=${chatLength}, candidates=${candidates.length})`);
+    log.lifecycle(`[EventBase] AutoSyncMarker stamped: uuid=${chatUUID}, marker=${marker} (maxEnd=${maxEnd}, chatLength=${chatLength}, candidates=${candidates.length})`);
     return marker;
 }
 
@@ -500,7 +500,7 @@ export function shouldUseTipFallback({ skipTipFallback, fastForwardSkipped, hasC
 export async function prepareForFreshExtraction(chatUUID) {
     if (!chatUUID) return { skipTipFallback: true };
     clearExtractionCachesForChat(chatUUID);
-    console.log(`[EventBase] prepareForFreshExtraction: caches cleared for ${chatUUID} (skipTipFallback will be propagated)`);
+    log.lifecycle(`[EventBase] prepareForFreshExtraction: caches cleared for ${chatUUID} (skipTipFallback will be propagated)`);
     return { skipTipFallback: true };
 }
 
@@ -806,7 +806,7 @@ export async function ensureEventBaseIndexes(settings) {
             );
         }
     } else {
-        console.warn('[VectFox] EventBase index backfill errors:', errors);
+        log.warn('[VectFox] EventBase index backfill errors:', errors);
         if (typeof toastr !== 'undefined') {
             toastr.warning(
                 `VectFox: EventBase index upgrade failed for ${errors.length} collection(s) — see console. AgentMode filters may run slower.`,

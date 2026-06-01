@@ -202,7 +202,7 @@ async function _runOneLiveQuery({
 
                         _logRerankComparison(colId, queryText, nativeForCompare, jsFiltered, nativeMs, jsMs, settings, comparisonLog);
                     } catch (cmpErr) {
-                        console.warn(`[EventBase compare] JS path failed for ${colId}:`, cmpErr.message);
+                        log.warn(`[EventBase compare] JS path failed for ${colId}:`, cmpErr.message);
                     }
                 }
 
@@ -210,7 +210,7 @@ async function _runOneLiveQuery({
             }
             // backendType !== qdrant or no method → fall through to legacy path
         } catch (err) {
-            console.warn(`[EventBase] Native rerank backend resolution failed for ${colId} (falling back):`, err.message);
+            log.warn(`[EventBase] Native rerank backend resolution failed for ${colId} (falling back):`, err.message);
         }
     }
 
@@ -266,9 +266,9 @@ function _logRerankComparison(colId, queryText, native, js, nativeMs, jsMs, sett
     }
 
     const previewQuery = String(queryText || '').replace(/\s+/g, ' ').slice(0, 80);
-    console.log(`[EventBase compare] col=${colId} q="${previewQuery}" — overlap@${Math.min(nativeTop.length, jsTop.length)}=${overlap.length}, spearmanRho=${rho.toFixed(3)}, native=${nativeMs}ms, js=${jsMs}ms`);
+    log.domain('rerank', 'trace', `[EventBase compare] col=${colId} q="${previewQuery}" — overlap@${Math.min(nativeTop.length, jsTop.length)}=${overlap.length}, spearmanRho=${rho.toFixed(3)}, native=${nativeMs}ms, js=${jsMs}ms`);
     if (onlyNative.length || onlyJs.length) {
-        console.log(`[EventBase compare]   onlyNative=[${onlyNative.slice(0, 5).join(', ')}${onlyNative.length > 5 ? `, +${onlyNative.length - 5}` : ''}], onlyJs=[${onlyJs.slice(0, 5).join(', ')}${onlyJs.length > 5 ? `, +${onlyJs.length - 5}` : ''}]`);
+        log.domain('rerank', 'trace', `[EventBase compare]   onlyNative=[${onlyNative.slice(0, 5).join(', ')}${onlyNative.length > 5 ? `, +${onlyNative.length - 5}` : ''}], onlyJs=[${onlyJs.slice(0, 5).join(', ')}${onlyJs.length > 5 ? `, +${onlyJs.length - 5}` : ''}]`);
     }
 
     if (settings.eventbase_compare_rerank_verbose) {
@@ -277,7 +277,7 @@ function _logRerankComparison(colId, queryText, native, js, nativeMs, jsMs, sett
         for (const k of overlap.slice(0, 5)) {
             const n = nativeByKey.get(k);
             const j = jsByKey.get(k);
-            console.log(`[EventBase compare verbose]   key=${k} nativeScore=${n?.score?.toFixed(4)} jsFinal=${j?._jsFinal?.toFixed(4)} (imp=${n?.importance}, persist=${n?.should_persist}, swe=${n?.source_window_end})`);
+            log.domain('rerank', 'trace', `[EventBase compare verbose]   key=${k} nativeScore=${n?.score?.toFixed(4)} jsFinal=${j?._jsFinal?.toFixed(4)} (imp=${n?.importance}, persist=${n?.should_persist}, swe=${n?.source_window_end})`);
         }
     }
 
@@ -323,8 +323,6 @@ function _logRerankComparison(colId, queryText, native, js, nativeMs, jsMs, sett
  * @returns {Promise<{ events: object[], debug: object }>}
  */
 export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false }) {
-    const debugLog = log.enabled('lifecycle');
-
     const topK = (settings.eventbase_retrieval_top_k || 8) * 2; // overfetch for re-rank
     const minImportance = settings.eventbase_retrieval_min_importance || 1;
 
@@ -345,7 +343,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         && settings.hybrid_native_prefer !== false
         && settings.eventbase_native_rerank === true
     );
-    const compareMode = useNativeRerank && settings.eventbase_compare_rerank === true && debugLog;
+    const compareMode = useNativeRerank && settings.eventbase_compare_rerank === true && log.domainEnabled('rerank');
 
     // Detect "no vector scoring" state — Standard backend without the Similharity
     // plugin returns score=0 from the native /api/vector/query path (see
@@ -369,8 +367,8 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         persist: settings.eventbase_rerank_w_persist ?? DEFAULT_WEIGHTS.persist,
         recency: settings.eventbase_rerank_w_recency ?? DEFAULT_WEIGHTS.recency,
     });
-    if (cosineInactive && debugLog) {
-        console.log(`[EventBase] Cosine weight coerced to 0 (Standard backend, plugin unavailable). Effective weights:`, rerankWeights);
+    if (cosineInactive) {
+        log.lifecycle(`[EventBase] Cosine weight coerced to 0 (Standard backend, plugin unavailable). Effective weights:`, rerankWeights);
     }
     const halfLife = !chatLength || chatLength === 0 ? 40 : Math.max(40, chatLength * 0.20);
     const dedupDepthForFilter = settings.deduplication_depth ?? 0;
@@ -384,10 +382,10 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         applyContextDedupFilter: !skipContextDedup,
     };
 
-    if (debugLog) {
+    if (log.enabled('lifecycle')) {
         const method = ebSettings.keyword_scoring_method;
         const nativePrefer = settings.hybrid_native_prefer !== false;
-        console.log(`[EventBase] Retrieval start — topK overfetch=${topK}, minImportance=${minImportance}, method=${method}, nativePrefer=${nativePrefer}, liveCollections=${liveCollectionIds?.length || 0}, nativeRerank=${useNativeRerank}${compareMode ? ' (compare ON)' : ''}`);
+        log.lifecycle(`[EventBase] Retrieval start — topK overfetch=${topK}, minImportance=${minImportance}, method=${method}, nativePrefer=${nativePrefer}, liveCollections=${liveCollectionIds?.length || 0}, nativeRerank=${useNativeRerank}${compareMode ? ' (compare ON)' : ''}`);
     }
 
     // 1. Dual vector query against each locked live EventBase collection.
@@ -411,7 +409,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     const comparisonLog = compareMode ? [] : null;
 
     if (skipLiveQuery || !liveCollectionIds?.length) {
-        if (debugLog) console.log('[EventBase] Live query skipped (no locked collection or paused)');
+        log.verbose('[EventBase] Live query skipped (no locked collection or paused)');
     } else {
         const promises = [];
         for (const colId of liveCollectionIds) {
@@ -432,7 +430,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
                         anchorBoostAmount: _resolveAnchorBoostAmount(settings),
                         rerankWeights,
                     }).catch(err => {
-                        console.error(`[EventBase] Live query failed (${colId}):`, err);
+                        log.error(`[EventBase] Live query failed (${colId}):`, err);
                         return [];
                     })
                 );
@@ -453,9 +451,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         }
         rawCandidates = [...mergedMap.values()];
 
-        if (debugLog) {
-            console.log(`[EventBase] Live query: ${liveCollectionIds.length} collection(s) × ${queryTexts.length} query/queries → ${rawCandidates.length} unique events`);
-        }
+        log.verbose(`[EventBase] Live query: ${liveCollectionIds.length} collection(s) × ${queryTexts.length} query/queries → ${rawCandidates.length} unique events`);
     }
 
     // Merge in events pre-queried from archive event collections (VectFox_archiveevent_*).
@@ -463,8 +459,8 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         ? [...rawCandidates, ...additionalCandidates]
         : rawCandidates;
 
-    if (debugLog && additionalCandidates?.length) {
-        console.log(`[EventBase] Merged ${additionalCandidates.length} archive event(s) into ${rawCandidates.length} live candidates`);
+    if (additionalCandidates?.length) {
+        log.verbose(`[EventBase] Merged ${additionalCandidates.length} archive event(s) into ${rawCandidates.length} live candidates`);
     }
 
     // 3. Filter by minimum importance — server already filtered _rerankApplied
@@ -483,9 +479,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         return imp >= minImportance;
     });
 
-    if (debugLog) {
-        console.log(`[EventBase] After importance filter (>=${minImportance}): ${importanceFiltered.length} candidates`);
-    }
+    log.verbose(`[EventBase] After importance filter (>=${minImportance}): ${importanceFiltered.length} candidates`);
 
     // 3. Build weights from settings
     const rawWeights = {
@@ -632,17 +626,15 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
             if (!candidate._rerankApplied && !accepted._rerankApplied) {
                 const candSim = _candidateSimScore(candidate);
                 if (candSim >= DUPLICATE_SCORE_OVERRIDE) {
-                    if (debugLog) {
-                        console.log(`[EventBase] Dedup: "${candidate.event_type}" ESCAPED dedup via score override (sim=${candSim.toFixed(3)} >= ${DUPLICATE_SCORE_OVERRIDE}, windows ${haveTiming ? Math.abs(aEnd - cEnd) + ' msgs' : '?'} apart)`);
-                    }
+                    log.trace(`[EventBase] Dedup: "${candidate.event_type}" ESCAPED dedup via score override (sim=${candSim.toFixed(3)} >= ${DUPLICATE_SCORE_OVERRIDE}, windows ${haveTiming ? Math.abs(aEnd - cEnd) + ' msgs' : '?'} apart)`);
                     continue;  // not a duplicate after all — let it through
                 }
             }
 
             isDuplicate = true;
-            if (debugLog) {
+            if (log.enabled('trace')) {
                 const simForLog = _candidateSimScore(candidate);
-                console.log(`[EventBase] Dedup: "${candidate.event_type}" suppressed (sim=${simForLog.toFixed(3)}${candidate._rerankApplied ? ' [formula]' : ''}, ${haveTiming ? `windows ${Math.abs(aEnd - cEnd)} msgs apart` : 'no timing info'})`);
+                log.trace(`[EventBase] Dedup: "${candidate.event_type}" suppressed (sim=${simForLog.toFixed(3)}${candidate._rerankApplied ? ' [formula]' : ''}, ${haveTiming ? `windows ${Math.abs(aEnd - cEnd)} msgs apart` : 'no timing info'})`);
             }
             break;
         }
@@ -666,24 +658,24 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
             if (e._rerankApplied) return true;
             const windowEnd = e.source_window_end ?? -1;
             const inRecentContext = windowEnd >= visibleThreshold;
-            if (inRecentContext && debugLog) {
-                console.log(`[EventBase] Dedup-depth skip: event "${e.event_type}" source_window_end=${windowEnd} is within last ${dedupDepth} messages (threshold=${visibleThreshold})`);
+            if (inRecentContext) {
+                log.trace(`[EventBase] Dedup-depth skip: event "${e.event_type}" source_window_end=${windowEnd} is within last ${dedupDepth} messages (threshold=${visibleThreshold})`);
             }
             return !inRecentContext;
         });
 
-    if (debugLog && contextDedupedEvents.length < dedupedEvents.length) {
-        console.log(`[EventBase] Dedup depth (${dedupDepth}) removed ${dedupedEvents.length - contextDedupedEvents.length} event(s) already visible in context`);
+    if (contextDedupedEvents.length < dedupedEvents.length) {
+        log.verbose(`[EventBase] Dedup depth (${dedupDepth}) removed ${dedupedEvents.length - contextDedupedEvents.length} event(s) already visible in context`);
     }
 
     // 7. Trim to requested top-K
     const finalTopK = settings.eventbase_retrieval_top_k || 8;
     const finalEvents = contextDedupedEvents.slice(0, finalTopK);
 
-    if (debugLog) {
-        console.log(`[EventBase] Final events after dedup + trim: ${finalEvents.length}`);
+    log.lifecycle(`[EventBase] Final events after dedup + trim: ${finalEvents.length}`);
+    if (log.enabled('trace')) {
         finalEvents.forEach((e, i) => {
-            console.log(`  [${i}] type=${e.event_type} imp=${e.importance} score=${e._finalScore?.toFixed(3)} persist=${e.should_persist}`);
+            log.trace(`  [${i}] type=${e.event_type} imp=${e.importance} score=${e._finalScore?.toFixed(3)} persist=${e.should_persist}`);
         });
     }
 
