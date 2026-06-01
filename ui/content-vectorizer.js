@@ -2489,7 +2489,7 @@ async function startContinueVectorization() {
         return;
     }
 
-    if (window.innerWidth <= 768) $('#vectfox_content_vectorizer_modal').fadeOut(200);
+    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) $('#vectfox_content_vectorizer_modal').fadeOut(200);
 
     // If no vectors exist yet, just run the normal vectorization
     if (currentContentType === 'chat' && (source.type === 'current' || source.type === 'file')) {
@@ -2568,7 +2568,7 @@ async function _runEventBaseBackfill({ resetCaches = false } = {}) {
     activeVectorizeAbortController = new AbortController();
     updateVectorizeButtonState(true);
     progressTracker.setCancelHandler(() => stopActiveVectorization());
-    if (window.innerWidth <= 768) progressTracker.show('EventBase Extraction', 0, 'Windows');
+    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) progressTracker.show('EventBase Extraction', 0, 'Windows');
 
     try {
         const { runEventBaseIngestion } = await import('../core/eventbase-workflow.js');
@@ -2862,7 +2862,7 @@ async function startVectorization() {
                 return;
             }
         }
-        if (window.innerWidth <= 768) $('#vectfox_content_vectorizer_modal').fadeOut(200);
+        if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) $('#vectfox_content_vectorizer_modal').fadeOut(200);
         return _runEventBaseBackfill({ resetCaches: true });
     }
 
@@ -2903,7 +2903,7 @@ async function startVectorization() {
         }
     }
 
-    if (window.innerWidth <= 768) $('#vectfox_content_vectorizer_modal').fadeOut(200);
+    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) $('#vectfox_content_vectorizer_modal').fadeOut(200);
     isVectorizing = true;
     activeVectorizeAbortController = new AbortController();
     updateVectorizeButtonState(true);

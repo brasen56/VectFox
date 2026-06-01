@@ -403,6 +403,10 @@
     .vectfox-browser-stats {
         padding: 10px 12px !important;
         flex-shrink: 0 !important;
+        position: sticky !important;
+        bottom: 0 !important;
+        z-index: 5 !important;
+        background: var(--SmartThemeBlurTintColor) !important;
     }
 
     /* ========================================================================
@@ -587,7 +591,7 @@
      * ======================================================================== */
 
     .vectfox-progress-panel {
-        z-index: 999999 !important;
+        z-index: 2147483647 !important;
     }
 
     /* ========================================================================

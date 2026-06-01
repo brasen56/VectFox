@@ -71,6 +71,8 @@ export class ProgressTracker {
         if (!this.panel) {
             this.createPanel();
         }
+        // Re-append to end of body so it layers above any ST panel opened after it
+        document.body.appendChild(this.panel);
 
         // Set the item label using cached element
         if (this.elements?.statLabel) {
@@ -280,6 +282,8 @@ export class ProgressTracker {
      */
     reopen() {
         if (!this.panel) return false;
+        // Re-append to end of body to surface above any ST panel opened since last show()
+        document.body.appendChild(this.panel);
         this.panel.style.display = 'block';
         this.isVisible = true;
         this.refreshCancelButton();
@@ -351,6 +355,9 @@ export class ProgressTracker {
                 </div>
             </div>
         `;
+
+        // Remove any stale element left over from a previous session/hot-reload
+        document.getElementById('VectFox_progress_panel')?.remove();
 
         // Insert panel into DOM
         const container = document.createElement('div');
