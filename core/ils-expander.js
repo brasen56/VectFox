@@ -43,32 +43,57 @@ function isILSSummaryMessage(msg) {
  */
 export function expandILSMessages(messages) {
     if (!Array.isArray(messages) || messages.length === 0) {
-        return { expanded: messages, stats: { summariesFound: 0, originalsRecovered: 0 } };
+        return { expanded: messages, stats: { summariesFound: 0, originalsRecovered: 0, maxDepth: 0 } };
     }
 
-    let summariesFound = 0;
-    let originalsRecovered = 0;
+    const stats = { summariesFound: 0, originalsRecovered: 0, maxDepth: 0 };
     const expanded = [];
 
-    for (const msg of messages) {
+    // Defensive cap on recursion. ILS nests summaries-of-summaries (see its
+    // Experiment1 / CreateOriginalMessagesContainer depth handling), and while
+    // a malformed/cyclic OriginalMessages chain shouldn't occur in practice,
+    // an unbounded recursion would hang the whole vectorization run. 64 layers
+    // is far beyond any realistic ILS nesting.
+    const MAX_DEPTH = 64;
+
+    /**
+     * Recursively flattens one message into `out`. A summary message is replaced
+     * by its OriginalMessages; any of those that are themselves summaries are
+     * expanded in turn, so nested (multilayered) summaries resolve down to the
+     * real leaf messages.
+     * @param {object} msg
+     * @param {number} depth Current nesting depth (0 = top-level chat message)
+     */
+    function flatten(msg, depth) {
         if (isILSSummaryMessage(msg)) {
             const originals = msg.extra.ILS_Data.OriginalMessages;
-            summariesFound++;
+            stats.summariesFound++;
+            if (depth > stats.maxDepth) stats.maxDepth = depth;
+
+            if (depth >= MAX_DEPTH) {
+                // Bail out of pathological nesting — keep the summary text rather
+                // than recursing forever.
+                log.warn(`[ILS Expander] Max nesting depth (${MAX_DEPTH}) reached — keeping summary text instead of expanding further`);
+                if (msg.mes) expanded.push(msg);
+                return;
+            }
 
             if (Array.isArray(originals) && originals.length > 0) {
-                // Expand: push each original message
                 for (const orig of originals) {
-                    // Reconstruct a message-like object with the original fields
-                    // Ensure mes and name are present for downstream consumers
-                    if (orig && orig.mes) {
+                    if (!orig) continue;
+                    if (isILSSummaryMessage(orig)) {
+                        // Nested summary — recurse so multilayered summaries
+                        // resolve down to their underlying original messages.
+                        flatten(orig, depth + 1);
+                    } else if (orig.mes) {
                         expanded.push(orig);
-                        originalsRecovered++;
+                        stats.originalsRecovered++;
                     }
                 }
-                log.verbose(`[ILS Expander] Expanded ILS summary into ${originals.length} original messages`);
+                log.verbose(`[ILS Expander] Expanded ILS summary (depth=${depth}) into ${originals.length} original message(s)`);
             } else {
                 // No originals available — keep the summary as-is (better than dropping it)
-                expanded.push(msg);
+                if (msg.mes) expanded.push(msg);
                 log.verbose('[ILS Expander] ILS summary has no originals, keeping summary text');
             }
         } else {
@@ -77,9 +102,13 @@ export function expandILSMessages(messages) {
         }
     }
 
-    if (summariesFound > 0) {
-        log.lifecycle(`[ILS Expander] Expanded ${summariesFound} ILS summaries, recovered ${originalsRecovered} original messages (input: ${messages.length}, output: ${expanded.length})`);
+    for (const msg of messages) {
+        flatten(msg, 0);
     }
 
-    return { expanded, stats: { summariesFound, originalsRecovered } };
+    if (stats.summariesFound > 0) {
+        log.lifecycle(`[ILS Expander] Expanded ${stats.summariesFound} ILS summaries (max nesting depth ${stats.maxDepth}), recovered ${stats.originalsRecovered} original messages (input: ${messages.length}, output: ${expanded.length})`);
+    }
+
+    return { expanded, stats };
 }
