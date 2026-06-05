@@ -36,6 +36,7 @@ import { getRequestHeaders } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG, HASH_CACHE_SIZE, RETRIEVAL_TIMEOUT_MS } from './constants.js';
 import AsyncUtils from '../utils/async-utils.js';
 import { log } from './log.js';
+import { expandILSMessages } from './ils-expander.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
 import {
     getChatUUID,
@@ -367,7 +368,18 @@ export async function synchronizeChat(settings, batchSize = 5, triggerEvent = nu
     }
 
     const { runEventBaseIngestion } = await import('./eventbase-workflow.js');
-    const messages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+    let messages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+
+    // Expand InlineSummary summary messages back to originals for extraction.
+    // Controlled by the expand_ils_summaries setting (default: true).
+    if (settings.expand_ils_summaries !== false) {
+        const { expanded, stats } = expandILSMessages(messages);
+        if (stats.summariesFound > 0) {
+            messages = expanded;
+            log.lifecycle(`[AutoSync] ILS expansion: ${stats.summariesFound} summaries → ${stats.originalsRecovered} originals (messages: ${context.chat.length} → ${expanded.length})`);
+        }
+    }
+
     log.lifecycle(`[AutoSync] calling runEventBaseIngestion: messages=${messages.length}`);
     let result;
     try {
@@ -1696,7 +1708,18 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null, {
         const context = getContext();
         if (!Array.isArray(context.chat)) return;
 
-        const allMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+        let allMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+
+        // Expand InlineSummary summary messages back to originals for extraction.
+        // Controlled by the expand_ils_summaries setting (default: true).
+        if (settings.expand_ils_summaries !== false) {
+            const { expanded, stats } = expandILSMessages(allMessages);
+            if (stats.summariesFound > 0) {
+                allMessages = expanded;
+                log.lifecycle(`[VectorizeAll] ILS expansion: ${stats.summariesFound} summaries → ${stats.originalsRecovered} originals`);
+            }
+        }
+
         const messages = startFromMessage > 1
             ? allMessages.slice(Math.min(startFromMessage - 1, allMessages.length))
             : allMessages;

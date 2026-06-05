@@ -799,6 +799,14 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <small class="VectFox_hint">When unchecked, auto-sync runs silently in the background without opening the progress popup. The Vectorizing Content page always shows the progress modal regardless.</small>
                             </div>
 
+                            <div class="vectfox-form-group" style="margin-top: 8px;">
+                                <label class="checkbox_label" for="VectFox_expand_ils_summaries">
+                                    <input type="checkbox" id="VectFox_expand_ils_summaries" />
+                                    <span>Expand InlineSummary messages</span>
+                                </label>
+                                <small class="VectFox_hint">When enabled, InlineSummary summary messages are expanded back to their original detailed messages before extraction. This gives VectFox full detail for event extraction instead of condensed summaries. Disable if you want VectFox to work with the condensed summaries as-is.</small>
+                            </div>
+
                             <small class="VectFox_hint" style="display:block; margin-top: 8px;">
                                 Chat Auto-Sync follows the EventBase extraction settings. Legacy chat chunking controls are hidden because chat history no longer uses the old chunk-based retrieval path.
                             </small>
@@ -3089,6 +3097,15 @@ function bindSettingsEvents(settings, callbacks) {
         .prop('checked', settings.autosync_show_progress_modal === true)
         .on('change', function() {
             settings.autosync_show_progress_modal = $(this).prop('checked');
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+
+    // InlineSummary expansion toggle (default: on)
+    $('#VectFox_expand_ils_summaries')
+        .prop('checked', settings.expand_ils_summaries !== false)
+        .on('change', function() {
+            settings.expand_ils_summaries = $(this).prop('checked');
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });

@@ -233,6 +233,7 @@ const defaultSettings = {
     eventbase_retrieval_filters_enabled: true,
     eventbase_autosync_popup: true,               // Show popup toast when auto-sync extraction runs
     autosync_show_progress_modal: false,          // Show progress modal popup during auto-sync (default: silent)
+    expand_ils_summaries: true,                   // Expand InlineSummary summaries to originals for extraction (default: on)
     chat_lock_index: {},                          // Reverse index: chatId -> [collectionId, ...] for O(1) tab lookups
     // ─── Logging (core/log.js) ──────────────────────────────────────────
     // Verbosity dropdown — single noise floor for the whole pipeline.
