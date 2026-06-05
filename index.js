@@ -231,6 +231,8 @@ const defaultSettings = {
     eventbase_retrieval_min_importance: 1,        // Minimum importance for retrieval
     eventbase_injection_format: 'densetext',      // Injection format: 'densetext' or 'jsonarray'
     eventbase_retrieval_filters_enabled: true,
+    eventbase_extract_rate_limit_calls: 0,        // Throttle extraction-LLM calls: max calls per interval (0 = disabled). Separate from the embedding rate limit.
+    eventbase_extract_rate_limit_interval: 60,    // Extraction-LLM throttle window in seconds
     eventbase_autosync_popup: true,               // Show popup toast when auto-sync extraction runs
     autosync_show_progress_modal: false,          // Show progress modal popup during auto-sync (default: silent)
     expand_ils_summaries: true,                   // Expand InlineSummary summaries to originals for extraction (default: on)

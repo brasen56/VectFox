@@ -585,6 +585,8 @@ Hedging fixes this. If a request hasn't answered within the time limit (15s), Ve
 
 **Vectorization is slow on large chat histories** — VectFox applies API rate limiting by default (60 calls per 60 seconds) to protect free-tier backends. To speed up vectorization: **Settings → Core Tab → Embedding → API Rate Limiting → set "Max Calls" to 0 to disable**. For production Qdrant, you can increase it to 100+ calls/min depending on your server capacity.
 
+**"Too many requests" / rate-limit errors during EventBase extraction** — EventBase extraction makes one LLM call per window to your **Summarization / EventBase model** (separate from the embedder). On rate-limited cloud APIs this can trip a "too many requests" error. Throttle it under **Settings → Core Tab → LLM Summarization & EventBase Extraction → Extraction Rate Limit** (e.g. `5` calls / `1` sec). This is independent of the embedding rate limit, and applies regardless of the Parallel Windows setting. `0 = off`. Lowering **Parallel Windows** (in the Vectorize Content dialog) to `1` and raising the **window size** also reduces the call rate.
+
 ---
 
 ## 🙏 Credits

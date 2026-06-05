@@ -106,7 +106,7 @@ async function withHealthInvalidation(operation, settings) {
 /**
  * Rate limiter that respects user settings dynamically.
  */
-class DynamicRateLimiter {
+export class DynamicRateLimiter {
     constructor() {
         this.timestamps = [];
     }

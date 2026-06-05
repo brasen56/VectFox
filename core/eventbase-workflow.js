@@ -20,7 +20,7 @@ import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { EventBaseFatalError, EventBaseExtractionError } from './eventbase-schema.js';
 import { extractEvents } from './eventbase-extractor.js';
 import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtractionCachesForChat, buildEventBaseCollectionId, isLastWindowExtracted, setVectorizationTip, ensureVectorizationTip, shouldUseTipFallback } from './eventbase-store.js';
-import { getSavedHashes } from './core-vector-api.js';
+import { getSavedHashes, DynamicRateLimiter } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
 import { formatEventsForInjectionDetailed } from './eventbase-injection.js';
@@ -30,6 +30,16 @@ import { log } from './log.js';
 
 /** Extension prompt tag for EventBase (distinct from legacy chunks tag) */
 const EVENTBASE_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_eventbase`;
+
+// Module-level sliding-window throttle for extraction LLM calls. Separate from
+// the embedding rate limiter (core-vector-api.js) because the extraction model
+// (cloud LLM, e.g. OpenRouter/vLLM) and the embedder usually have very
+// different rate ceilings — the embedder is often a local server that can take
+// 60+ calls/min while a free-tier cloud LLM trips at a handful per second.
+// Module-level (not per-run) so pacing carries across back-to-back auto-sync
+// fires. DynamicRateLimiter is timestamp-based with no setInterval, so there is
+// nothing to tear down across this function's many early-return/throw paths.
+const extractRateLimiter = new DynamicRateLimiter();
 
 // ---------------------------------------------------------------------------
 // Ingestion
@@ -367,13 +377,24 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                 let rawEvents;
                 const extractStart = performance.now();
                 try {
-                    rawEvents = await extractEvents({
-                        messages: win.msgs,
-                        windowStart: win.start,
-                        windowEnd: win.end,
-                        settings,
-                        windowIndex: wIdx,
-                    });
+                    // Throttle the extraction LLM call. execute() reads
+                    // rate_limit_calls / rate_limit_interval off the object it's
+                    // given, so we remap the EventBase-extraction-specific keys
+                    // onto those names. maxCalls <= 0 makes execute() a no-op
+                    // passthrough, so this is free when throttling is disabled.
+                    rawEvents = await extractRateLimiter.execute(
+                        () => extractEvents({
+                            messages: win.msgs,
+                            windowStart: win.start,
+                            windowEnd: win.end,
+                            settings,
+                            windowIndex: wIdx,
+                        }),
+                        {
+                            rate_limit_calls: settings.eventbase_extract_rate_limit_calls || 0,
+                            rate_limit_interval: settings.eventbase_extract_rate_limit_interval || 60,
+                        },
+                    );
                     const extractMs = performance.now() - extractStart;
                     log.verbose(`[EventBase concurrency] Window ${wIdx}: LLM extract done in ${extractMs.toFixed(0)}ms (finished at +${(performance.now() - batchStartedAt).toFixed(1)}ms from batch start)`);
                 } catch (err) {

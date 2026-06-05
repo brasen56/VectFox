@@ -380,6 +380,25 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <select id="VectFox_summarize_model_list" class="vectfox-select" style="display:none; margin-top:6px;"></select>
                                     <small class="VectFox_hint">Model ID used for EventBase extraction (separate from embedding model). Required. Click <b>Choose</b> to browse the provider's model list.</small>
 
+                                    <label style="margin-top: 12px;">
+                                        <small>Extraction Rate Limit</small>
+                                    </label>
+                                    <div style="display: flex; gap: 8px;">
+                                        <div style="flex: 1;">
+                                            <label for="VectFox_eventbase_extract_rate_limit_calls" style="display: block; margin-bottom: 4px;">
+                                                <small>Max Calls</small>
+                                            </label>
+                                            <input type="number" id="VectFox_eventbase_extract_rate_limit_calls" class="vectfox-input" min="0" placeholder="0" />
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="VectFox_eventbase_extract_rate_limit_interval" style="display: block; margin-bottom: 4px;">
+                                                <small>Interval (sec)</small>
+                                            </label>
+                                            <input type="number" id="VectFox_eventbase_extract_rate_limit_interval" class="vectfox-input" min="1" placeholder="60" />
+                                        </div>
+                                    </div>
+                                    <small class="VectFox_hint">Throttles extraction-LLM calls (the per-window event extraction) to avoid "too many requests" errors on rate-limited cloud APIs. <b>0 = OFF.</b> This is separate from the embedding rate limit in Core → Embedding. Example: <b>5 calls / 1 sec</b> caps extraction at 5 requests per second regardless of the Parallel Windows setting.</small>
+
                                 </div>
                             </div>
 
@@ -4162,6 +4181,25 @@ function bindSettingsEvents(settings, callbacks) {
         .on('input', function() {
             const value = parseInt($(this).val());
             settings.rate_limit_interval = isNaN(value) ? 60 : value;
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+
+    // Extraction-LLM rate limiting (separate from embedding rate limit above)
+    $('#VectFox_eventbase_extract_rate_limit_calls')
+        .val(settings.eventbase_extract_rate_limit_calls || 0)
+        .on('input', function() {
+            const value = parseInt($(this).val());
+            settings.eventbase_extract_rate_limit_calls = isNaN(value) ? 0 : value;
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+
+    $('#VectFox_eventbase_extract_rate_limit_interval')
+        .val(settings.eventbase_extract_rate_limit_interval || 60)
+        .on('input', function() {
+            const value = parseInt($(this).val());
+            settings.eventbase_extract_rate_limit_interval = isNaN(value) ? 60 : value;
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
