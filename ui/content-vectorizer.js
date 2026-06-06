@@ -2700,14 +2700,37 @@ async function _runEventBaseBackfill({ resetCaches = false } = {}) {
             const sizeCheck = checkWindowSizeChanged(chatUUID, Math.max(2, settings.eventbase_window_size || 6));
             let freshExtractionOpts = null;
             if (sizeCheck.changed) {
-                const estimatedWindows = Math.max(0, Math.floor(
-                    context.chat.filter(m => m.mes && m.mes.trim().length > 0).length / sizeCheck.newSize
-                ));
+                // Estimate from the *expanded* message set. ILS summaries are
+                // flattened back to their originals before extraction, so a count
+                // from the visible (collapsed) chat badly under-reports the real
+                // cost. Mirror vectorizeAll: expand first, then apply Start-From.
+                let estMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+                const collapsedCount = estMessages.length;
+                if (settings.expand_ils_summaries !== false) {
+                    try {
+                        const { expandILSMessages } = await import('../core/ils-expander.js');
+                        const { expanded, stats } = expandILSMessages(estMessages);
+                        if (stats.summariesFound > 0) estMessages = expanded;
+                    } catch (_) { /* estimate only — fall back to collapsed count */ }
+                }
+                const expandedCount = estMessages.length;
+                const estStart = startFromMessage > 1 ? Math.min(startFromMessage - 1, expandedCount) : 0;
+                const estimatedWindows = Math.max(0, Math.floor((expandedCount - estStart) / sizeCheck.newSize));
+                // Only surface the expansion note when it actually changed the count,
+                // so non-ILS chats don't see a confusing parenthetical.
+                const expansionNote = expandedCount > collapsedCount
+                    ? ` (counts the <strong>${expandedCount}</strong> expanded messages from ${collapsedCount} visible — ILS summaries are flattened before extraction)`
+                    : '';
                 const proceed = await callGenericPopup(
                     `<div style="text-align: left;">
                         <p><strong>Window size changed</strong> since the last extraction on this chat (was <strong>${sizeCheck.oldSize}</strong>, now <strong>${sizeCheck.newSize}</strong>).</p>
                         <p>The dedup cache is window-size-dependent, so Continue will re-extract from message ${startFromMessage || 1} at the new window size.</p>
-                        <p style="margin-top: 10px;">Estimated cost: <strong>~${estimatedWindows} LLM calls</strong>. Existing events will not be deleted, so the collection will contain overlapping-coverage events at both sizes.</p>
+                        <p style="margin-top: 10px;">Estimated cost: <strong>~${estimatedWindows} LLM calls</strong>${expansionNote}.</p>
+                        <div style="margin-top: 12px; padding: 10px 12px; border-left: 4px solid var(--warning, #e0a800); background: rgba(224, 168, 0, 0.12); border-radius: 4px;">
+                            <p style="margin: 0 0 6px 0;"><strong>⚠️ This creates duplicate events.</strong></p>
+                            <p style="margin: 0;">Your existing events are <strong>not deleted</strong>. Re-extracting at a new window size produces a <em>second</em> set of events covering the same messages, so the same facts get stored twice (once per size). At retrieval that means the model can be fed the same information repeatedly, plus wasted storage.</p>
+                            <p style="margin: 6px 0 0 0;">To <strong>switch</strong> sizes cleanly: Cancel, then <strong>purge this chat's EventBase collection first</strong> (Database browser) and run <strong>Vectorize</strong>. Only Proceed here if you intentionally want overlapping coverage at both sizes.</p>
+                        </div>
                         <p style="margin-top: 10px;">Proceed anyway?</p>
                     </div>`,
                     POPUP_TYPE.CONFIRM,
@@ -2884,7 +2907,12 @@ async function startVectorization() {
             const proceed = await callGenericPopup(
                 `<div style="text-align: left;">
                     <p><strong>Re-vectorize from scratch?</strong></p>
-                    <p>This resets the extraction progress for this chat and re-extracts from message ${startFromMessage || 1} onward. Existing events are not deleted, so you may get overlapping-coverage events.</p>
+                    <p>This resets the extraction progress for this chat and re-extracts from message ${startFromMessage || 1} onward.</p>
+                    <div style="margin-top: 12px; padding: 10px 12px; border-left: 4px solid var(--warning, #e0a800); background: rgba(224, 168, 0, 0.12); border-radius: 4px;">
+                        <p style="margin: 0 0 6px 0;"><strong>⚠️ This creates duplicate events.</strong></p>
+                        <p style="margin: 0;">Existing events are <strong>not deleted</strong>, so re-extracting stores a second copy of the same facts. At retrieval the model can be fed the same information repeatedly, plus wasted storage.</p>
+                        <p style="margin: 6px 0 0 0;">For a <strong>clean</strong> re-do, Cancel and <strong>purge this chat's EventBase collection first</strong> (Database browser), then Vectorize.</p>
+                    </div>
                     <p style="margin-top: 10px;">To add only new messages without re-extracting, use <strong>Continue</strong> instead.</p>
                 </div>`,
                 POPUP_TYPE.CONFIRM,
