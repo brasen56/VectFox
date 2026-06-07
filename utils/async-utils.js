@@ -253,40 +253,6 @@ const AsyncUtils = {
   },
 
   /**
-   * Debounce async function
-   * Only executes after calls have stopped for specified time
-   *
-   * @param {Function} fn - Async function to debounce
-   * @param {number} wait - Wait time in milliseconds
-   * @returns {Function} Debounced function
-   */
-  debounceAsync(fn, wait) {
-    let timeout;
-    let pendingPromise;
-
-    return function debounced(...args) {
-      clearTimeout(timeout);
-
-      if (!pendingPromise) {
-        pendingPromise = new Promise((resolve, reject) => {
-          timeout = setTimeout(async () => {
-            try {
-              const result = await fn.apply(this, args);
-              resolve(result);
-              pendingPromise = null;
-            } catch (error) {
-              reject(error);
-              pendingPromise = null;
-            }
-          }, wait);
-        });
-      }
-
-      return pendingPromise;
-    };
-  },
-
-  /**
    * Throttle async function
    * Ensures function is called at most once per time period
    *

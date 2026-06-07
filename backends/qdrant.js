@@ -394,7 +394,7 @@ export class QdrantBackend extends VectorBackend {
                     responseText: errorBody,
                     enforceStatusGate: false,
                 });
-                throw new Error(`[Qdrant] Failed to insert ${items.length} vectors into ${actualCollectionId}: ${response.status} ${response.statusText} - ${errorBody}`);
+                throw new Error(`[Qdrant] Failed to insert ${batch.length} vectors into ${actualCollectionId}: ${response.status} ${response.statusText} - ${errorBody}`);
             }
 
             log.verbose(`VectFox Qdrant: Batch ${batchNum}/${batches.length} completed (${batch.length} vectors)`);
@@ -671,7 +671,8 @@ export class QdrantBackend extends VectorBackend {
      * Get a single chunk by hash
      */
     async getChunk(collectionId, hash, settings) {
-        const actualCollectionId = this._stripRegistryPrefix(collectionId);
+        const strippedCollectionId = this._stripRegistryPrefix(collectionId);
+        const actualCollectionId = getActualCollectionId(strippedCollectionId, settings);
         const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}?` + new URLSearchParams({
             backend: BACKEND_TYPE,
             collectionId: actualCollectionId, // Use separate collection per content type
@@ -695,19 +696,31 @@ export class QdrantBackend extends VectorBackend {
      * List chunks with pagination
      */
     async listChunks(collectionId, settings, options = {}) {
-        const actualCollectionId = this._stripRegistryPrefix(collectionId);
+        const strippedCollectionId = this._stripRegistryPrefix(collectionId);
+        const actualCollectionId = getActualCollectionId(strippedCollectionId, settings);
+        const body = {
+            backend: BACKEND_TYPE,
+            collectionId: actualCollectionId, // Use separate collection per content type
+            source: settings.source || 'transformers',
+            model: getModelFromSettings(settings),
+            offset: options.offset || 0,
+            limit: options.limit || 100,
+            includeVectors: options.includeVectors || false,
+        };
+
+        // Add content_type filter for multitenancy mode (mirrors getSavedHashes)
+        if (settings.qdrant_multitenancy) {
+            body.filter = {
+                must: [
+                    { key: 'content_type', match: { value: strippedCollectionId } }
+                ]
+            };
+        }
+
         const response = await fetch('/api/plugins/similharity/chunks/list', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: actualCollectionId, // Use separate collection per content type
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                offset: options.offset || 0,
-                limit: options.limit || 100,
-                includeVectors: options.includeVectors || false,
-            }),
+            body: JSON.stringify(body),
         });
 
         if (!response.ok) {
@@ -722,7 +735,8 @@ export class QdrantBackend extends VectorBackend {
      * Update chunk text (triggers re-embedding)
      */
     async updateChunkText(collectionId, hash, newText, settings) {
-        const actualCollectionId = this._stripRegistryPrefix(collectionId);
+        const strippedCollectionId = this._stripRegistryPrefix(collectionId);
+        const actualCollectionId = getActualCollectionId(strippedCollectionId, settings);
         const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}/text`, {
             method: 'PATCH',
             headers: getRequestHeaders(),
@@ -747,7 +761,8 @@ export class QdrantBackend extends VectorBackend {
      * Update chunk metadata (no re-embedding)
      */
     async updateChunkMetadata(collectionId, hash, metadata, settings) {
-        const actualCollectionId = this._stripRegistryPrefix(collectionId);
+        const strippedCollectionId = this._stripRegistryPrefix(collectionId);
+        const actualCollectionId = getActualCollectionId(strippedCollectionId, settings);
         const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}/metadata`, {
             method: 'PATCH',
             headers: getRequestHeaders(),
@@ -772,16 +787,28 @@ export class QdrantBackend extends VectorBackend {
      * Get collection statistics
      */
     async getStats(collectionId, settings) {
-        const actualCollectionId = this._stripRegistryPrefix(collectionId);
+        const strippedCollectionId = this._stripRegistryPrefix(collectionId);
+        const actualCollectionId = getActualCollectionId(strippedCollectionId, settings);
+        const body = {
+            backend: BACKEND_TYPE,
+            collectionId: actualCollectionId, // Use separate collection per content type
+            source: settings.source || 'transformers',
+            model: getModelFromSettings(settings),
+        };
+
+        // Add content_type filter for multitenancy mode (mirrors getSavedHashes)
+        if (settings.qdrant_multitenancy) {
+            body.filter = {
+                must: [
+                    { key: 'content_type', match: { value: strippedCollectionId } }
+                ]
+            };
+        }
+
         const response = await fetch('/api/plugins/similharity/chunks/stats', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: actualCollectionId, // Use separate collection per content type
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-            }),
+            body: JSON.stringify(body),
         });
 
         if (!response.ok) {

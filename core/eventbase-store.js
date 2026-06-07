@@ -243,23 +243,6 @@ export async function queryEvents(searchText, topK, settings, chatUUID) {
 }
 
 // ---------------------------------------------------------------------------
-// List (for Event Browser)
-// ---------------------------------------------------------------------------
-
-/**
- * List all stored events for the current chat.
- * @param {object} settings
- * @param {number} [limit]
- * @param {string} [chatUUID]
- * @returns {Promise<object[]>}
- */
-export async function listEvents(settings, limit = 100, chatUUID) {
-    // Reuse queryEvents with a broad query (empty string → backend returns recent/all items)
-    // We overfetch and return up to `limit` items.
-    return queryEvents('', Math.min(limit, 200), settings, chatUUID);
-}
-
-// ---------------------------------------------------------------------------
 // Delete
 // ---------------------------------------------------------------------------
 
