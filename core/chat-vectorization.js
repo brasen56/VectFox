@@ -1235,6 +1235,14 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
     // Clear the main tag first (will be unused when multi-position)
     setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, false);
 
+    // Clear any position-specific tags from previous runs
+    const posPrefix = `${EXTENSION_PROMPT_TAG}_pos`;
+    for (const key of Object.keys(extension_prompts)) {
+        if (key.startsWith(posPrefix)) {
+            setExtensionPrompt(key, '', 0, 0, false);
+        }
+    }
+
     let allVerified = true;
     const allTexts = [];
     let groupIndex = 0;
@@ -1319,10 +1327,10 @@ export async function rearrangeChat(chat, settings, type, { dryRun = false, test
         // Clear extension prompts (main + any position-specific tags from previous run)
         if (!dryRun) {
             setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, false);
-            for (let i = 0; i < 10; i++) {
-                const posTag = `${EXTENSION_PROMPT_TAG}_pos${i}`;
-                if (extension_prompts[posTag]) {
-                    setExtensionPrompt(posTag, '', 0, 0, false);
+            const posPrefix = `${EXTENSION_PROMPT_TAG}_pos`;
+            for (const key of Object.keys(extension_prompts)) {
+                if (key.startsWith(posPrefix)) {
+                    setExtensionPrompt(key, '', 0, 0, false);
                 }
             }
         }
