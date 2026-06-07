@@ -409,7 +409,7 @@ export class QdrantBackend extends VectorBackend {
             // duplicate registry entry (B4) that the DB Browser then displayed as
             // a phantom "VECTRA"-badged 0-chunk orphan, because no prefix defaults
             // to the standard backend in the badge logic.
-            registerCollection(buildRegistryKey(collectionId, settings));
+            registerCollection(buildRegistryKey(strippedCollectionId, settings));
         } catch (e) {
             log.warn('VectFox: Failed to register collection after Qdrant insert:', e);
         }
