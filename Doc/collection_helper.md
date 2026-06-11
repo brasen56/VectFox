@@ -388,9 +388,10 @@ The **auto-sync start marker** is the second gate that catches this case. It's a
 
 | Function | Role |
 |---|---|
-| `stampAutoSyncMarker(chatUUID, settings)` | Called from the Auto-Sync checkbox change handler when the user enables auto-sync (and re-called when the window-size setting changes while auto-sync is on). Smart placement: if the EventBase collection has existing events → `marker = max(source_window_end) + 1`; if empty → `marker = current chat length`. Persists to `extension_settings.vectfox.eventbase_autosync_start_marker[chatUUID]` and calls `saveSettingsDebounced()`. |
+| `stampAutoSyncMarker(chatUUID, settings)` | Called from the Auto-Sync checkbox change handler when the user enables auto-sync (and re-called when the window-size setting changes while auto-sync is on). Smart placement: if the EventBase collection has existing events → `marker = max(source_window_end) + 1`; if empty → `marker = effective chat length` (non-empty messages, ILS-expanded when `expand_ils_summaries` is on — the same coordinate system the extraction windows index into; see `getEffectiveChatLength`). Persists to `extension_settings.vectfox.eventbase_autosync_start_marker[chatUUID]` and calls `saveSettingsDebounced()`. |
 | `getAutoSyncMarker(chatUUID)` | Read by `runEventBaseIngestion` to gate the window list. Returns `undefined` when no marker is stamped (manual runs and pre-auto-sync chats). |
 | `clearAutoSyncMarker(chatUUID)` | Called when auto-sync is disabled so re-enabling later re-computes a fresh marker against the current chat state. |
+| `restampAutoSyncMarkerAtChatTail(chatUUID, settings)` | Called from the `expand_ils_summaries` toggle handler. Flipping the toggle changes the coordinate system the windows (and stored `source_window_end` values) index into, so an existing marker is overwritten with the effective chat length ("from now on") and the cached vectorization tip is dropped. No-op when no marker is stamped. |
 
 The filter is at [`core/eventbase-workflow.js:170-180`](../core/eventbase-workflow.js#L170):
 

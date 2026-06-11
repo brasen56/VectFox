@@ -3123,10 +3123,28 @@ function bindSettingsEvents(settings, callbacks) {
     // InlineSummary expansion toggle (default: on)
     $('#VectFox_expand_ils_summaries')
         .prop('checked', settings.expand_ils_summaries !== false)
-        .on('change', function() {
+        .on('change', async function() {
             settings.expand_ils_summaries = $(this).prop('checked');
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
+
+            // Marker and vectorization-tip values are message indexes into the
+            // (possibly ILS-expanded) extraction array — flipping this toggle
+            // changes that coordinate system. Re-stamp the marker at the chat
+            // tail in the NEW coordinates ("from now on") and drop the cached
+            // tip, so auto-sync doesn't backfill the whole history off a
+            // stale, wrong-coordinate threshold.
+            try {
+                const { restampAutoSyncMarkerAtChatTail, clearVectorizationTip } = await import('../core/eventbase-store.js');
+                const { getChatUUID } = await import('../core/collection-ids.js');
+                const uuid = getChatUUID();
+                if (uuid) {
+                    clearVectorizationTip(uuid);
+                    restampAutoSyncMarkerAtChatTail(uuid, settings);
+                }
+            } catch (err) {
+                log.warn('[VectFox] Failed to re-stamp auto-sync marker after ILS-expansion toggle:', err?.message || err);
+            }
         });
 
     // Retrieval popups

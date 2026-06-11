@@ -20,6 +20,7 @@ import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID, buildEventBaseCollectionId, getRegistryBackend, COLLECTION_PREFIXES, parseRegistryKey } from './collection-ids.js';
 import { registerCollection, getCollectionRegistry } from './collection-loader.js';
 import { buildEmbedText } from './eventbase-schema.js';
+import { expandILSMessages } from './ils-expander.js';
 import { log } from './log.js';
 
 // Re-export so callers can import from here if needed
@@ -297,6 +298,48 @@ export async function deleteEventByHash(hash, settings, chatUUID) {
 // changes (Phase 2 — see §9.8 of the linked plan).
 
 /**
+ * Length of the chat as the extraction pipeline sees it: filtered to non-empty
+ * messages, then ILS-expanded when expand_ils_summaries is on. Mirrors the
+ * message-array construction in synchronizeChat / vectorizeAll
+ * (chat-vectorization.js) so marker values land in the same coordinate system
+ * as the extraction windows' start/end indexes.
+ * @param {object} settings
+ * @returns {number}
+ */
+export function getEffectiveChatLength(settings) {
+    const chat = getContext()?.chat;
+    if (!Array.isArray(chat)) return 0;
+    let messages = chat.filter(m => m.mes && m.mes.trim().length > 0);
+    if (settings?.expand_ils_summaries !== false) {
+        const { expanded, stats } = expandILSMessages(messages);
+        if (stats.summariesFound > 0) messages = expanded;
+    }
+    return messages.length;
+}
+
+/**
+ * Re-stamp an EXISTING marker at the current chat tail, measured in the
+ * current coordinate system. Called when the expand_ils_summaries toggle
+ * flips: the stored marker (and the source_window_end values it was derived
+ * from) belong to the old coordinate system, so the only flood-safe value is
+ * "from now on". No-op if the chat has no stamped marker (auto-sync was never
+ * enabled — nothing to protect).
+ * @param {string} chatUUID
+ * @param {object} settings
+ * @returns {number|undefined}  The new marker, or undefined if none existed.
+ */
+export function restampAutoSyncMarkerAtChatTail(chatUUID, settings) {
+    const store = extension_settings?.vectfox?.eventbase_autosync_start_marker;
+    if (!store || !chatUUID) return undefined;
+    if (!Object.prototype.hasOwnProperty.call(store, chatUUID)) return undefined;
+    const marker = getEffectiveChatLength(settings);
+    store[chatUUID] = marker;
+    saveSettingsDebounced();
+    log.lifecycle(`[EventBase] AutoSyncMarker re-stamped at chat tail after ILS-expansion toggle: uuid=${chatUUID}, marker=${marker}`);
+    return marker;
+}
+
+/**
  * Look up the auto-sync start marker for a chat.
  * @param {string} chatUUID
  * @returns {number|undefined}  Marker (message index), or undefined if not stamped.
@@ -328,9 +371,18 @@ export function clearAutoSyncMarker(chatUUID) {
  *   - If the EventBase collection has existing events → marker = max(source_window_end) + 1
  *     (backfill the gap between last-covered message and current chat tail
  *     at the user's new window size).
- *   - If the collection is empty → marker = current chat length
+ *   - If the collection is empty → marker = effective chat length
  *     (auto-sync starts "from now on" — no full backfill of a long pre-existing
  *     chat that was never vectorized).
+ *
+ * COORDINATE SYSTEM: the marker is compared against window.start indexes in
+ * runEventBaseIngestion, and those windows are built over the filtered
+ * (non-empty mes) and — when expand_ils_summaries is on — ILS-EXPANDED
+ * message array (see synchronizeChat in chat-vectorization.js). So the
+ * chat-tail fallback must measure the same array, not the raw collapsed
+ * context.chat. On a heavily summarized chat the raw length is far smaller
+ * than the expanded length; stamping the raw length would let auto-sync
+ * backfill the entire expanded history (LLM call flood).
  *
  * @param {string} chatUUID
  * @param {object} settings
@@ -341,7 +393,7 @@ export async function stampAutoSyncMarker(chatUUID, settings) {
     const store = extension_settings?.vectfox;
     if (!store) return 0;
 
-    const chatLength = getContext()?.chat?.length ?? 0;
+    const chatLength = getEffectiveChatLength(settings);
 
     // Find the EventBase collection for this chat, if any.
     const backend = getRegistryBackend(settings?.vector_backend);
@@ -371,7 +423,7 @@ export async function stampAutoSyncMarker(chatUUID, settings) {
     store.eventbase_autosync_start_marker[chatUUID] = marker;
     saveSettingsDebounced();
 
-    log.lifecycle(`[EventBase] AutoSyncMarker stamped: uuid=${chatUUID}, marker=${marker} (maxEnd=${maxEnd}, chatLength=${chatLength}, candidates=${candidates.length})`);
+    log.lifecycle(`[EventBase] AutoSyncMarker stamped: uuid=${chatUUID}, marker=${marker} (maxEnd=${maxEnd}, effectiveChatLength=${chatLength}, candidates=${candidates.length})`);
     return marker;
 }
 

@@ -2877,9 +2877,12 @@ test('TEST 014 — Auto-sync backfill: fingerprint cache prevents duplicate wind
 //     - Collection non-empty: marker = max(source_window_end) + 1
 //       (backfill the gap between last-covered message and chat tail at
 //       the new window size)
-//     - Collection empty: marker = chatLength
-//       (auto-sync starts "from now on" — no full re-extraction of a long
-//       pre-existing chat that was never vectorized)
+//     - Collection empty: marker = effective chat length — non-empty
+//       messages, ILS-expanded when expand_ils_summaries is on, matching
+//       the array synchronizeChat builds windows over. (Auto-sync starts
+//       "from now on" — no full re-extraction of a long pre-existing chat
+//       that was never vectorized. Raw collapsed chat.length would undershoot
+//       on a summarized chat and backfill the whole expanded history.)
 //
 //   Together with TEST 014's fingerprint cache test, this proves the
 //   two-layer safety story:
@@ -3074,11 +3077,26 @@ test('TEST 016 — stampAutoSyncMarker smart placement (production-function smok
         const { registerCollection, unregisterCollection } = await import(base + 'core/collection-loader.js');
         const { deleteCollectionMeta } = await import(base + 'core/collection-metadata.js');
         const { deleteContentCollection } = await import(base + 'core/content-vectorization.js');
+        const { expandILSMessages } = await import(base + 'core/ils-expander.js');
         const { extension_settings } = await import('/scripts/extensions.js');
 
         const ctx = window.SillyTavern?.getContext?.() ?? window.getContext?.() ?? {};
         const settings = extension_settings?.vectfox || {};
         const backend = (settings.vector_backend || 'standard').toLowerCase();
+
+        // The chat-tail fallback must be measured in EXTRACTION coordinates:
+        // non-empty messages, ILS-expanded when expand_ils_summaries is on —
+        // the same array synchronizeChat builds its windows over. Computed
+        // independently here (not via getEffectiveChatLength) so the test
+        // still catches regressions in the production helper.
+        const effectiveChatLength = () => {
+            let msgs = (Array.isArray(ctx?.chat) ? ctx.chat : []).filter(m => m.mes && m.mes.trim().length > 0);
+            if (settings.expand_ils_summaries !== false) {
+                const { expanded, stats } = expandILSMessages(msgs);
+                if (stats.summariesFound > 0) msgs = expanded;
+            }
+            return msgs.length;
+        };
 
         // Two distinct UUIDs so Phase 2 (no candidates) and Phase 3 (synthetic
         // candidate) don't pollute each other's registry lookups.
@@ -3109,8 +3127,8 @@ test('TEST 016 — stampAutoSyncMarker smart placement (production-function smok
             console.log(`${TEST} Phase 1 ✓ Branch A early-exit: returned 0, no persistence`);
 
             // ═══ Phase 2 — Branch B: no candidates → marker = chatLength ═══
-            console.log(`${TEST} Phase 2: Branch B — fresh UUID, no registered EventBase collection → marker should equal chat length`);
-            const chatLengthB = ctx?.chat?.length ?? 0;
+            console.log(`${TEST} Phase 2: Branch B — fresh UUID, no registered EventBase collection → marker should equal effective (filtered + ILS-expanded) chat length`);
+            const chatLengthB = effectiveChatLength();
             const markerB = await stampAutoSyncMarker(uuidBranchB, settings);
             if (markerB !== chatLengthB) {
                 console.error(`${TEST} [FAIL] Phase 2: marker=${markerB}, expected chatLength=${chatLengthB}`);
@@ -3137,7 +3155,7 @@ test('TEST 016 — stampAutoSyncMarker smart placement (production-function smok
                 return;
             }
 
-            const chatLengthC = ctx?.chat?.length ?? 0;
+            const chatLengthC = effectiveChatLength();
             const markerC = await stampAutoSyncMarker(uuidBranchC, settings);
             if (markerC !== chatLengthC) {
                 console.error(`${TEST} [FAIL] Phase 3: marker=${markerC}, expected chatLength=${chatLengthC} (listChunks returned no metadata, should have fallen back). Branch C try/catch fallback may be broken.`);
