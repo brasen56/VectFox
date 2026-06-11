@@ -16,14 +16,37 @@
  */
 
 import { log } from './log.js';
+import { chat_metadata } from '../../../../../script.js';
 
 /**
- * Checks if a message is an InlineSummary summary message
+ * Checks if a message is an InlineSummary summary message.
+ * Supports both ILS storage formats:
+ *   - legacy: originals embedded at msg.extra.ILS_Data.OriginalMessages
+ *   - ref:    originals in chat_metadata.ILS_Originals[msg.extra.ILS_Data.Ref]
+ *             (ILS fork — keeps the payload out of `extra` so SillyTavern's
+ *             swipe sync doesn't structuredClone it into swipe_info)
  * @param {object} msg Chat message object
  * @returns {boolean} True if this is an ILS summary message
  */
 function isILSSummaryMessage(msg) {
-    return !!(msg?.extra?.ILS_Data?.OriginalMessages);
+    const data = msg?.extra?.ILS_Data;
+    return !!(data && (data.OriginalMessages || typeof data.Ref === 'string'));
+}
+
+/**
+ * Resolves a summary message's original messages from either storage format.
+ * @param {object} msg ILS summary message
+ * @returns {object[]|null} Originals, or null if the ref is dangling
+ */
+function getILSOriginals(msg) {
+    const data = msg?.extra?.ILS_Data;
+    if (!data) return null;
+    if (Array.isArray(data.OriginalMessages)) return data.OriginalMessages;
+    if (typeof data.Ref === 'string') {
+        const originals = chat_metadata?.ILS_Originals?.[data.Ref];
+        return Array.isArray(originals) ? originals : null;
+    }
+    return null;
 }
 
 /**
@@ -66,7 +89,7 @@ export function expandILSMessages(messages) {
      */
     function flatten(msg, depth) {
         if (isILSSummaryMessage(msg)) {
-            const originals = msg.extra.ILS_Data.OriginalMessages;
+            const originals = getILSOriginals(msg);
             stats.summariesFound++;
             if (depth > stats.maxDepth) stats.maxDepth = depth;
 
