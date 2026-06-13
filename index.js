@@ -363,6 +363,40 @@ window['vectfox_rearrangeChat'] = vectfox_rearrangeChat;
  * Action: Vectorize all messages in current chat
  */
 async function onVectorizeAllClick() {
+    // Anti-flood guard. "Sync Chat" is a MANUAL run: it deliberately ignores the
+    // auto-sync marker and re-processes the chat from the beginning (the marker
+    // filter only applies to isAutoSync runs — see eventbase-workflow.js). On a
+    // chat that's already extracted that re-does every window: a big batch of LLM
+    // calls plus DUPLICATE events. So if the chat already has meaningful coverage,
+    // confirm before proceeding. Best-effort — a probe failure must never block a
+    // legitimate sync.
+    try {
+        const { getChatAutoSyncStatus } = await import('./core/eventbase-workflow.js');
+        const status = await getChatAutoSyncStatus(settings);
+        const hasCollection = status?.state && status.state !== 'no-chat' && status.state !== 'no-collection';
+        const covered = Math.max(
+            Number.isFinite(status?.vectorizationTip) ? status.vectorizationTip : 0,
+            Number.isFinite(status?.markerValue) ? status.markerValue : 0,
+        );
+        if (hasCollection && covered > 0) {
+            const total = status.chatMessageCount || 0;
+            const proceed = confirm(
+                'Sync Chat re-extracts this chat FROM THE BEGINNING and ignores the auto-sync marker.\n\n' +
+                `This chat already has events extracted up to ~message ${covered}` +
+                (total ? ` of ${total}` : '') + '.\n\n' +
+                'Running it now re-extracts that history — a large batch of LLM calls and DUPLICATE events.\n\n' +
+                'For normal new-message extraction, use the Auto-Sync checkbox instead (it respects the marker).\n\n' +
+                'Re-extract the entire chat anyway?'
+            );
+            if (!proceed) {
+                toastr.info('Sync Chat cancelled — your extracted events are untouched', 'VectFox');
+                return;
+            }
+        }
+    } catch (err) {
+        console.warn('[VectFox] Sync Chat pre-check failed (proceeding):', err?.message || err);
+    }
+
     const controller = new AbortController();
     progressTracker.setCancelHandler(() => controller.abort('user-stop'));
     try {
