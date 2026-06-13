@@ -535,7 +535,12 @@ async function insertChunksWithVectors(collectionId, chunks, settings, onBatchPr
                 const kwText = kws.map(kw => (typeof kw === 'string' ? kw : kw?.text || '')).filter(Boolean).join(' ');
                 if (kwText) sparseSource += ` [KEYWORDS: ${kwText}]`;
             }
-            item.sparseVector = encodeSparseVector(sparseSource);
+            // Only attach a sparse vector when there's at least one term. An empty
+            // {indices:[],values:[]} can wedge Qdrant's sparse index reads (scroll/
+            // hybrid 500s); a point with no sparse slot is valid and simply won't
+            // match BM25 — which is correct for tokenless text anyway.
+            const sparseVector = encodeSparseVector(sparseSource);
+            if (sparseVector.indices.length > 0) item.sparseVector = sparseVector;
         }
         return item;
     });
@@ -840,6 +845,21 @@ export async function importCollection(exportData, settings, options = {}) {
         // Register collection with backend prefix so parseRegistryKey resolves the right backend
         registerCollection(registryKey);
         saveSettingsDebounced();
+
+        // EventBase imports: rebuild the LOCAL dedup state (auto-sync marker +
+        // window-fingerprint cache + vectorization tip) from the imported events'
+        // own metadata. Without this, a recovered/re-imported chat has a populated
+        // collection but EMPTY local dedup memory, and the next auto-sync run
+        // re-extracts the whole history (the "re-vectorize the entire chat" flood).
+        // No-op for non-EventBase collections; best-effort so it never fails import.
+        if (collectionId.toLowerCase().includes(COLLECTION_PREFIXES.VECTFOX_EVENTBASE)) {
+            try {
+                const { restoreEventBaseDedupStateFromChunks } = await import('./eventbase-store.js');
+                restoreEventBaseDedupStateFromChunks(collectionId, validChunks);
+            } catch (err) {
+                log.warn('[VectFox Import] Failed to restore EventBase dedup state:', err?.message || err);
+            }
+        }
 
         const statusMsg = canUseVectors
             ? `Imported ${preparedChunks.length} chunks (used existing vectors)`
