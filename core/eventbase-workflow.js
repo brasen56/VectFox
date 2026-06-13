@@ -1220,10 +1220,21 @@ export async function getChatAutoSyncStatus(settings) {
 
     if (!match) return { state: 'no-collection' };
 
+    // Measure the chat in EXTRACTION coordinates: non-empty messages,
+    // ILS-expanded when expand_ils_summaries is on — the same array
+    // synchronizeChat builds windows over and stampAutoSyncMarker stamps
+    // against (getEffectiveChatLength). Comparing a raw count to the
+    // expanded-coordinate marker made heavily-summarized chats report
+    // 'vectorization-ahead' forever.
     const ctx = getContext();
-    const messages = Array.isArray(ctx?.chat)
+    let messages = Array.isArray(ctx?.chat)
         ? ctx.chat.filter(m => m.mes && m.mes.trim().length > 0)
         : [];
+    if (settings?.expand_ils_summaries !== false) {
+        const { expandILSMessages } = await import('./ils-expander.js');
+        const { expanded, stats } = expandILSMessages(messages);
+        if (stats.summariesFound > 0) messages = expanded;
+    }
     const chatMessageCount = messages.length;
 
     // Read the auto-sync marker (per-chat message-index threshold). When this
