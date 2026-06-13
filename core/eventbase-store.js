@@ -624,6 +624,85 @@ export function clearExtractionCachesForChat(chatUUID) {
 }
 
 /**
+ * Rebuild a chat's LOCAL EventBase dedup state from the events that were just
+ * imported into its collection. Solves the "recovery flood": an import (or a
+ * direct Qdrant restore) repopulates the collection but leaves the local
+ * dedup memory empty — no auto-sync marker, no window fingerprints — so the
+ * next auto-sync run can't tell the history is already extracted and re-does
+ * the entire chat (thousands of LLM calls + duplicate events).
+ *
+ * Each event carries the exact data the two local caches need:
+ *   - source_message_hashes → the per-window fingerprint markWindowExtracted
+ *     persists (rebuilds the fast-forward cache; matches future windows when
+ *     message hashes haven't drifted).
+ *   - source_window_end → max+1 gives the auto-sync marker and vectorization
+ *     tip. The marker is the COORDINATE-based gate that protects even when the
+ *     fingerprints later miss (e.g. ILS re-expansion shifts message indices),
+ *     so it's the load-bearing half of this restore.
+ *
+ * No-op for non-EventBase collections. Best-effort by contract — callers wrap
+ * it so a failure never fails the import.
+ *
+ * @param {string}   collectionId  Bare or registry-key form of the imported collection.
+ * @param {object[]} chunks        The imported chunks (each with `.metadata`).
+ * @returns {{ uuid: string, windows: number, marker: number|null } | null}
+ */
+export function restoreEventBaseDedupStateFromChunks(collectionId, chunks) {
+    if (!Array.isArray(chunks) || chunks.length === 0) return null;
+    const idLower = String(collectionId || '').toLowerCase();
+    if (!idLower.includes(COLLECTION_PREFIXES.VECTFOX_EVENTBASE)) return null;
+
+    // Resolve the chat UUID: prefer the events' own chat_uuid (authoritative),
+    // fall back to the trailing UUID embedded in the collection id.
+    let uuid = null;
+    for (const c of chunks) {
+        const u = c?.metadata?.chat_uuid;
+        if (typeof u === 'string' && u) { uuid = u; break; }
+    }
+    if (!uuid) {
+        const m = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(collectionId || '');
+        if (m) uuid = m[1].toLowerCase();
+    }
+    if (!uuid) return null;
+
+    const store = extension_settings?.vectfox;
+    if (!store) return null;
+
+    // Rebuild the window-fingerprint cache + find the highest covered index.
+    const fpSet = new Set();
+    const fpArr = [];
+    let maxEnd = -1;
+    for (const c of chunks) {
+        const md = c?.metadata || {};
+        const end = md.source_window_end;
+        if (typeof end === 'number' && end > maxEnd) maxEnd = end;
+        const hashes = md.source_message_hashes;
+        if (Array.isArray(hashes) && hashes.length) {
+            const fp = windowFingerprint(hashes);
+            if (!fpSet.has(fp)) { fpSet.add(fp); fpArr.push(fp); }
+        }
+    }
+
+    if (fpArr.length) {
+        if (!store.eventbase_extracted_windows) store.eventbase_extracted_windows = {};
+        store.eventbase_extracted_windows[uuid] = fpArr;
+        _windowCacheSet.set(uuid, fpSet);
+    }
+
+    let marker = null;
+    if (maxEnd >= 0) {
+        if (!store.eventbase_autosync_start_marker) store.eventbase_autosync_start_marker = {};
+        marker = maxEnd + 1;
+        store.eventbase_autosync_start_marker[uuid] = marker;
+        setVectorizationTip(uuid, marker);
+    }
+
+    saveSettingsDebounced();
+    log.lifecycle(`[EventBase] Restored dedup state after import: uuid=${uuid}, windows=${fpArr.length}, marker=${marker ?? '(none)'}, maxEnd=${maxEnd}`);
+    return { uuid, windows: fpArr.length, marker };
+}
+
+/**
  * Quick-exit check: returns true if the LAST complete window in the message list
  * is already extracted. When true, all prior windows are also done (windows are
  * always processed in-order from the tail). Avoids building O(n) window objects.
