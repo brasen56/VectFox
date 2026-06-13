@@ -39,6 +39,25 @@ import { log } from '../core/log.js';
 
 const BACKEND_TYPE = 'qdrant';
 
+// Collections whose native sparse-hybrid path is known-broken THIS SESSION —
+// e.g. a dense-only collection with no `text_sparse` slot, or one whose sparse
+// index makes Qdrant's scroll/hybrid read panic (the "OffsetZero" 500). We skip
+// the hybrid attempt for these and go straight to dense search, so retrieval
+// stays quiet and fast instead of re-triggering the same server-side panic on
+// every single query. Keyed by actual collection id; cleared on page reload.
+const _noSparseHybridCollections = new Set();
+
+// Best-effort signature match for "this collection can't do native sparse
+// hybrid". Deliberately narrow so a transient timeout/504 does NOT disable
+// hybrid for the session — only errors that point at a missing/broken sparse
+// slot mark the collection.
+function _looksLikeSparseUnsupported(errorBody) {
+    const s = String(errorBody || '').toLowerCase();
+    return s.includes('text_sparse')
+        || s.includes('not existing vector name')
+        || s.includes('offsetzero');
+}
+
 function _isDimensionMismatch(errorBody) {
     return typeof errorBody === 'string' && errorBody.includes('Vector dimension error');
 }
@@ -349,14 +368,21 @@ export class QdrantBackend extends VectorBackend {
 
                         // Tokenize the same text we use for the dense embed (textWithKeywords)
                         // so BM25 hits include the [KEYWORDS: ...] suffix terms.
-                        return {
+                        const point = {
                             hash: item.hash,
                             text: textWithKeywords,
                             index: item.index,
                             vector: item.vector,
                             metadata,
-                            sparseVector: encodeSparseVector(textWithKeywords),
                         };
+                        // Only attach a sparse vector when there's at least one term.
+                        // An empty {indices:[],values:[]} can wedge Qdrant's sparse
+                        // index reads (scroll/hybrid 500 with internal panics); a point
+                        // with no sparse slot is valid and just won't match BM25, which
+                        // is correct for tokenless text.
+                        const sparseVector = encodeSparseVector(textWithKeywords);
+                        if (sparseVector.indices.length > 0) point.sparseVector = sparseVector;
+                        return point;
                     }),
                     source: settings.source || 'transformers',
                     model: getModelFromSettings(settings),
@@ -859,6 +885,13 @@ export class QdrantBackend extends VectorBackend {
         const strippedCollectionId = this._stripRegistryPrefix(collectionId);
         const actualCollectionId = getActualCollectionId(strippedCollectionId, settings);
 
+        // Skip the hybrid attempt for collections we've already learned can't do
+        // native sparse this session (dense-only / broken sparse index). Avoids
+        // re-triggering the server-side panic on every query — go straight to dense.
+        if (_noSparseHybridCollections.has(actualCollectionId)) {
+            return this.queryCollection(collectionId, searchText, topK, settings);
+        }
+
         // Native sparse vectors + Qdrant-server-side RRF. Single path for Qdrant.
         // (See plans/qdrant-native-sparse-hybrid-rrf.md — winner of the A/B/C, others removed.)
         //
@@ -976,6 +1009,11 @@ export class QdrantBackend extends VectorBackend {
                 _warnDimensionMismatch(errorBody);
                 return { hashes: [], metadata: [] };
             }
+            if (_looksLikeSparseUnsupported(errorBody)) {
+                _noSparseHybridCollections.add(actualCollectionId);
+                log.warn(`[Qdrant] Collection "${actualCollectionId}" has no usable sparse-vector index (server said: ${errorBody.slice(0, 200)}). Using dense-only search for it this session. Re-create/re-import the collection with native sparse to restore hybrid + keyword scoring.`);
+                return this.queryCollection(collectionId, searchText, topK, settings);
+            }
             log.warn(`[Qdrant timing] hybridQuery FAILED after ${failMs}ms (HTTP ${response.status}), falling back to vector-only. ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 500)}`);
         } catch (error) {
             const failMs = (performance.now() - tNetStart).toFixed(1);
@@ -1012,6 +1050,12 @@ export class QdrantBackend extends VectorBackend {
     async hybridQueryWithRerank(collectionId, searchText, topK, settings, rerankParams, hybridOptions = {}, filters = {}) {
         const strippedCollectionId = this._stripRegistryPrefix(collectionId);
         const actualCollectionId = getActualCollectionId(strippedCollectionId, settings);
+
+        // Skip both the rerank and hybrid attempts for collections already known
+        // to lack a usable sparse index this session — go straight to dense.
+        if (_noSparseHybridCollections.has(actualCollectionId)) {
+            return this.queryCollection(collectionId, searchText, topK, settings);
+        }
 
         // Same sparse-query encoding path as hybridQuery() — including the
         // tokenizer-mode lock. If sparse setup fails, fall back to vector-only
@@ -1114,6 +1158,11 @@ export class QdrantBackend extends VectorBackend {
             if (_isDimensionMismatch(errorBody)) {
                 _warnDimensionMismatch(errorBody);
                 return { hashes: [], metadata: [] };
+            }
+            if (_looksLikeSparseUnsupported(errorBody)) {
+                _noSparseHybridCollections.add(actualCollectionId);
+                log.warn(`[Qdrant] Collection "${actualCollectionId}" has no usable sparse-vector index (server said: ${errorBody.slice(0, 200)}). Using dense-only search for it this session. Re-create/re-import the collection with native sparse to restore hybrid + keyword scoring.`);
+                return this.queryCollection(collectionId, searchText, topK, settings);
             }
             log.warn(`[Qdrant timing] hybrid+rerank FAILED after ${failMs}ms (HTTP ${response.status}), falling back to hybridQuery. ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 500)}`);
         } catch (error) {
