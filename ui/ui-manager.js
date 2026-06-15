@@ -19,6 +19,7 @@ import {
     getQdrantApiKey,
     fetchQdrantApiKeyPresence,
 } from '../core/api-keys.js';
+import { openKeyManager, getSecretCount, getActiveSecretLabel } from './key-manager.js';
 import { getWebLlmProvider as getSharedWebLlmProvider } from '../providers/webllm.js';
 import StringUtils from '../utils/string-utils.js';
 import { openVisualizer } from './chunk-visualizer.js';
@@ -276,6 +277,9 @@ export function renderSettings(containerId, settings, callbacks) {
                                             <small>OpenRouter API Key:</small>
                                         </label>
                                         <input type="password" id="VectFox_openrouter_apikey" class="vectfox-input" placeholder="Paste key here to save..." autocomplete="off" />
+                                        <button type="button" class="vectfox-key-manager-trigger menu_button" data-key-manager-slot="openrouter" style="margin-top: 4px; font-size: 0.85em;">
+                                            <i class="fa-solid fa-key"></i> Manage Keys <span class="vectfox-key-count-badge" data-count-slot="openrouter">0</span>
+                                        </button>
                                     </div>
 
                                 </div>
@@ -2443,6 +2447,94 @@ function bindSettingsEvents(settings, callbacks) {
         $(document).trigger('vectfox:openrouter-key-changed');
         return true;
     };
+
+    // ── Multi-key manager integration ──────────────────────────────────────
+    // SillyTavern natively stores multiple keys per SECRET_KEYS slot (arrays
+    // of {id, value, label, active}). VectFox's paste-to-save inputs already
+    // accumulate keys via writeSecret — but users had no UI to see or switch
+    // between them. This injects a "Manage Keys" button after each API key
+    // input and wires it to openKeyManager. The count badge shows how many
+    // keys are saved; the badge pulses when >1 to draw attention to the
+    // fact that switching is possible.
+    const _slotByAlias = {
+        openrouter: SECRET_KEYS.OPENROUTER,
+        custom: SECRET_KEYS.CUSTOM,
+    };
+    const _slotTitle = {
+        [SECRET_KEYS.OPENROUTER]: 'Manage OpenRouter API Keys',
+        [SECRET_KEYS.CUSTOM]: 'Manage vLLM / Custom OpenAI-compatible API Keys',
+    };
+    const _refreshKeyCountBadges = () => {
+        $('.vectfox-key-manager-trigger').each(function() {
+            const alias = $(this).data('key-manager-slot');
+            const slot = _slotByAlias[alias];
+            if (!slot) return;
+            const count = getSecretCount(slot);
+            const $badge = $(this).find('.vectfox-key-count-badge');
+            $badge.text(count);
+            // Pulse the badge when multiple keys exist — signals the user
+            // can switch. Subtle animation (see key-manager.css).
+            $(this).toggleClass('vectfox-key-manager-trigger-multi', count > 1);
+        });
+    };
+    // Initial count refresh (after secret_state is populated at init).
+    // Defer a tick so readSecretState has completed in index.js init.
+    setTimeout(_refreshKeyCountBadges, 0);
+
+    // Delegate clicks for all key-manager trigger buttons. The buttons are
+    // injected after each input below; delegation handles dynamically-added
+    // rows (provider settings show/hide) without re-binding.
+    $('#VectFox_settings').on('click', '.vectfox-key-manager-trigger', async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const alias = $(this).data('key-manager-slot');
+        const slot = _slotByAlias[alias];
+        if (!slot) {
+            toastr.warning('Key manager not available for this input.');
+            return;
+        }
+        await openKeyManager({
+            slot,
+            title: _slotTitle[slot] || 'Manage API Keys',
+            onChanged: () => {
+                _refreshKeyCountBadges();
+                // Re-trigger the placeholder refresh so the active key's
+                // masked value + label updates across all sibling inputs.
+                if (alias === 'openrouter') {
+                    $(document).trigger('vectfox:openrouter-key-changed');
+                } else if (alias === 'custom') {
+                    $(document).trigger('vectfox:vllm-key-changed');
+                }
+            },
+        });
+    });
+
+    // Helper: inject a "Manage Keys" button after a given input selector if
+    // one isn't already present (the embedding OpenRouter input has one in
+    // the template already; the others get it injected here).
+    const injectKeyManagerButton = (inputSelector, alias) => {
+        const $input = $(inputSelector);
+        if ($input.length === 0) return;
+        // Skip if already present (template-declared or double-call).
+        if ($input.next('.vectfox-key-manager-trigger').length > 0) return;
+        const $btn = $(`
+            <button type="button" class="vectfox-key-manager-trigger menu_button" data-key-manager-slot="${alias}" style="margin-top: 4px; font-size: 0.85em;">
+                <i class="fa-solid fa-key"></i> Manage Keys <span class="vectfox-key-count-badge" data-count-slot="${alias}">0</span>
+            </button>
+        `);
+        $input.after($btn);
+    };
+
+    // Inject buttons for the remaining inputs (OpenRouter embedding input
+    // already has one from the template).
+    injectKeyManagerButton('#VectFox_summarize_openrouter_apikey', 'openrouter');
+    injectKeyManagerButton('#VectFox_agentic_openrouter_apikey', 'openrouter');
+    injectKeyManagerButton('#VectFox_summarize_vllm_apikey', 'custom');
+    injectKeyManagerButton('#VectFox_agentic_vllm_apikey', 'custom');
+    injectKeyManagerButton('#VectFox_vllm_api_key', 'custom');
+
+    // Refresh badges whenever keys change (covers paste-save + manager edits).
+    $(document).on('vectfox:openrouter-key-changed vectfox:vllm-key-changed', _refreshKeyCountBadges);
 
     // Persist the vLLM / Custom OpenAI-compatible key. Dual-write: CUSTOM
     // (chat-side proxy) + VLLM (embedding-side proxy). One key, both slots.

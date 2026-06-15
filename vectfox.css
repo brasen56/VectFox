@@ -22,6 +22,7 @@
 @import url('./styles/progress-indicator.css');
 
 /* UI component styles */
+@import url('./ui/key-manager.css');
 @import url('./ui/diagnostics.css');
 @import url('./ui/database-browser.css');
 @import url('./ui/chunk-visualizer.css');
