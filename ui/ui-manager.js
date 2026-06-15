@@ -2387,6 +2387,96 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
+    // ── Shared API-key input binder ─────────────────────────────────────────
+    // Persists the key on blur (change) AND on paste AND on Enter. The original
+    // change-only binding silently dropped keys: if the user pasted a key and
+    // then clicked a control that didn't blur the field first, `change` never
+    // fired — no write, no error toast, and the field showed the pasted text as
+    // if it were saved (the 2026-06-14 "invalid_api_key 401 with the key
+    // looking entered" report). `persist(value)` does the actual writeSecret(s),
+    // shows its own success/failure toast, and returns true when the field
+    // should be cleared. The `saving` guard absorbs the paste→blur double-fire
+    // so the same value isn't written twice.
+    const bindApiKeyInput = (selector, persist) => {
+        let saving = false;
+        const run = async ($input) => {
+            const value = String($input.val()).trim();
+            if (!value || saving) return;
+            saving = true;
+            try {
+                const saved = await persist(value);
+                if (saved) $input.val('');
+            } catch (err) {
+                log.error(`[VectFox] API key save failed (${selector}):`, err);
+                toastr.error('Failed to save key — see console');
+            } finally {
+                saving = false;
+            }
+        };
+        $(selector)
+            .on('change', function() { run($(this)); })
+            .on('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); run($(this)); }
+            })
+            .on('paste', function() {
+                // .val() isn't updated yet during the paste event — defer a tick
+                // so we read the pasted text, not the pre-paste value.
+                const $input = $(this);
+                setTimeout(() => run($input), 0);
+            });
+    };
+
+    // Persist the OpenRouter key to ST's shared SECRET_KEYS.OPENROUTER slot.
+    // Used by the Embedding, Summarize and AgentMode inputs (one key, three
+    // inputs). Dispatching `vectfox:openrouter-key-changed` refreshes every
+    // placeholder and busts the model-picker cache via the listeners below.
+    const persistOpenRouterKey = async (value) => {
+        try {
+            await writeSecret(SECRET_KEYS.OPENROUTER, value);
+            await readSecretState(); // refresh masked state for display
+        } catch (err) {
+            log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
+            toastr.error('Failed to save OpenRouter key — see console');
+            return false;
+        }
+        toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
+        $(document).trigger('vectfox:openrouter-key-changed');
+        return true;
+    };
+
+    // Persist the vLLM / Custom OpenAI-compatible key. Dual-write: CUSTOM
+    // (chat-side proxy) + VLLM (embedding-side proxy). One key, both slots.
+    // Either write failing is non-fatal — toast which side didn't land so the
+    // user can re-enter via ST's UI. A partial save still clears the field and
+    // refreshes placeholders (matches the pre-refactor behavior).
+    const persistVllmKey = async (value) => {
+        const errors = [];
+        try {
+            await writeSecret(SECRET_KEYS.CUSTOM, value);
+        } catch (err) {
+            log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
+            errors.push('chat-side (CUSTOM)');
+        }
+        try {
+            await writeSecret(SECRET_KEYS.VLLM, value);
+        } catch (err) {
+            log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
+            errors.push('embedding-side (VLLM)');
+        }
+        await readSecretState();
+        if (errors.length === 2) {
+            toastr.error('Failed to save vLLM key to either slot — see console');
+            return false;
+        }
+        if (errors.length === 1) {
+            toastr.warning(`vLLM key partially saved — ${errors.join(', ')} write failed. See console.`);
+        } else {
+            toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
+        }
+        $(document).trigger('vectfox:vllm-key-changed');
+        return true;
+    };
+
     // vLLM API key (summarize input) — writes to SECRET_KEYS.CUSTOM
     // 2026-05-26 architecture pivot: ONE vLLM key shared across
     // summarize/agentic chat paths, stored in ST's well-known
@@ -2419,39 +2509,7 @@ function bindSettingsEvents(settings, callbacks) {
     };
     updateSummarizeVllmKeyDisplay();
     $(document).on('vectfox:vllm-key-changed', updateSummarizeVllmKeyDisplay);
-    $('#VectFox_summarize_vllm_apikey').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            // Dual-write: CUSTOM (chat-side proxy) + VLLM (embedding-side
-            // proxy). One key, both slots. Either failure is non-fatal — toast
-            // the user which side didn't land so they can manually re-enter
-            // via ST's UI if needed.
-            const errors = [];
-            try {
-                await writeSecret(SECRET_KEYS.CUSTOM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
-                errors.push('chat-side (CUSTOM)');
-            }
-            try {
-                await writeSecret(SECRET_KEYS.VLLM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
-                errors.push('embedding-side (VLLM)');
-            }
-            await readSecretState();
-            if (errors.length === 0) {
-                toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
-            } else if (errors.length === 2) {
-                toastr.error('Failed to save vLLM key to either slot — see console');
-                return;
-            } else {
-                toastr.warning(`vLLM key partially saved — ${errors.join(', ')} write failed. See console.`);
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:vllm-key-changed');
-        }
-    });
+    bindApiKeyInput('#VectFox_summarize_vllm_apikey', persistVllmKey);
 
     // OpenRouter API key (summarize input) — writes to SECRET_KEYS.OPENROUTER
     // 2026-05-25: ONE OpenRouter key shared across embedding/summarize/agentic,
@@ -2477,22 +2535,7 @@ function bindSettingsEvents(settings, callbacks) {
     };
     updateSummarizeORKeyDisplay();
     $(document).on('vectfox:openrouter-key-changed', updateSummarizeORKeyDisplay);
-    $('#VectFox_summarize_openrouter_apikey').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            try {
-                await writeSecret(SECRET_KEYS.OPENROUTER, value);
-                await readSecretState();
-                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
-                toastr.error('Failed to save OpenRouter key — see console');
-                return;
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:openrouter-key-changed');
-        }
-    });
+    bindApiKeyInput('#VectFox_summarize_openrouter_apikey', persistOpenRouterKey);
 
     // ─── AgentMode (Agentic Retrieval) ─────────────────────────────────────
     // Toggle provider-specific rows in the AgentMode tab. Treats empty provider
@@ -2547,22 +2590,7 @@ function bindSettingsEvents(settings, callbacks) {
     };
     updateAgenticORKeyDisplay();
     $(document).on('vectfox:openrouter-key-changed', updateAgenticORKeyDisplay);
-    $('#VectFox_agentic_openrouter_apikey').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            try {
-                await writeSecret(SECRET_KEYS.OPENROUTER, value);
-                await readSecretState();
-                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
-                toastr.error('Failed to save OpenRouter key — see console');
-                return;
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:openrouter-key-changed');
-        }
-    });
+    bindApiKeyInput('#VectFox_agentic_openrouter_apikey', persistOpenRouterKey);
 
     $('#VectFox_agentic_vllm_url')
         .val(settings.agentic_retrieval_vllm_url || '')
@@ -2590,36 +2618,7 @@ function bindSettingsEvents(settings, callbacks) {
     };
     updateAgenticVllmKeyDisplay();
     $(document).on('vectfox:vllm-key-changed', updateAgenticVllmKeyDisplay);
-    $('#VectFox_agentic_vllm_apikey').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            // Dual-write: same pattern as the summarize input above.
-            const errors = [];
-            try {
-                await writeSecret(SECRET_KEYS.CUSTOM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
-                errors.push('chat-side (CUSTOM)');
-            }
-            try {
-                await writeSecret(SECRET_KEYS.VLLM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
-                errors.push('embedding-side (VLLM)');
-            }
-            await readSecretState();
-            if (errors.length === 0) {
-                toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
-            } else if (errors.length === 2) {
-                toastr.error('Failed to save vLLM key to either slot — see console');
-                return;
-            } else {
-                toastr.warning(`vLLM key partially saved — ${errors.join(', ')} write failed. See console.`);
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:vllm-key-changed');
-        }
-    });
+    bindApiKeyInput('#VectFox_agentic_vllm_apikey', persistVllmKey);
 
     // Sliders — chat depth, candidates, max queries
     const bindAgenticSlider = (inputId, valSpanId, settingKey, defaultVal) => {
@@ -2853,23 +2852,20 @@ function bindSettingsEvents(settings, callbacks) {
         }
     };
     updateQdrantKeyDisplay();
-    $('#VectFox_qdrant_api_key').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            try {
-                await writeSecret('api_key_qdrant', value);
-                // secret_state.api_key_qdrant won't appear (enum filter), so
-                // skip readSecretState — the plugin endpoint is the source of
-                // truth for presence now.
-                toastr.success('Qdrant API key saved to secret_state');
-            } catch (err) {
-                log.error('[VectFox] writeSecret(api_key_qdrant) failed:', err);
-                toastr.error('Failed to save Qdrant key — see console');
-                return;
-            }
-            $(this).val('');
-            updateQdrantKeyDisplay();
+    bindApiKeyInput('#VectFox_qdrant_api_key', async (value) => {
+        try {
+            await writeSecret('api_key_qdrant', value);
+            // secret_state.api_key_qdrant won't appear (enum filter), so skip
+            // readSecretState — the plugin endpoint is the source of truth for
+            // presence now.
+        } catch (err) {
+            log.error('[VectFox] writeSecret(api_key_qdrant) failed:', err);
+            toastr.error('Failed to save Qdrant key — see console');
+            return false;
         }
+        toastr.success('Qdrant API key saved to secret_state');
+        updateQdrantKeyDisplay();
+        return true;
     });
 
     // Qdrant multitenancy toggle
@@ -4002,35 +3998,7 @@ function bindSettingsEvents(settings, callbacks) {
     };
     updateVllmKeyDisplay();
     $(document).on('vectfox:vllm-key-changed', updateVllmKeyDisplay);
-    $('#VectFox_vllm_api_key').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            const errors = [];
-            try {
-                await writeSecret(SECRET_KEYS.CUSTOM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
-                errors.push('chat-side (CUSTOM)');
-            }
-            try {
-                await writeSecret(SECRET_KEYS.VLLM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
-                errors.push('embedding-side (VLLM)');
-            }
-            await readSecretState();
-            if (errors.length === 0) {
-                toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
-            } else if (errors.length === 2) {
-                toastr.error('Failed to save vLLM key to either slot — see console');
-                return;
-            } else {
-                toastr.warning(`vLLM key partially saved — ${errors.join(', ')} write failed. See console.`);
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:vllm-key-changed');
-        }
-    });
+    bindApiKeyInput('#VectFox_vllm_api_key', persistVllmKey);
 
     // Google model
     $('#VectFox_google_model')
@@ -4165,24 +4133,9 @@ function bindSettingsEvents(settings, callbacks) {
         _openrouterModelCache = null; // sibling-input save also invalidates the model picker cache
     });
 
-    $('#VectFox_openrouter_apikey')
-        .on('change', async function() {
-            const value = String($(this).val()).trim();
-            if (value) {
-                try {
-                    await writeSecret(SECRET_KEYS.OPENROUTER, value);
-                    await readSecretState(); // refresh masked state for display
-                } catch (err) {
-                    log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
-                    toastr.error('Failed to save OpenRouter key — see console');
-                    return;
-                }
-                _openrouterModelCache = null;
-                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
-                $(this).val('');
-                $(document).trigger('vectfox:openrouter-key-changed');
-            }
-        });
+    // Save handled by persistOpenRouterKey; the `vectfox:openrouter-key-changed`
+    // listener registered above busts _openrouterModelCache on every save.
+    bindApiKeyInput('#VectFox_openrouter_apikey', persistOpenRouterKey);
 
     // Rate Limiting
     $('#VectFox_rate_limit_calls')
