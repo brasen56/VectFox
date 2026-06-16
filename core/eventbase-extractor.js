@@ -11,7 +11,7 @@
  * ============================================================================
  */
 
-import { getOpenRouterApiKey, getCustomApiKey } from './api-keys.js';
+import { getOpenRouterApiKey, getCustomApiKey, vectfoxChatCompletion, hasVectFoxOpenRouterApiKey, hasVectFoxCustomApiKey } from './api-keys.js';
 import { getRequestHeaders } from '../../../../../script.js';
 import { getModelConfigErrorMessage } from './model-http-errors.js';
 import {
@@ -333,12 +333,11 @@ function _inferLanguageHint(text) {
 // ---------------------------------------------------------------------------
 
 async function _callOpenRouter(prompt, settings, windowIndex) {
-    // Presence-only check: see summarizer._callOpenRouter for the full rationale.
-    // Short version: getOpenRouterApiKey() returns ST's MASKED value, so we route
-    // through /api/backends/chat-completions/generate which reads the real key
-    // server-side via readSecret(SECRET_KEYS.OPENROUTER).
-    const apiKey = _getOpenRouterApiKey(settings);
-    if (!apiKey) {
+    // Post-2026-06-16: uses vectfoxChatCompletion which checks the isolated
+    // key first (direct fetch to OpenRouter), falling back to ST's proxy.
+    const hasIsolatedKey = hasVectFoxOpenRouterApiKey(settings);
+    const hasSharedKey = !!_getOpenRouterApiKey(settings);
+    if (!hasIsolatedKey && !hasSharedKey) {
         throw new EventBaseFatalError(
             'EventBase: OpenRouter API key not found. Add it in EventBase settings (or Summarize Before Store settings uses the same key).',
             'missing_api_key',
@@ -357,21 +356,19 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
     const temperature = settings.eventbase_temperature ?? DEFAULT_TEMPERATURE;
     const timeoutMs = settings.eventbase_timeout_ms || DEFAULT_TIMEOUT_MS;
 
-    const response = await fetch('/api/backends/chat-completions/generate', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            chat_completion_source: 'openrouter',
-            ..._buildBody(prompt, model, maxTokens, temperature),
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    if (!response.ok) {
-        const errText = await response.text().catch(() => response.statusText);
-        if (response.status === 401 || response.status === 403) {
+    let data;
+    try {
+        data = await vectfoxChatCompletion({
+            provider: 'openrouter',
+            body: _buildBody(prompt, model, maxTokens, temperature),
+            timeoutMs,
+        });
+    } catch (err) {
+        const status = err?.status;
+        const errText = err?.responseBody || err?.message || '';
+        if (status === 401 || status === 403) {
             throw new EventBaseFatalError(
-                `EventBase: OpenRouter authentication failed (${response.status}). Check your API key.`,
+                `EventBase: OpenRouter authentication failed (${status}). Check your API key.`,
                 'invalid_api_key',
             );
         }
@@ -379,31 +376,29 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
             contextLabel: 'EventBase',
             provider: 'OpenRouter',
             model,
-            status: response.status,
+            status,
             responseText: errText,
         });
         if (modelConfigError) {
             throw new EventBaseFatalError(modelConfigError, 'invalid_model_config');
         }
         throw new EventBaseExtractionError(
-            `EventBase: OpenRouter HTTP ${response.status}: ${errText}`,
+            `EventBase: OpenRouter HTTP ${status}: ${errText}`,
             windowIndex,
         );
     }
 
-    const data = await response.json();
     const reply = _extractReply(data);
     if (!reply) {
-        _classifyEmptyReplyBody({ provider: 'OpenRouter', model, status: response.status, data, settings });
+        _classifyEmptyReplyBody({ provider: 'OpenRouter', model, status: 200, data, settings });
         throw new EventBaseExtractionError('EventBase: OpenRouter returned empty response', windowIndex);
     }
     return reply;
 }
 
 async function _callVLLM(prompt, settings, windowIndex) {
-    // Routes through ST's chat-completions proxy with `chat_completion_source:
-    // 'custom'` — server reads key from SECRET_KEYS.CUSTOM, forwards to
-    // settings.summarize_vllm_url. Same pattern as summarizer.js::_callVLLM.
+    // Post-2026-06-16: uses vectfoxChatCompletion which checks the isolated
+    // key first (direct fetch to custom_url), falling back to ST's proxy.
     const baseUrl = (settings.summarize_vllm_url || '').trim();
     if (!baseUrl) {
         throw new EventBaseFatalError(
@@ -420,8 +415,9 @@ async function _callVLLM(prompt, settings, windowIndex) {
         );
     }
 
-    const apiKey = getCustomApiKey(settings);
-    if (!apiKey) {
+    const hasIsolatedKey = hasVectFoxCustomApiKey(settings);
+    const hasSharedKey = !!getCustomApiKey(settings);
+    if (!hasIsolatedKey && !hasSharedKey) {
         throw new EventBaseFatalError(
             'EventBase: vLLM / Custom OpenAI-compatible API key not configured. Enter it in Core → LLM Summarization settings.',
             'missing_api_key',
@@ -432,24 +428,20 @@ async function _callVLLM(prompt, settings, windowIndex) {
     const temperature = settings.eventbase_temperature ?? DEFAULT_TEMPERATURE;
     const timeoutMs = settings.eventbase_timeout_ms || DEFAULT_TIMEOUT_MS;
 
-    const body = {
-        ..._buildBody(prompt, model, maxTokens, temperature),
-        chat_completion_source: 'custom',
-        custom_url: baseUrl,
-    };
-
-    const response = await fetch('/api/backends/chat-completions/generate', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    if (!response.ok) {
-        const errText = await response.text().catch(() => response.statusText);
-        if (response.status === 401 || response.status === 403) {
+    let data;
+    try {
+        data = await vectfoxChatCompletion({
+            provider: 'vllm',
+            customUrl: baseUrl,
+            body: _buildBody(prompt, model, maxTokens, temperature),
+            timeoutMs,
+        });
+    } catch (err) {
+        const status = err?.status;
+        const errText = err?.responseBody || err?.message || '';
+        if (status === 401 || status === 403) {
             throw new EventBaseFatalError(
-                `EventBase: vLLM authentication failed (${response.status}). Check your API key in Core → LLM Summarization settings.`,
+                `EventBase: vLLM authentication failed (${status}). Check your API key in Core → LLM Summarization settings.`,
                 'invalid_api_key',
             );
         }
@@ -457,22 +449,21 @@ async function _callVLLM(prompt, settings, windowIndex) {
             contextLabel: 'EventBase',
             provider: 'vLLM',
             model,
-            status: response.status,
+            status,
             responseText: errText,
         });
         if (modelConfigError) {
             throw new EventBaseFatalError(modelConfigError, 'invalid_model_config');
         }
         throw new EventBaseExtractionError(
-            `EventBase: vLLM HTTP ${response.status}: ${errText}`,
+            `EventBase: vLLM HTTP ${status}: ${errText}`,
             windowIndex,
         );
     }
 
-    const data = await response.json();
     const reply = _extractReply(data);
     if (!reply) {
-        _classifyEmptyReplyBody({ provider: 'vLLM', model, status: response.status, data, settings });
+        _classifyEmptyReplyBody({ provider: 'vLLM', model, status: 200, data, settings });
         throw new EventBaseExtractionError('EventBase: vLLM returned empty response', windowIndex);
     }
     return reply;

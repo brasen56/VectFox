@@ -23,7 +23,7 @@ import { getContext } from '../../../../extensions.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { queryCollection } from './core-vector-api.js';
 import { buildPlannerUserMessage, getAgenticPlannerPrompt } from './prompts-i18n.js';
-import { getOpenRouterApiKey, getCustomApiKey } from './api-keys.js';
+import { getOpenRouterApiKey, getCustomApiKey, vectfoxChatCompletion, hasVectFoxOpenRouterApiKey, hasVectFoxCustomApiKey } from './api-keys.js';
 import { getModelConfigErrorMessage } from './model-http-errors.js';
 import { getRequestHeaders } from '../../../../../script.js';
 import { log } from './log.js';
@@ -290,18 +290,15 @@ export function _resolveAgenticLLMConfig(settings = {}) {
     }
 
     if (provider === 'openrouter') {
-        // Single shared OpenRouter key (SECRET_KEYS.OPENROUTER). The
-        // AgentMode-specific "override" slot was removed when the
-        // architecture pivoted to one key per provider — see
-        // core/api-keys.js docstring for rationale. The UI's
-        // "(empty → inherit summarize key)" placeholder is now a
-        // no-op visual hint; all three inputs (embedding/summarize/
-        // agentic) write the same SECRET_KEYS.OPENROUTER slot.
-        const apiKey = getOpenRouterApiKey(settings);
-        if (!apiKey) {
+        // Post-2026-06-16: check both isolated (preferred) and shared
+        // (legacy fallback) keys. The isolated key lives in
+        // extension_settings and is independent of ST's Connection Profile.
+        const hasIsolated = hasVectFoxOpenRouterApiKey(settings);
+        const hasShared = !!getOpenRouterApiKey(settings);
+        if (!hasIsolated && !hasShared) {
             return { ok: false, reason: 'missing_openrouter_api_key' };
         }
-        return { ok: true, provider, model, apiKey };
+        return { ok: true, provider, model };
     }
 
     if (provider === 'vllm') {
@@ -309,14 +306,13 @@ export function _resolveAgenticLLMConfig(settings = {}) {
         if (!vllmUrl) {
             return { ok: false, reason: 'missing_vllm_url' };
         }
-        // Key lives in SECRET_KEYS.CUSTOM (masked client-side). getCustomApiKey
-        // returns the masked presence indicator; real key is read server-side
-        // by ST's chat-completions proxy. Same shared slot as summarize/agent.
-        const apiKey = getCustomApiKey(settings);
-        if (!apiKey) {
+        // Post-2026-06-16: check both isolated (preferred) and shared keys.
+        const hasIsolated = hasVectFoxCustomApiKey(settings);
+        const hasShared = !!getCustomApiKey(settings);
+        if (!hasIsolated && !hasShared) {
             return { ok: false, reason: 'missing_vllm_api_key' };
         }
-        return { ok: true, provider, model, vllmUrl, apiKey };
+        return { ok: true, provider, model, vllmUrl };
     }
 
     return { ok: false, reason: `unknown_provider_${provider}` };
@@ -338,53 +334,35 @@ async function _callPlanner({ systemPrompt, userMessage, llmCfg, timeoutMs }) {
         response_format: { type: 'json_object' },
     };
 
-    let endpoint, headers, requestBody;
-    if (llmCfg.provider === 'openrouter') {
-        // Route through ST's chat-completions proxy. llmCfg.apiKey here is the
-        // MASKED placeholder (presence indicator only); the real key is read
-        // server-side via readSecret(SECRET_KEYS.OPENROUTER). See
-        // summarizer._callOpenRouter for the full rationale.
-        endpoint = '/api/backends/chat-completions/generate';
-        headers = getRequestHeaders();
-        requestBody = { chat_completion_source: 'openrouter', ...body };
-    } else if (llmCfg.provider === 'vllm') {
-        // Route through ST's chat-completions proxy with `chat_completion_source:
-        // 'custom'`. ST reads the real key server-side from SECRET_KEYS.CUSTOM
-        // and forwards to llmCfg.vllmUrl. llmCfg.apiKey here is the MASKED
-        // presence value — never sent over the wire. Same pattern as the
-        // openrouter branch above.
-        endpoint = '/api/backends/chat-completions/generate';
-        headers = getRequestHeaders();
-        requestBody = { chat_completion_source: 'custom', custom_url: llmCfg.vllmUrl, ...body };
-    } else {
-        throw new Error(`Unknown provider: ${llmCfg.provider}`);
-    }
-
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    if (!response.ok) {
-        const errText = await response.text().catch(() => response.statusText);
+    // Post-2026-06-16: vectfoxChatCompletion checks the isolated key first
+    // (direct fetch to OpenRouter/custom_url), falling back to ST's proxy
+    // (reads shared slot server-side) for existing users.
+    let data;
+    try {
+        data = await vectfoxChatCompletion({
+            provider: llmCfg.provider,
+            customUrl: llmCfg.vllmUrl,
+            body,
+            timeoutMs,
+        });
+    } catch (err) {
+        const status = err?.status;
+        const errText = err?.responseBody || err?.message || '';
         const modelConfigError = getModelConfigErrorMessage({
             contextLabel: 'Agent Mode',
             provider: llmCfg.provider,
             model: llmCfg.model,
-            status: response.status,
+            status,
             responseText: errText,
         });
         if (modelConfigError) {
-            const err = new Error(modelConfigError);
-            err.code = 'invalid_model_config';
-            throw err;
+            const e = new Error(modelConfigError);
+            e.code = 'invalid_model_config';
+            throw e;
         }
-        throw new Error(`HTTP ${response.status}: ${String(errText).slice(0, 200)}`);
+        throw new Error(`HTTP ${status}: ${String(errText).slice(0, 200)}`);
     }
 
-    const data = await response.json();
     const content = data?.choices?.[0]?.message?.content;
     if (!content) {
         // OpenRouter via ST's proxy can return HTTP 200 with an error body (e.g.
@@ -395,7 +373,7 @@ async function _callPlanner({ systemPrompt, userMessage, llmCfg, timeoutMs }) {
             contextLabel: 'Agent Mode',
             provider: llmCfg.provider,
             model: llmCfg.model,
-            status: response.status,
+            status: 200,
             responseText: bodyText,
             enforceStatusGate: false,
         });

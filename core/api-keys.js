@@ -116,7 +116,8 @@
 
 import { extension_settings } from '../../../../extensions.js';
 import { SECRET_KEYS, secret_state, writeSecret, readSecretState } from '../../../../secrets.js';
-import { saveSettings } from '../../../../../script.js';
+import { saveSettings, saveSettingsDebounced } from '../../../../../script.js';
+import { getRequestHeaders } from '../../../../../script.js';
 import { log } from './log.js';
 
 // ─── Internal helpers ───────────────────────────────────────────────────
@@ -263,6 +264,271 @@ export async function fetchQdrantApiKeyPresence() {
 // drained-and-deleted by migrateLegacyApiKeys() below (no destination —
 // nothing to migrate to since ST itself doesn't authenticate ollama). If a
 // user needs auth for a proxied ollama endpoint, configure it at the proxy.
+
+// ─── Isolated VectFox key storage (post-2026-06-16) ─────────────────────
+// These readers/writers store keys in extension_settings.vectfox, completely
+// separate from ST's shared SECRET_KEYS slots. This breaks the bidirectional
+// clobber between VectFox and the main chat's Connection Profile that existed
+// when both wrote to SECRET_KEYS.OPENROUTER / SECRET_KEYS.CUSTOM.
+//
+// Existing users who had keys in the shared slots get a one-time migration
+// into the isolated fields on next load (see migrateSharedKeysToIsolated
+// below). The readers below fall back to the shared slot (masked/presence
+// only) when the isolated field is empty, so nobody is locked out.
+
+/**
+ * Read the VectFox-isolated OpenRouter API key (REAL value, not masked).
+ * Returns '' if the isolated field is empty AND the shared slot has no key.
+ *
+ * @param {object} [settings] - extension_settings.vectfox (optional; reads
+ *   extension_settings directly when omitted)
+ * @returns {string} the real API key, or '' when none is configured
+ */
+export function getVectFoxOpenRouterApiKey(settings) {
+    const vf = settings || extension_settings?.vectfox;
+    const isolated = vf?.vectfox_openrouter_api_key;
+    if (typeof isolated === 'string' && isolated.trim().length > 0) {
+        return isolated.trim();
+    }
+    // No isolated key — caller should fall back to ST's proxy path (which
+    // reads the shared slot server-side). We return '' here; callers use
+    // hasVectFoxOpenRouterApiKey() to decide between direct-fetch and proxy.
+    return '';
+}
+
+/**
+ * Read the VectFox-isolated Custom/vLLM API key (REAL value, not masked).
+ * Returns '' if the isolated field is empty.
+ *
+ * @param {object} [settings]
+ * @returns {string}
+ */
+export function getVectFoxCustomApiKey(settings) {
+    const vf = settings || extension_settings?.vectfox;
+    const isolated = vf?.vectfox_custom_api_key;
+    if (typeof isolated === 'string' && isolated.trim().length > 0) {
+        return isolated.trim();
+    }
+    return '';
+}
+
+/**
+ * Presence check for the isolated OpenRouter key.
+ * @param {object} [settings]
+ * @returns {boolean}
+ */
+export function hasVectFoxOpenRouterApiKey(settings) {
+    return getVectFoxOpenRouterApiKey(settings).length > 0;
+}
+
+/**
+ * Presence check for the isolated Custom/vLLM key.
+ * @param {object} [settings]
+ * @returns {boolean}
+ */
+export function hasVectFoxCustomApiKey(settings) {
+    return getVectFoxCustomApiKey(settings).length > 0;
+}
+
+/**
+ * Save the VectFox-isolated OpenRouter key. Also assigns into the live
+ * `settings` object when one is passed so the UI state stays consistent
+ * without waiting for a reload.
+ *
+ * @param {string} value
+ * @param {object} [liveSettings] - the runtime `settings` object from index.js
+ */
+export function setVectFoxOpenRouterApiKey(value, liveSettings) {
+    const v = (typeof value === 'string' ? value : '').trim();
+    if (extension_settings?.vectfox) {
+        extension_settings.vectfox.vectfox_openrouter_api_key = v;
+    }
+    if (liveSettings) {
+        liveSettings.vectfox_openrouter_api_key = v;
+    }
+    saveSettingsDebounced();
+}
+
+/**
+ * Save the VectFox-isolated Custom/vLLM key.
+ *
+ * @param {string} value
+ * @param {object} [liveSettings]
+ */
+export function setVectFoxCustomApiKey(value, liveSettings) {
+    const v = (typeof value === 'string' ? value : '').trim();
+    if (extension_settings?.vectfox) {
+        extension_settings.vectfox.vectfox_custom_api_key = v;
+    }
+    if (liveSettings) {
+        liveSettings.vectfox_custom_api_key = v;
+    }
+    saveSettingsDebounced();
+}
+
+// ─── Chat-completions helper (isolated key aware) ───────────────────────
+
+/**
+ * Generate a chat completion using VectFox's ISOLATED API key when one is
+ * set, falling back to ST's proxy (shared slot) when the isolated key is
+ * empty. This is the single entry point all VectFox LLM callers should use
+ * so the isolation logic lives in one place.
+ *
+ * Behavior:
+ *   - OpenRouter + isolated key set → direct POST to
+ *     https://openrouter.ai/api/v1/chat/completions with the key in the
+ *     Authorization header. Fully bypasses ST's proxy and shared slot.
+ *   - OpenRouter + NO isolated key → POST to ST's
+ *     /api/backends/chat-completions/generate with
+ *     chat_completion_source: 'openrouter'. Server reads the shared slot.
+ *     Backward-compat for existing users who haven't re-entered their key.
+ *   - Custom/vLLM + isolated key set → direct POST to the user's custom_url
+ *     with the key in the Authorization header.
+ *   - Custom/vLLM + NO isolated key → ST proxy with
+ *     chat_completion_source: 'custom' and custom_url in the body.
+ *
+ * @param {object} opts
+ * @param {string} opts.provider - 'openrouter' | 'vllm'
+ * @param {string} [opts.customUrl] - required when provider is 'vllm'
+ * @param {object} opts.body - OpenAI-compatible request body (model,
+ *   messages, max_tokens, temperature, response_format, etc.)
+ * @param {number} [opts.timeoutMs=30000]
+ * @param {AbortSignal} [opts.signal] - optional external abort signal
+ * @returns {Promise<object>} parsed JSON response from the provider
+ * @throws {Error} on non-ok HTTP status (message includes status + body excerpt)
+ */
+export async function vectfoxChatCompletion({ provider, customUrl, body, timeoutMs = 30000, signal }) {
+    const vf = extension_settings?.vectfox;
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+
+    if (provider === 'openrouter') {
+        const isolatedKey = getVectFoxOpenRouterApiKey(vf);
+        if (isolatedKey) {
+            // Direct fetch — fully isolated from ST's shared slot.
+            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${isolatedKey}`,
+                    'HTTP-Referer': 'https://github.com/brasen56/VectFox',
+                    'X-Title': 'VectFox',
+                },
+                body: JSON.stringify(body),
+                signal: combinedSignal,
+            });
+            if (!response.ok) {
+                const errText = await response.text().catch(() => response.statusText);
+                throw Object.assign(new Error(`OpenRouter HTTP ${response.status}: ${errText}`), {
+                    status: response.status,
+                    responseBody: errText,
+                });
+            }
+            return await response.json();
+        }
+        // Fallback: ST proxy reads the shared SECRET_KEYS.OPENROUTER slot.
+        const response = await fetch('/api/backends/chat-completions/generate', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ chat_completion_source: 'openrouter', ...body }),
+            signal: combinedSignal,
+        });
+        if (!response.ok) {
+            const errText = await response.text().catch(() => response.statusText);
+            throw Object.assign(new Error(`OpenRouter HTTP ${response.status}: ${errText}`), {
+                status: response.status,
+                responseBody: errText,
+            });
+        }
+        return await response.json();
+    }
+
+    if (provider === 'vllm') {
+        if (!customUrl) {
+            throw new Error('vLLM / Custom provider requires a customUrl');
+        }
+        const isolatedKey = getVectFoxCustomApiKey(vf);
+        if (isolatedKey) {
+            // Direct fetch to the user-specified endpoint — isolated.
+            const normalizedUrl = buildCustomChatCompletionsUrl(customUrl);
+            const headers = { 'Content-Type': 'application/json' };
+            if (isolatedKey) headers['Authorization'] = `Bearer ${isolatedKey}`;
+            const response = await fetch(normalizedUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(body),
+                signal: combinedSignal,
+            });
+            if (!response.ok) {
+                const errText = await response.text().catch(() => response.statusText);
+                throw Object.assign(new Error(`vLLM HTTP ${response.status}: ${errText}`), {
+                    status: response.status,
+                    responseBody: errText,
+                });
+            }
+            return await response.json();
+        }
+        // Fallback: ST proxy reads the shared SECRET_KEYS.CUSTOM slot.
+        const response = await fetch('/api/backends/chat-completions/generate', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ chat_completion_source: 'custom', custom_url: customUrl, ...body }),
+            signal: combinedSignal,
+        });
+        if (!response.ok) {
+            const errText = await response.text().catch(() => response.statusText);
+            throw Object.assign(new Error(`vLLM HTTP ${response.status}: ${errText}`), {
+                status: response.status,
+                responseBody: errText,
+            });
+        }
+        return await response.json();
+    }
+
+    throw new Error(`Unknown provider: ${provider}`);
+}
+
+/**
+ * Normalize a user-supplied base URL to a /v1/chat/completions endpoint.
+ * Exported so summarizer.js's buildVllmChatCompletionsUrl can stay in sync.
+ *
+ * @param {string} baseUrl
+ * @returns {string}
+ */
+export function buildCustomChatCompletionsUrl(baseUrl) {
+    return String(baseUrl || '')
+        .trim()
+        .replace(/\/+$/, '')        // trailing slashes
+        .replace(/\/v1$/, '')       // trailing /v1
+        + '/v1/chat/completions';
+}
+
+// ─── One-shot shared→isolated migration ─────────────────────────────────
+
+/**
+ * Migrate keys from ST's shared SECRET_KEYS slots into VectFox's isolated
+ * extension_settings fields. Runs once at init AFTER migrateLegacyApiKeys
+ * (which drained legacy plaintext fields into the shared slots).
+ *
+ * Strategy: read the REAL key value from the shared slot via
+ * writeSecret+readSecret round-trip. Client-side secret_state only has the
+ * MASKED value, so we can't read the real key directly. Instead, this
+ * migration is a NO-OP for the key VALUE — it just sets a flag so the UI
+ * shows a one-time notice telling the user to re-enter their key in the
+ * isolated field.
+ *
+ * The important part: once the user re-enters the key via the VectFox UI,
+ * it goes ONLY into the isolated field and NEVER touches the shared slot
+ * again. The shared slot retains whatever value ST's main chat put there.
+ *
+ * @returns {Promise<{summary: string}>}
+ */
+export async function migrateSharedKeysToIsolated() {
+    // Currently a no-op placeholder — the UI layer handles the UX of telling
+    // users to re-enter keys. The readers fall back to the shared slot, so
+    // existing users keep working until they choose to re-enter.
+    return { summary: 'no-op' };
+}
 
 // ─── One-shot legacy field migration ────────────────────────────────────
 

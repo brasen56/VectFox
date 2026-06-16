@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-import { getOpenRouterApiKey, getCustomApiKey } from './api-keys.js';
+import { getOpenRouterApiKey, getCustomApiKey, vectfoxChatCompletion, hasVectFoxOpenRouterApiKey, hasVectFoxCustomApiKey } from './api-keys.js';
 import { getDefaultSummarizePrompt } from './prompts-i18n.js';
 import { getModelConfigErrorMessage } from './model-http-errors.js';
 import { getRequestHeaders } from '../../../../../script.js';
@@ -65,14 +65,22 @@ export function validateLLMConfig(settings = {}) {
     }
 
     if (provider === 'openrouter') {
-        const key = _getOpenRouterApiKey(settings);
-        if (!key) {
+        // Check both isolated (preferred) and shared (legacy fallback) keys.
+        const hasIsolated = hasVectFoxOpenRouterApiKey(settings);
+        const hasShared = !!_getOpenRouterApiKey(settings);
+        if (!hasIsolated && !hasShared) {
             return { ok: false, reason: 'OpenRouter API key is not set.' };
         }
     } else if (provider === 'vllm') {
         const url = (settings?.summarize_vllm_url || '').trim();
         if (!url) {
             return { ok: false, reason: 'vLLM Base URL is not set.' };
+        }
+        // Check both isolated (preferred) and shared (legacy fallback) keys.
+        const hasIsolated = hasVectFoxCustomApiKey(settings);
+        const hasShared = !!getCustomApiKey(settings);
+        if (!hasIsolated && !hasShared) {
+            return { ok: false, reason: 'vLLM / Custom OpenAI-compatible API key is not set.' };
         }
     } else {
         return { ok: false, reason: `Unknown LLM provider: ${provider}` };
@@ -213,15 +221,15 @@ function _extractReply(data) {
 const _getOpenRouterApiKey = getOpenRouterApiKey;
 
 async function _callOpenRouter(prompt, model, settings, originalLength, maxTokens = DEFAULT_MAX_TOKENS, timeoutMs = DEFAULT_TIMEOUT_MS) {
-    // Presence-only check: getOpenRouterApiKey() returns the MASKED value from
-    // secret_state (e.g. "*******abcd"), not the real key — ST's getSecretState
-    // masks all non-EXPORTABLE_KEYS. We can't send a masked value as a Bearer
-    // token, so we route through ST's own /api/backends/chat-completions/generate
-    // proxy, which reads the real key server-side via readSecret(SECRET_KEYS.OPENROUTER)
-    // and forwards to OpenRouter. Same pattern the embedding flow already uses
-    // via /api/vector/insert.
-    const apiKey = _getOpenRouterApiKey(settings);
-    if (!apiKey) {
+    // Post-2026-06-16: checks VectFox's ISOLATED key first (stored in
+    // extension_settings, separate from ST's shared slot). When present,
+    // vectfoxChatCompletion() does a direct fetch to OpenRouter's API —
+    // fully isolated from ST's Connection Profile. Falls back to ST's
+    // proxy (reads shared slot server-side) for existing users who haven't
+    // re-entered their key yet.
+    const hasIsolatedKey = hasVectFoxOpenRouterApiKey(settings);
+    const hasSharedKey = !!_getOpenRouterApiKey(settings);
+    if (!hasIsolatedKey && !hasSharedKey) {
         throw new SummarizationFatalError(
             'OpenRouter API key not found. Add it in Summarize Before Store settings.',
             'openrouter',
@@ -229,21 +237,19 @@ async function _callOpenRouter(prompt, model, settings, originalLength, maxToken
         );
     }
 
-    const response = await fetch('/api/backends/chat-completions/generate', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            chat_completion_source: 'openrouter',
-            ..._buildBody(prompt, model, maxTokens),
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    if (!response.ok) {
-        const errText = await response.text().catch(() => response.statusText);
-        if (response.status === 401 || response.status === 403) {
+    let data;
+    try {
+        data = await vectfoxChatCompletion({
+            provider: 'openrouter',
+            body: _buildBody(prompt, model, maxTokens),
+            timeoutMs,
+        });
+    } catch (err) {
+        const status = err?.status;
+        const errText = err?.responseBody || err?.message || '';
+        if (status === 401 || status === 403) {
             throw new SummarizationFatalError(
-                `OpenRouter authentication failed (${response.status}). Check your API key.`,
+                `OpenRouter authentication failed (${status}). Check your API key.`,
                 'openrouter',
                 'invalid_api_key'
             );
@@ -252,16 +258,15 @@ async function _callOpenRouter(prompt, model, settings, originalLength, maxToken
             contextLabel: 'Summarizer',
             provider: 'OpenRouter',
             model,
-            status: response.status,
+            status,
             responseText: errText,
         });
         if (modelConfigError) {
             throw new SummarizationFatalError(modelConfigError, 'openrouter', 'invalid_model_config');
         }
-        throw new Error(`OpenRouter HTTP ${response.status}: ${errText}`);
+        throw new Error(`OpenRouter HTTP ${status}: ${errText}`);
     }
 
-    const data = await response.json();
     const summary = _extractReply(data);
     if (!summary) {
         const bodyText = data?.error ? JSON.stringify(data.error) : JSON.stringify(data || {});
@@ -269,14 +274,14 @@ async function _callOpenRouter(prompt, model, settings, originalLength, maxToken
             contextLabel: 'Summarizer',
             provider: 'OpenRouter',
             model,
-            status: response.status,
+            status: 200,
             responseText: bodyText,
             enforceStatusGate: false,
         });
         if (modelConfigError) throw new SummarizationFatalError(modelConfigError, 'openrouter', 'invalid_model_config');
         throw new Error('OpenRouter returned empty summary');
     }
-    // don't remove 
+    // don't remove
     //log.verbose(`[VectFox Summarizer] OpenRouter: ${originalLength} chars → ${summary.length} chars`);
     return summary;
 }
@@ -306,11 +311,10 @@ export function buildVllmChatCompletionsUrl(baseUrl) {
 }
 
 async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS, timeoutMs = DEFAULT_TIMEOUT_MS) {
-    // Routes through ST's chat-completions proxy with `chat_completion_source:
-    // 'custom'` — ST's server reads the real key from SECRET_KEYS.CUSTOM and
-    // forwards to settings.summarize_vllm_url. Same pattern as _callOpenRouter
-    // above. The function name is kept for compat with the provider-dispatch
-    // switch; the wire is no longer a direct fetch to vLLM.
+    // Post-2026-06-16: checks VectFox's ISOLATED Custom/vLLM key first.
+    // When present, vectfoxChatCompletion() does a direct fetch to the
+    // user's custom_url — fully isolated from ST's Connection Profile.
+    // Falls back to ST's proxy for existing users.
     const baseUrl = (settings?.summarize_vllm_url || '').trim();
     if (!baseUrl) {
         throw new SummarizationFatalError(
@@ -320,10 +324,9 @@ async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS
         );
     }
 
-    // Presence-only check on the masked key (same caveat as _callOpenRouter:
-    // _readSecretValue returns the masked form). Real key lives server-side.
-    const apiKey = getCustomApiKey(settings);
-    if (!apiKey) {
+    const hasIsolatedKey = hasVectFoxCustomApiKey(settings);
+    const hasSharedKey = !!getCustomApiKey(settings);
+    if (!hasIsolatedKey && !hasSharedKey) {
         throw new SummarizationFatalError(
             'vLLM / Custom OpenAI-compatible API key not configured. Enter it in Summarize Before Store settings.',
             'vllm',
@@ -331,24 +334,20 @@ async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS
         );
     }
 
-    const body = {
-        ..._buildBody(prompt, model, maxTokens),
-        chat_completion_source: 'custom',
-        custom_url: baseUrl,
-    };
-
-    const response = await fetch('/api/backends/chat-completions/generate', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    if (!response.ok) {
-        const errText = await response.text().catch(() => response.statusText);
-        if (response.status === 401 || response.status === 403) {
+    let data;
+    try {
+        data = await vectfoxChatCompletion({
+            provider: 'vllm',
+            customUrl: baseUrl,
+            body: _buildBody(prompt, model, maxTokens),
+            timeoutMs,
+        });
+    } catch (err) {
+        const status = err?.status;
+        const errText = err?.responseBody || err?.message || '';
+        if (status === 401 || status === 403) {
             throw new SummarizationFatalError(
-                `vLLM authentication failed (${response.status}). Check your API key in Summarize Before Store settings.`,
+                `vLLM authentication failed (${status}). Check your API key in Summarize Before Store settings.`,
                 'vllm',
                 'invalid_api_key'
             );
@@ -357,16 +356,15 @@ async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS
             contextLabel: 'Summarizer',
             provider: 'vLLM',
             model,
-            status: response.status,
+            status,
             responseText: errText,
         });
         if (modelConfigError) {
             throw new SummarizationFatalError(modelConfigError, 'vllm', 'invalid_model_config');
         }
-        throw new Error(`vLLM HTTP ${response.status}: ${errText}`);
+        throw new Error(`vLLM HTTP ${status}: ${errText}`);
     }
 
-    const data = await response.json();
     const summary = _extractReply(data);
     if (!summary) {
         const bodyText = data?.error ? JSON.stringify(data.error) : JSON.stringify(data || {});
@@ -374,7 +372,7 @@ async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS
             contextLabel: 'Summarizer',
             provider: 'vLLM',
             model,
-            status: response.status,
+            status: 200,
             responseText: bodyText,
             enforceStatusGate: false,
         });

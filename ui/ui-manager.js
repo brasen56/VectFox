@@ -18,6 +18,12 @@ import {
     getCustomApiKey,
     getQdrantApiKey,
     fetchQdrantApiKeyPresence,
+    setVectFoxOpenRouterApiKey,
+    setVectFoxCustomApiKey,
+    hasVectFoxOpenRouterApiKey,
+    hasVectFoxCustomApiKey,
+    getVectFoxOpenRouterApiKey,
+    getVectFoxCustomApiKey,
 } from '../core/api-keys.js';
 import { openKeyManager, getSecretCount, getActiveSecretLabel } from './key-manager.js';
 import { getWebLlmProvider as getSharedWebLlmProvider } from '../providers/webllm.js';
@@ -2430,20 +2436,21 @@ function bindSettingsEvents(settings, callbacks) {
             });
     };
 
-    // Persist the OpenRouter key to ST's shared SECRET_KEYS.OPENROUTER slot.
-    // Used by the Embedding, Summarize and AgentMode inputs (one key, three
-    // inputs). Dispatching `vectfox:openrouter-key-changed` refreshes every
-    // placeholder and busts the model-picker cache via the listeners below.
+    // Persist the OpenRouter key to VectFox's ISOLATED storage
+    // (extension_settings.vectfox.vectfox_openrouter_api_key).
+    // Post-2026-06-16: This is SEPARATE from ST's shared SECRET_KEYS.OPENROUTER
+    // slot. Writing here does NOT affect ST's main chat Connection Profile,
+    // and switching profiles in ST's main chat does NOT affect VectFox.
+    // The key is used by VectFox's direct fetch calls to OpenRouter's API.
     const persistOpenRouterKey = async (value) => {
         try {
-            await writeSecret(SECRET_KEYS.OPENROUTER, value);
-            await readSecretState(); // refresh masked state for display
+            setVectFoxOpenRouterApiKey(value, settings);
         } catch (err) {
-            log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
+            log.error('[VectFox] setVectFoxOpenRouterApiKey failed:', err);
             toastr.error('Failed to save OpenRouter key — see console');
             return false;
         }
-        toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
+        toastr.success('OpenRouter API key saved (VectFox-only, isolated from main chat profile)');
         $(document).trigger('vectfox:openrouter-key-changed');
         return true;
     };
@@ -2536,35 +2543,20 @@ function bindSettingsEvents(settings, callbacks) {
     // Refresh badges whenever keys change (covers paste-save + manager edits).
     $(document).on('vectfox:openrouter-key-changed vectfox:vllm-key-changed', _refreshKeyCountBadges);
 
-    // Persist the vLLM / Custom OpenAI-compatible key. Dual-write: CUSTOM
-    // (chat-side proxy) + VLLM (embedding-side proxy). One key, both slots.
-    // Either write failing is non-fatal — toast which side didn't land so the
-    // user can re-enter via ST's UI. A partial save still clears the field and
-    // refreshes placeholders (matches the pre-refactor behavior).
+    // Persist the vLLM / Custom OpenAI-compatible key to VectFox's ISOLATED
+    // storage (extension_settings.vectfox.vectfox_custom_api_key).
+    // Post-2026-06-16: This is SEPARATE from ST's shared SECRET_KEYS.CUSTOM
+    // and SECRET_KEYS.VLLM slots. Writing here does NOT affect ST's main chat
+    // Connection Profile, and switching profiles does NOT affect VectFox.
     const persistVllmKey = async (value) => {
-        const errors = [];
         try {
-            await writeSecret(SECRET_KEYS.CUSTOM, value);
+            setVectFoxCustomApiKey(value, settings);
         } catch (err) {
-            log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
-            errors.push('chat-side (CUSTOM)');
-        }
-        try {
-            await writeSecret(SECRET_KEYS.VLLM, value);
-        } catch (err) {
-            log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
-            errors.push('embedding-side (VLLM)');
-        }
-        await readSecretState();
-        if (errors.length === 2) {
-            toastr.error('Failed to save vLLM key to either slot — see console');
+            log.error('[VectFox] setVectFoxCustomApiKey failed:', err);
+            toastr.error('Failed to save vLLM / Custom key — see console');
             return false;
         }
-        if (errors.length === 1) {
-            toastr.warning(`vLLM key partially saved — ${errors.join(', ')} write failed. See console.`);
-        } else {
-            toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
-        }
+        toastr.success('vLLM / Custom API key saved (VectFox-only, isolated from main chat profile)');
         $(document).trigger('vectfox:vllm-key-changed');
         return true;
     };
@@ -2589,12 +2581,15 @@ function bindSettingsEvents(settings, callbacks) {
     // `vectfox:vllm-key-changed` custom event, so saving the key in any
     // of the three inputs updates all three placeholders.
     const updateSummarizeVllmKeyDisplay = () => {
-        const savedKey = getCustomApiKey(settings);
+        // Post-2026-06-16: prefer isolated key, fall back to shared slot for existing users.
+        const isolatedKey = getVectFoxCustomApiKey(settings);
+        const savedKey = isolatedKey || getCustomApiKey(settings);
         if (savedKey) {
             const masked = savedKey.length > 4
                 ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
                 : '*'.repeat(savedKey.length);
-            $('#VectFox_summarize_vllm_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + AgentMode)`);
+            const source = isolatedKey ? 'VectFox isolated' : 'ST shared (re-enter to isolate)';
+            $('#VectFox_summarize_vllm_apikey').attr('placeholder', `Key saved: ${masked} (${source}, shared with Embedding + AgentMode)`);
         } else {
             $('#VectFox_summarize_vllm_apikey').attr('placeholder', 'Paste vLLM / Custom OpenAI-compatible key (shared with Embedding + AgentMode)');
         }
@@ -2615,12 +2610,14 @@ function bindSettingsEvents(settings, callbacks) {
     // `vectfox:openrouter-key-changed` custom event, so saving the key in any
     // of the three inputs updates all three placeholders immediately.
     const updateSummarizeORKeyDisplay = () => {
-        const savedKey = getOpenRouterApiKey(settings);
+        const isolatedKey = getVectFoxOpenRouterApiKey(settings);
+        const savedKey = isolatedKey || getOpenRouterApiKey(settings);
         if (savedKey) {
             const masked = savedKey.length > 4
                 ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
                 : '*'.repeat(savedKey.length);
-            $('#VectFox_summarize_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + AgentMode)`);
+            const source = isolatedKey ? 'VectFox isolated' : 'ST shared (re-enter to isolate)';
+            $('#VectFox_summarize_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (${source}, shared with Embedding + AgentMode)`);
         } else {
             $('#VectFox_summarize_openrouter_apikey').attr('placeholder', 'Paste OpenRouter key (shared with Embedding + AgentMode)');
         }
@@ -2670,12 +2667,14 @@ function bindSettingsEvents(settings, callbacks) {
     // architecture pivot, the "override" semantics are gone — there's now
     // ONE OpenRouter key everywhere.
     const updateAgenticORKeyDisplay = () => {
-        const savedKey = getOpenRouterApiKey(settings);
+        const isolatedKey = getVectFoxOpenRouterApiKey(settings);
+        const savedKey = isolatedKey || getOpenRouterApiKey(settings);
         if (savedKey) {
             const masked = savedKey.length > 4
                 ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
                 : '*'.repeat(savedKey.length);
-            $('#VectFox_agentic_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + Summarize)`);
+            const source = isolatedKey ? 'VectFox isolated' : 'ST shared';
+            $('#VectFox_agentic_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (${source}, shared with Embedding + Summarize)`);
         } else {
             $('#VectFox_agentic_openrouter_apikey').attr('placeholder', 'Paste OpenRouter key (shared with Embedding + Summarize)');
         }

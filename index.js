@@ -79,23 +79,31 @@ const defaultSettings = {
     openai_model: 'text-embedding-ada-002',
     electronhub_model: 'text-embedding-3-small',
     openrouter_model: 'openai/text-embedding-3-large',
-    // OpenRouter key: stored in SECRET_KEYS.OPENROUTER (ST's shared slot, not in
-    // defaults). Reader: core/api-keys.js::getOpenRouterApiKey. The legacy
-    // plaintext slot used to live here as `openrouter_api_key: ''` but kept
-    // re-appearing in settings.json — every UI handler does
-    // Object.assign(extension_settings.vectfox, settings) which would re-add
-    // any default-declared empty field after migrateLegacyApiKeys() deleted it.
+    // OpenRouter key: ISOLATED in extension_settings (post-2026-06-16).
+    // Previously stored in ST's shared SECRET_KEYS.OPENROUTER slot, which
+    // conflicted with the main chat's Connection Profile — writing the key
+    // in VectFox clobbered the main chat's key and vice versa. Now stored
+    // as plaintext in settings.json for VectFox-only use. Direct fetch calls
+    // to OpenRouter's API bypass ST's proxy entirely, giving full isolation.
+    // Reader: core/api-keys.js::getVectFoxOpenRouterApiKey (real key value).
+    // Fallback reader: core/api-keys.js::getOpenRouterApiKey (checks isolated
+    // storage first, then falls back to shared slot for existing users).
+    vectfox_openrouter_api_key: '',
     cohere_model: 'embed-english-v3.0',
     ollama_model: 'mxbai-embed-large',
     ollama_keep: false,
     vllm_model: '',
-    // vLLM key: stored in ST's SECRET_KEYS.CUSTOM (chat-side, via
-    // chat_completion_source: 'custom' proxy) AND SECRET_KEYS.VLLM
-    // (embedding-side, via ST's vector handler). Dual-write from VectFox UI
-    // preserves the "one shared key" UX. NO plaintext field in settings.json
-    // post-2026-05-26. Migration drains any legacy `vllm_api_key` plaintext
-    // into both slots on first load. Reader: core/api-keys.js::getCustomApiKey
-    // (presence/masked-value indicator only; real key lives server-side).
+    // vLLM / Custom OpenAI-compatible key: ISOLATED in extension_settings
+    // (post-2026-06-16). Previously dual-written to ST's shared
+    // SECRET_KEYS.CUSTOM + SECRET_KEYS.VLLM slots, which conflicted with
+    // the main chat's Connection Profile. Now stored as plaintext in
+    // settings.json for VectFox-only use. Chat-side calls route through
+    // ST's chat-completions proxy and pass the key in the request body
+    // so VectFox's key is used instead of the shared slot.
+    // Reader: core/api-keys.js::getVectFoxCustomApiKey (real key value).
+    // Fallback reader: core/api-keys.js::getCustomApiKey (checks isolated
+    // storage first, then falls back to shared slot for existing users).
+    vectfox_custom_api_key: '',
     webllm_model: '',
     google_model: 'text-embedding-005',
     bananabread_rerank: false,
