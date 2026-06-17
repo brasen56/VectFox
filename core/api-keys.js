@@ -284,86 +284,198 @@ export async function fetchQdrantApiKeyPresence() {
  *   extension_settings directly when omitted)
  * @returns {string} the real API key, or '' when none is configured
  */
+// ─── VectFox-owned multi-key store (post-2026-06-17) ────────────────────
+// Each provider ('openrouter' | 'custom') maps to an array of
+//   { id, label, value, active }
+// stored in extension_settings.vectfox under vectfox_<provider>_keys. This is
+// VectFox's OWN storage — it NEVER touches ST's secret_state, so adding,
+// switching, renaming or deleting a key here does NOT change the main chat's
+// Connection Profile (and changing the profile does not change VectFox). The
+// stored `value` is the REAL key (plaintext in settings.json — same trust
+// model as the single-string isolated field this replaces).
+//
+// The store is CANONICAL on extension_settings.vectfox. Readers ignore any
+// passed-in `settings` copy: the runtime `settings` object in index.js is a
+// shallow spread of extension_settings.vectfox (index.js:516), so reading the
+// live store is the only way to stay consistent across the UI's
+// `Object.assign(extension_settings.vectfox, settings)` writebacks.
+
+const _VF_KEYS_FIELD = {
+    openrouter: 'vectfox_openrouter_keys',
+    custom: 'vectfox_custom_keys',
+};
+const _VF_LEGACY_FIELD = {
+    openrouter: 'vectfox_openrouter_api_key',
+    custom: 'vectfox_custom_api_key',
+};
+
+function _vfNewId() {
+    try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+    } catch { /* fall through to the manual id */ }
+    return `vfk_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Live key array for a provider, on extension_settings.vectfox. Creates the
+ * array when missing and lazily seeds it from the legacy single-string
+ * isolated field (vectfox_<provider>_api_key) so keys saved under the
+ * pre-array shape still appear as one active entry. Idempotent and free of a
+ * save side effect — the next mutation persists it, and an unpersisted seed
+ * re-derives identically on reload.
+ * @param {string} provider 'openrouter' | 'custom'
+ * @returns {Array<{id:string,label:string,value:string,active:boolean}>}
+ */
+function _vfKeyArray(provider) {
+    const vf = extension_settings?.vectfox;
+    const field = _VF_KEYS_FIELD[provider];
+    if (!vf || !field) return [];
+    if (!Array.isArray(vf[field])) {
+        vf[field] = [];
+        const legacy = vf[_VF_LEGACY_FIELD[provider]];
+        if (typeof legacy === 'string' && legacy.trim().length > 0) {
+            vf[field].push({ id: _vfNewId(), label: 'Imported key', value: legacy.trim(), active: true });
+        }
+    }
+    return vf[field];
+}
+
+/** Ensures exactly one entry is active (the given id, else the first). */
+function _vfNormalizeActive(arr, activeId) {
+    let found = false;
+    for (const e of arr) {
+        e.active = (e.id === activeId);
+        if (e.active) found = true;
+    }
+    if (!found && arr.length) arr[0].active = true;
+}
+
+/**
+ * List a provider's saved keys (the live array — treat as read-only).
+ * @param {string} provider
+ * @returns {Array<{id:string,label:string,value:string,active:boolean}>}
+ */
+export function listVectFoxKeys(provider) {
+    return _vfKeyArray(provider);
+}
+
+/** Number of saved keys for a provider. */
+export function getVectFoxKeyCount(provider) {
+    return _vfKeyArray(provider).length;
+}
+
+/** The active key's label for a provider, or '' if none. */
+export function getActiveVectFoxKeyLabel(provider) {
+    const arr = _vfKeyArray(provider);
+    const active = arr.find(e => e.active) || arr[0];
+    return active?.label || '';
+}
+
+/** The active key's REAL value for a provider, or '' if none configured. */
+export function getActiveVectFoxKeyValue(provider) {
+    const arr = _vfKeyArray(provider);
+    const active = arr.find(e => e.active) || arr[0];
+    const v = active?.value;
+    return (typeof v === 'string' && v.trim().length > 0) ? v.trim() : '';
+}
+
+/**
+ * Add a key for a provider and make it active. Dedupes by value: pasting a key
+ * that already exists just re-activates that entry instead of creating a
+ * duplicate. Returns the entry id, or null when the value is empty.
+ * @param {string} provider
+ * @param {string} value REAL key
+ * @param {string} [label]
+ * @returns {string|null}
+ */
+export function addVectFoxKey(provider, value, label) {
+    const v = (typeof value === 'string' ? value : '').trim();
+    if (!v) return null;
+    const arr = _vfKeyArray(provider);
+    const existing = arr.find(e => e.value === v);
+    if (existing) {
+        if (typeof label === 'string' && label.trim()) existing.label = label.trim();
+        _vfNormalizeActive(arr, existing.id);
+        saveSettingsDebounced();
+        return existing.id;
+    }
+    const id = _vfNewId();
+    arr.push({ id, label: (label && label.trim()) || `Key ${arr.length + 1}`, value: v, active: true });
+    _vfNormalizeActive(arr, id);
+    saveSettingsDebounced();
+    return id;
+}
+
+/** Make a saved key active. @returns {boolean} whether the id was found. */
+export function activateVectFoxKey(provider, id) {
+    const arr = _vfKeyArray(provider);
+    if (!arr.some(e => e.id === id)) return false;
+    _vfNormalizeActive(arr, id);
+    saveSettingsDebounced();
+    return true;
+}
+
+/** Rename a saved key. @returns {boolean} whether the id was found. */
+export function renameVectFoxKey(provider, id, label) {
+    const arr = _vfKeyArray(provider);
+    const e = arr.find(x => x.id === id);
+    if (!e) return false;
+    e.label = (typeof label === 'string' ? label.trim() : '') || e.label;
+    saveSettingsDebounced();
+    return true;
+}
+
+/**
+ * Delete a saved key; promotes the first remaining entry to active when the
+ * deleted one was active (parity with ST's deleteSecret).
+ * @returns {boolean} whether the id was found.
+ */
+export function deleteVectFoxKey(provider, id) {
+    const arr = _vfKeyArray(provider);
+    const idx = arr.findIndex(e => e.id === id);
+    if (idx === -1) return false;
+    const wasActive = arr[idx].active;
+    arr.splice(idx, 1);
+    if (wasActive && arr.length && !arr.some(e => e.active)) arr[0].active = true;
+    saveSettingsDebounced();
+    return true;
+}
+
+// ─── Provider-specific convenience readers/writers ──────────────────────
+// Names kept stable so vectfoxChatCompletion + the summarizer/agentic/
+// extractor callers don't change — they now resolve the ACTIVE key from the
+// array store above. The `settings` param is accepted for signature compat
+// but ignored (the store is canonical on extension_settings.vectfox).
+
 export function getVectFoxOpenRouterApiKey(settings) {
-    const vf = settings || extension_settings?.vectfox;
-    const isolated = vf?.vectfox_openrouter_api_key;
-    if (typeof isolated === 'string' && isolated.trim().length > 0) {
-        return isolated.trim();
-    }
-    // No isolated key — caller should fall back to ST's proxy path (which
-    // reads the shared slot server-side). We return '' here; callers use
-    // hasVectFoxOpenRouterApiKey() to decide between direct-fetch and proxy.
-    return '';
+    return getActiveVectFoxKeyValue('openrouter');
 }
 
-/**
- * Read the VectFox-isolated Custom/vLLM API key (REAL value, not masked).
- * Returns '' if the isolated field is empty.
- *
- * @param {object} [settings]
- * @returns {string}
- */
 export function getVectFoxCustomApiKey(settings) {
-    const vf = settings || extension_settings?.vectfox;
-    const isolated = vf?.vectfox_custom_api_key;
-    if (typeof isolated === 'string' && isolated.trim().length > 0) {
-        return isolated.trim();
-    }
-    return '';
+    return getActiveVectFoxKeyValue('custom');
 }
 
-/**
- * Presence check for the isolated OpenRouter key.
- * @param {object} [settings]
- * @returns {boolean}
- */
 export function hasVectFoxOpenRouterApiKey(settings) {
-    return getVectFoxOpenRouterApiKey(settings).length > 0;
+    return getActiveVectFoxKeyValue('openrouter').length > 0;
 }
 
-/**
- * Presence check for the isolated Custom/vLLM key.
- * @param {object} [settings]
- * @returns {boolean}
- */
 export function hasVectFoxCustomApiKey(settings) {
-    return getVectFoxCustomApiKey(settings).length > 0;
+    return getActiveVectFoxKeyValue('custom').length > 0;
 }
 
 /**
- * Save the VectFox-isolated OpenRouter key. Also assigns into the live
- * `settings` object when one is passed so the UI state stays consistent
- * without waiting for a reload.
- *
- * @param {string} value
- * @param {object} [liveSettings] - the runtime `settings` object from index.js
+ * Save an OpenRouter key from the paste-to-save input — appends to the store
+ * (dedupe + activate). `liveSettings` is accepted for call-site compat but
+ * unused (the store is canonical on extension_settings.vectfox).
  */
 export function setVectFoxOpenRouterApiKey(value, liveSettings) {
-    const v = (typeof value === 'string' ? value : '').trim();
-    if (extension_settings?.vectfox) {
-        extension_settings.vectfox.vectfox_openrouter_api_key = v;
-    }
-    if (liveSettings) {
-        liveSettings.vectfox_openrouter_api_key = v;
-    }
-    saveSettingsDebounced();
+    addVectFoxKey('openrouter', value);
 }
 
-/**
- * Save the VectFox-isolated Custom/vLLM key.
- *
- * @param {string} value
- * @param {object} [liveSettings]
- */
 export function setVectFoxCustomApiKey(value, liveSettings) {
-    const v = (typeof value === 'string' ? value : '').trim();
-    if (extension_settings?.vectfox) {
-        extension_settings.vectfox.vectfox_custom_api_key = v;
-    }
-    if (liveSettings) {
-        liveSettings.vectfox_custom_api_key = v;
-    }
-    saveSettingsDebounced();
+    addVectFoxKey('custom', value);
 }
 
 // ─── Chat-completions helper (isolated key aware) ───────────────────────

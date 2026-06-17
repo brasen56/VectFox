@@ -2,96 +2,67 @@
  * ============================================================================
  * VectFox KEY MANAGER
  * ============================================================================
- * Multi-key management modal for ST secret slots. Mirrors SillyTavern's
- * native openKeyManagerDialog pattern but styled for VectFox and wired
- * into VectFox's API key inputs.
+ * Multi-key management modal for VectFox's OWN isolated key store.
  *
- * SillyTavern natively stores multiple keys per SECRET_KEYS slot as an
- * array of { id, value, label, active }. writeSecret() ADDS a key (making
- * it active), rotateSecret() switches which one is active, deleteSecret()
- * removes one, renameSecret() changes its label. VectFox's paste-to-save
- * inputs call writeSecret on every paste — so users accumulate keys but
- * had no UI to see or switch between them. This module closes that gap.
+ * Post-2026-06-17: this NO LONGER touches ST's secret_state. It reads and
+ * mutates VectFox's per-provider key arrays in extension_settings.vectfox
+ * (see core/api-keys.js — listVectFoxKeys / addVectFoxKey / activateVectFoxKey
+ * / renameVectFoxKey / deleteVectFoxKey). That keeps VectFox's keys fully
+ * isolated from the main chat's Connection Profile: switching the active key
+ * here changes ONLY what VectFox uses, and switching the ST main-chat profile
+ * does not change VectFox.
+ *
+ * Provider is 'openrouter' or 'custom' (the same aliases the VectFox inputs
+ * use). The stored value is the real key; it is masked before display so the
+ * full secret is never rendered into the DOM.
  *
  * Features:
- *   - List all saved keys for a slot with their labels and masked values
- *   - Switch (rotate) which key is active — one click, no re-paste needed
+ *   - List all saved keys for a provider with labels + masked values
+ *   - Switch (activate) which key VectFox uses — one click, no re-paste
  *   - Add new keys with custom labels (e.g. "Work key", "Free tier")
- *   - Rename existing keys
- *   - Delete individual keys
- *
- * Works with any SECRET_KEYS enum slot (OpenRouter, Custom, VLLM, etc.).
- * Custom (non-enum) slots like 'api_key_qdrant' are NOT surfaced by ST's
- * getSecretState, so the manager can't display them client-side — those
- * inputs keep the legacy single-key behavior.
+ *   - Rename / delete individual keys
  *
  * @author Kritblade
  * ============================================================================
  */
 
 import {
-    SECRET_KEYS,
-    secret_state,
-    writeSecret,
-    deleteSecret,
-    rotateSecret,
-    renameSecret,
-    readSecretState,
-} from '../../../../secrets.js';
+    listVectFoxKeys,
+    addVectFoxKey,
+    activateVectFoxKey,
+    renameVectFoxKey,
+    deleteVectFoxKey,
+} from '../core/api-keys.js';
 import { log } from '../core/log.js';
 
-/**
- * Get the list of saved secrets for a slot from the current secret_state.
- * @param {string} slot - Secret slot key (e.g. SECRET_KEYS.OPENROUTER)
- * @returns {Array<{id: string, value: string, label: string, active: boolean}>}
- */
-export function getSecretList(slot) {
-    const entries = secret_state?.[slot];
-    if (!Array.isArray(entries)) return [];
-    return entries;
+/** Escape text for safe interpolation into the list markup (labels are user-typed). */
+function escapeHtml(s) {
+    return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/** Mask a real key value for display — last 4 chars, never the full secret. */
+function maskValue(v) {
+    const s = String(v ?? '');
+    if (s.length <= 4) return '*'.repeat(s.length || 4);
+    return '*'.repeat(Math.min(s.length - 4, 8)) + s.slice(-4);
 }
 
 /**
- * Get the count of saved keys for a slot.
- * @param {string} slot
- * @returns {number}
- */
-export function getSecretCount(slot) {
-    return getSecretList(slot).length;
-}
-
-/**
- * Get the active secret's label for display purposes.
- * @param {string} slot
- * @returns {string} label, or '' if none active / no label
- */
-export function getActiveSecretLabel(slot) {
-    const list = getSecretList(slot);
-    const active = list.find(s => s.active) || list[0];
-    return active?.label || '';
-}
-
-/**
- * Check whether a slot has multiple saved keys (useful for UI hints).
- * @param {string} slot
- * @returns {boolean}
- */
-export function hasMultipleKeys(slot) {
-    return getSecretCount(slot) > 1;
-}
-
-/**
- * Opens the multi-key manager modal for a given secret slot.
+ * Opens the multi-key manager modal for a given VectFox provider.
  *
  * @param {object} opts
- * @param {string} opts.slot - Secret slot (must be a SECRET_KEYS enum value
- *   so secret_state surfaces it client-side)
+ * @param {string} opts.provider - 'openrouter' | 'custom'
  * @param {string} opts.title - Modal title (e.g. "Manage OpenRouter API Keys")
  * @param {Function} [opts.onChanged] - Callback invoked after any mutation
- *   (add/rotate/delete/rename). Use to refresh placeholder displays etc.
+ *   (add/activate/delete/rename). Use to refresh placeholder displays etc.
  * @param {string} [opts.hint] - Optional hint text shown in the footer
  */
-export async function openKeyManager({ slot, title, onChanged, hint }) {
+export async function openKeyManager({ provider, title, onChanged, hint }) {
     // Remove any pre-existing modal (defensive — shouldn't stack)
     $('#vectfox_key_manager_overlay').remove();
 
@@ -99,7 +70,7 @@ export async function openKeyManager({ slot, title, onChanged, hint }) {
         <div id="vectfox_key_manager_overlay" class="vectfox-key-manager-overlay">
             <div class="vectfox-key-manager-modal">
                 <div class="vectfox-key-manager-header">
-                    <h3><i class="fa-solid fa-key"></i> ${title}</h3>
+                    <h3><i class="fa-solid fa-key"></i> ${escapeHtml(title)}</h3>
                     <button class="vectfox-key-manager-close" type="button" title="Close">
                         <i class="fa-solid fa-times"></i>
                     </button>
@@ -119,7 +90,7 @@ export async function openKeyManager({ slot, title, onChanged, hint }) {
                 </div>
                 <div class="vectfox-key-manager-footer">
                     <small class="vectfox-key-manager-hint">
-                        ${hint || '<i class="fa-solid fa-info-circle"></i> The <b>active</b> key (●) is used for all VectFox API calls. Saving a new key via the input field also adds it here.'}
+                        ${hint || '<i class="fa-solid fa-info-circle"></i> The <b>active</b> key (●) is the one VectFox uses. These keys are <b>VectFox-only</b> — they do not affect your main chat connection.'}
                     </small>
                     <button class="vectfox-btn-secondary vectfox-key-manager-done-btn" type="button">Close</button>
                 </div>
@@ -144,32 +115,31 @@ export async function openKeyManager({ slot, title, onChanged, hint }) {
     });
 
     // ── Render the key list ─────────────────────────────────────────
-    const renderList = async () => {
-        // Refresh from server so we see the latest state after mutations
-        await readSecretState();
-        const secrets = getSecretList(slot);
+    const renderList = () => {
+        const keys = listVectFoxKeys(provider);
         const $list = overlay.find('.vectfox-key-manager-list');
 
-        if (secrets.length === 0) {
+        if (keys.length === 0) {
             $list.html('<div class="vectfox-key-manager-empty"><i class="fa-solid fa-key" style="opacity:0.3; font-size:2em;"></i><br>No keys saved yet. Add one below.</div>');
             return;
         }
 
-        const items = secrets.map(secret => {
-            const isActive = !!secret.active;
-            const label = secret.label || '(no label)';
-            const value = secret.value || '******';
+        const items = keys.map(key => {
+            const isActive = !!key.active;
+            const label = escapeHtml(key.label || '(no label)');
+            const value = escapeHtml(maskValue(key.value));
+            const id = escapeHtml(key.id);
             return $(`
-                <div class="vectfox-key-manager-item ${isActive ? 'vectfox-key-manager-item-active' : ''}" data-id="${secret.id}">
+                <div class="vectfox-key-manager-item ${isActive ? 'vectfox-key-manager-item-active' : ''}" data-id="${id}">
                     <div class="vectfox-key-manager-item-info">
                         <span class="vectfox-key-manager-item-status" title="${isActive ? 'Active key' : 'Inactive'}">${isActive ? '●' : '○'}</span>
                         <span class="vectfox-key-manager-item-label">${label}</span>
                         <span class="vectfox-key-manager-item-value">${value}</span>
                     </div>
                     <div class="vectfox-key-manager-item-actions">
-                        ${isActive ? '<span class="vectfox-key-manager-active-badge">Active</span>' : `<button class="menu_button vectfox-km-activate" data-id="${secret.id}" title="Make this the active key"><i class="fa-solid fa-check"></i> Activate</button>`}
-                        <button class="menu_button vectfox-km-rename" data-id="${secret.id}" title="Rename this key"><i class="fa-solid fa-pen"></i></button>
-                        <button class="menu_button_red vectfox-km-delete" data-id="${secret.id}" title="Delete this key"><i class="fa-solid fa-trash"></i></button>
+                        ${isActive ? '<span class="vectfox-key-manager-active-badge">Active</span>' : `<button class="menu_button vectfox-km-activate" data-id="${id}" title="Make this the active key"><i class="fa-solid fa-check"></i> Activate</button>`}
+                        <button class="menu_button vectfox-km-rename" data-id="${id}" title="Rename this key"><i class="fa-solid fa-pen"></i></button>
+                        <button class="menu_button_red vectfox-km-delete" data-id="${id}" title="Delete this key"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
             `);
@@ -178,60 +148,55 @@ export async function openKeyManager({ slot, title, onChanged, hint }) {
     };
 
     // ── Event delegation for list item buttons ──────────────────────
-    overlay.find('.vectfox-key-manager-list').on('click', async function(e) {
+    overlay.find('.vectfox-key-manager-list').on('click', function(e) {
         const $btn = $(e.target).closest('button');
         if (!$btn.length) return;
         const id = $btn.data('id');
         if (!id) return;
 
         if ($btn.hasClass('vectfox-km-activate')) {
-            $btn.prop('disabled', true);
             try {
-                await rotateSecret(slot, id);
-                await renderList();
+                activateVectFoxKey(provider, id);
+                renderList();
                 onChanged?.();
-                toastr.success('Switched to selected key');
+                toastr.success('Switched to selected key (VectFox only)');
             } catch (err) {
-                log.error('[VectFox KeyManager] rotateSecret failed:', err);
+                log.error('[VectFox KeyManager] activate failed:', err);
                 toastr.error('Failed to switch key');
-            } finally {
-                $btn.prop('disabled', false);
             }
         } else if ($btn.hasClass('vectfox-km-rename')) {
-            const secrets = getSecretList(slot);
-            const secret = secrets.find(s => s.id === id);
-            const currentLabel = secret?.label || '';
+            const key = listVectFoxKeys(provider).find(k => k.id === id);
+            const currentLabel = key?.label || '';
             const newLabel = prompt('Enter new label for this key:', currentLabel);
             if (newLabel !== null && newLabel.trim()) {
                 try {
-                    await renameSecret(slot, id, newLabel.trim());
-                    await renderList();
+                    renameVectFoxKey(provider, id, newLabel.trim());
+                    renderList();
                     onChanged?.();
                     toastr.success('Key renamed');
                 } catch (err) {
-                    log.error('[VectFox KeyManager] renameSecret failed:', err);
+                    log.error('[VectFox KeyManager] rename failed:', err);
                     toastr.error('Failed to rename key');
                 }
             }
         } else if ($btn.hasClass('vectfox-km-delete')) {
-            const secrets = getSecretList(slot);
-            const secret = secrets.find(s => s.id === id);
-            const label = secret?.label || '(no label)';
+            const key = listVectFoxKeys(provider).find(k => k.id === id);
+            const label = key?.label || '(no label)';
             if (!confirm(`Delete key "${label}"?\n\nThis cannot be undone.`)) return;
             try {
-                await deleteSecret(slot, id);
-                await renderList();
+                deleteVectFoxKey(provider, id);
+                renderList();
                 onChanged?.();
                 toastr.success('Key deleted');
             } catch (err) {
-                log.error('[VectFox KeyManager] deleteSecret failed:', err);
+                log.error('[VectFox KeyManager] delete failed:', err);
                 toastr.error('Failed to delete key');
             }
         }
     });
 
     // ── Add key handler ─────────────────────────────────────────────
-    const handleAdd = async () => {
+    const handleAdd = () => {
         const $valueInput = overlay.find('.vectfox-key-manager-add-value');
         const $labelInput = overlay.find('.vectfox-key-manager-add-label-input');
         const value = String($valueInput.val()).trim();
@@ -243,21 +208,17 @@ export async function openKeyManager({ slot, title, onChanged, hint }) {
             return;
         }
 
-        const $addBtn = overlay.find('.vectfox-key-manager-add-btn');
-        $addBtn.prop('disabled', true);
         try {
-            // writeSecret adds a new entry and makes it active
-            await writeSecret(slot, value, label || undefined);
+            // addVectFoxKey dedupes by value and makes the entry active.
+            addVectFoxKey(provider, value, label || undefined);
             $valueInput.val('');
             $labelInput.val('');
-            await renderList();
+            renderList();
             onChanged?.();
             toastr.success(label ? `Key "${label}" added and set as active` : 'Key added and set as active');
         } catch (err) {
-            log.error('[VectFox KeyManager] writeSecret failed:', err);
+            log.error('[VectFox KeyManager] add failed:', err);
             toastr.error('Failed to add key');
-        } finally {
-            $addBtn.prop('disabled', false);
         }
     };
 
@@ -270,5 +231,5 @@ export async function openKeyManager({ slot, title, onChanged, hint }) {
     });
 
     // Initial render
-    await renderList();
+    renderList();
 }

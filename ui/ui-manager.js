@@ -24,8 +24,9 @@ import {
     hasVectFoxCustomApiKey,
     getVectFoxOpenRouterApiKey,
     getVectFoxCustomApiKey,
+    getVectFoxKeyCount,
 } from '../core/api-keys.js';
-import { openKeyManager, getSecretCount, getActiveSecretLabel } from './key-manager.js';
+import { openKeyManager } from './key-manager.js';
 import { getWebLlmProvider as getSharedWebLlmProvider } from '../providers/webllm.js';
 import StringUtils from '../utils/string-utils.js';
 import { openVisualizer } from './chunk-visualizer.js';
@@ -2436,12 +2437,13 @@ function bindSettingsEvents(settings, callbacks) {
             });
     };
 
-    // Persist the OpenRouter key to VectFox's ISOLATED storage
-    // (extension_settings.vectfox.vectfox_openrouter_api_key).
+    // Persist the OpenRouter key to VectFox's ISOLATED multi-key store
+    // (extension_settings.vectfox.vectfox_openrouter_keys — appended + made
+    // active via setVectFoxOpenRouterApiKey → addVectFoxKey).
     // Post-2026-06-16: This is SEPARATE from ST's shared SECRET_KEYS.OPENROUTER
     // slot. Writing here does NOT affect ST's main chat Connection Profile,
     // and switching profiles in ST's main chat does NOT affect VectFox.
-    // The key is used by VectFox's direct fetch calls to OpenRouter's API.
+    // The active key is used by VectFox's direct fetch calls to OpenRouter.
     const persistOpenRouterKey = async (value) => {
         try {
             setVectFoxOpenRouterApiKey(value, settings);
@@ -2456,27 +2458,22 @@ function bindSettingsEvents(settings, callbacks) {
     };
 
     // ── Multi-key manager integration ──────────────────────────────────────
-    // SillyTavern natively stores multiple keys per SECRET_KEYS slot (arrays
-    // of {id, value, label, active}). VectFox's paste-to-save inputs already
-    // accumulate keys via writeSecret — but users had no UI to see or switch
-    // between them. This injects a "Manage Keys" button after each API key
-    // input and wires it to openKeyManager. The count badge shows how many
-    // keys are saved; the badge pulses when >1 to draw attention to the
-    // fact that switching is possible.
-    const _slotByAlias = {
-        openrouter: SECRET_KEYS.OPENROUTER,
-        custom: SECRET_KEYS.CUSTOM,
-    };
-    const _slotTitle = {
-        [SECRET_KEYS.OPENROUTER]: 'Manage OpenRouter API Keys',
-        [SECRET_KEYS.CUSTOM]: 'Manage vLLM / Custom OpenAI-compatible API Keys',
+    // The "Manage Keys" button opens a modal over VectFox's OWN isolated key
+    // store (extension_settings.vectfox.vectfox_<provider>_keys — see
+    // core/api-keys.js). It does NOT touch ST's secret_state, so switching the
+    // active key here changes only what VectFox uses, never the main chat's
+    // Connection Profile. `alias` is the VectFox provider ('openrouter' |
+    // 'custom'). The count badge shows how many keys are saved and pulses when
+    // >1 to signal that switching is possible.
+    const _providerTitle = {
+        openrouter: 'Manage OpenRouter API Keys (VectFox-only)',
+        custom: 'Manage vLLM / Custom OpenAI-compatible API Keys (VectFox-only)',
     };
     const _refreshKeyCountBadges = () => {
         $('.vectfox-key-manager-trigger').each(function() {
-            const alias = $(this).data('key-manager-slot');
-            const slot = _slotByAlias[alias];
-            if (!slot) return;
-            const count = getSecretCount(slot);
+            const provider = $(this).data('key-manager-slot');
+            if (!_providerTitle[provider]) return;
+            const count = getVectFoxKeyCount(provider);
             const $badge = $(this).find('.vectfox-key-count-badge');
             $badge.text(count);
             // Pulse the badge when multiple keys exist — signals the user
@@ -2484,8 +2481,7 @@ function bindSettingsEvents(settings, callbacks) {
             $(this).toggleClass('vectfox-key-manager-trigger-multi', count > 1);
         });
     };
-    // Initial count refresh (after secret_state is populated at init).
-    // Defer a tick so readSecretState has completed in index.js init.
+    // Initial count refresh (deferred a tick so the settings DOM is ready).
     setTimeout(_refreshKeyCountBadges, 0);
 
     // Delegate clicks for all key-manager trigger buttons. The buttons are
@@ -2494,15 +2490,15 @@ function bindSettingsEvents(settings, callbacks) {
     $('#VectFox_settings').on('click', '.vectfox-key-manager-trigger', async function(e) {
         e.preventDefault();
         e.stopPropagation();
-        const alias = $(this).data('key-manager-slot');
-        const slot = _slotByAlias[alias];
-        if (!slot) {
+        const provider = $(this).data('key-manager-slot');
+        if (!_providerTitle[provider]) {
             toastr.warning('Key manager not available for this input.');
             return;
         }
+        const alias = provider;
         await openKeyManager({
-            slot,
-            title: _slotTitle[slot] || 'Manage API Keys',
+            provider,
+            title: _providerTitle[provider],
             onChanged: () => {
                 _refreshKeyCountBadges();
                 // Re-trigger the placeholder refresh so the active key's
@@ -2544,7 +2540,8 @@ function bindSettingsEvents(settings, callbacks) {
     $(document).on('vectfox:openrouter-key-changed vectfox:vllm-key-changed', _refreshKeyCountBadges);
 
     // Persist the vLLM / Custom OpenAI-compatible key to VectFox's ISOLATED
-    // storage (extension_settings.vectfox.vectfox_custom_api_key).
+    // multi-key store (extension_settings.vectfox.vectfox_custom_keys —
+    // appended + made active via setVectFoxCustomApiKey → addVectFoxKey).
     // Post-2026-06-16: This is SEPARATE from ST's shared SECRET_KEYS.CUSTOM
     // and SECRET_KEYS.VLLM slots. Writing here does NOT affect ST's main chat
     // Connection Profile, and switching profiles does NOT affect VectFox.
