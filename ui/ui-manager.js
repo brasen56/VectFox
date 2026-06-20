@@ -1872,6 +1872,17 @@ export async function refreshAutoSyncCheckbox(settings) {
           `</div>`
         : '';
 
+    // "Re-sync from a chosen message" control. Shown in the active locked states
+    // so the user can re-point auto-sync at recent messages that were stranded
+    // when the chat shrank (ILS summaries flattened/removed) — the in-UI
+    // replacement for the manual console marker set. Bound once after the if/else.
+    const rescanBtnHtml =
+        `<div style="margin-top:6px;">` +
+        `<button id="VectFox_autosync_rescan" class="menu_button" style="font-size:0.82em;padding:3px 10px;width:auto;" ` +
+        `title="Re-scan auto-sync starting from a message you pick. Use if flattening/removing summaries left recent messages un-extracted. Already-saved events are skipped, so it won't duplicate work.">` +
+        `<i class="fa-solid fa-arrows-rotate"></i> Re-sync from a chosen message…</button>` +
+        `</div>`;
+
     if (!isEnabled || !isLocked) {
         $status.html(`${LED.white} Auto-sync inactive${counts}`);
     } else if (status.state === 'vectorization-ahead') {
@@ -1892,34 +1903,59 @@ export async function refreshAutoSyncCheckbox(settings) {
             `If this looks wrong, you may have bound a chat vectorization from a different / longer chat. ` +
             `Auto-sync will resume once the chat catches up to ${status.markerValue} messages.` +
             `</div>` +
-            `<div style="margin-top:6px;">` +
-            `<button id="VectFox_autosync_reset_tail" class="menu_button" style="font-size:0.82em;padding:3px 10px;width:auto;" ` +
-            `title="Re-stamp the auto-sync marker just behind the current chat tail. Use this if the marker is stranded in stale coordinates (e.g. after flattening/removing ILS summaries).">` +
-            `<i class="fa-solid fa-arrows-rotate"></i> Reset auto-sync to current chat</button>` +
-            `</div>`
+            rescanBtnHtml
         );
-        // The marker is stranded ahead of the chat tail — usually because the
-        // ILS-expanded coordinate space shrank (flattened/removed summaries). One
-        // click re-stamps it just behind the current tail so auto-sync resumes for
-        // new messages; source-hash dedup keeps the re-checked trailing window from
-        // duplicating anything. See resetAutoSyncMarkerToTail in core/eventbase-store.js.
-        $('#VectFox_autosync_reset_tail').off('click').on('click', async () => {
-            const [{ getChatUUID }, { resetAutoSyncMarkerToTail }] = await Promise.all([
-                import('../core/collection-ids.js'),
-                import('../core/eventbase-store.js'),
-            ]);
-            const newMarker = resetAutoSyncMarkerToTail(getChatUUID(), settings);
-            if (typeof newMarker === 'number') {
-                try { toastr.success(`Auto-sync reset — it will sync forward from message ${newMarker}.`, 'VectFox'); } catch (_) {}
-            } else {
-                try { toastr.info('No auto-sync marker to reset for this chat.', 'VectFox'); } catch (_) {}
-            }
-            await refreshAutoSyncCheckbox(settings);
-        });
     } else if (status.state === 'fully-vectorized') {
         $status.html(`${LED.green} Ready — fully synced${counts}`);
     } else {
-        $status.html(`${LED.yellow} Locked — will sync to latest history on next auto-sync trigger${counts}`);
+        $status.html(`${LED.yellow} Locked — will sync to latest history on next auto-sync trigger${counts}` + rescanBtnHtml);
+    }
+
+    // Single binding for the rescan button (present in the vectorization-ahead and
+    // Locked branches). Opens an INPUT popup pre-filled with a smart default —
+    // back off two windows from the last complete window start — so one Enter
+    // re-checks the recent tail, while a lower number re-checks further back.
+    // The chosen index is clamped to a real window start by setAutoSyncRescanMarker
+    // so it can never park in the "0 windows" dead zone. Marker-only: extraction
+    // fires on the next MESSAGE_SENT/RECEIVED, deduping already-saved events.
+    if ($('#VectFox_autosync_rescan').length) {
+        $('#VectFox_autosync_rescan').off('click').on('click', async () => {
+            const [{ getChatUUID }, store, { callGenericPopup, POPUP_TYPE }] = await Promise.all([
+                import('../core/collection-ids.js'),
+                import('../core/eventbase-store.js'),
+                import('../../../../popup.js'),
+            ]);
+            const effLen = store.getEffectiveChatLength(settings);
+            const lastStart = store.getLastCompleteWindowStart(settings);
+            const windowSize = Math.max(2, settings?.eventbase_window_size || 6);
+            const overlap = Math.max(0, Math.min(windowSize - 1, settings?.eventbase_window_overlap ?? 0));
+            const step = Math.max(1, windowSize - overlap);
+            const suggested = Math.max(0, lastStart - 2 * step);
+            const html =
+                `<div style="text-align:left;">` +
+                `<p><strong>Re-scan auto-sync from which message?</strong></p>` +
+                `<p style="font-size:0.9em;opacity:0.85;">This chat has <strong>${effLen}</strong> messages. ` +
+                `Everything from the number you enter to the end is re-checked — events already saved are skipped, so this won't duplicate work or re-extract the whole chat. ` +
+                `A lower number re-checks further back.</p>` +
+                `</div>`;
+            const input = await callGenericPopup(html, POPUP_TYPE.INPUT, String(suggested), {
+                okButton: 'Re-scan',
+                cancelButton: 'Cancel',
+            });
+            if (input === false || input === null || input === undefined || String(input).trim() === '') return;
+            const startIndex = parseInt(String(input).trim(), 10);
+            if (!Number.isFinite(startIndex)) {
+                try { toastr.warning('Please enter a whole number.', 'VectFox'); } catch (_) {}
+                return;
+            }
+            const newMarker = store.setAutoSyncRescanMarker(getChatUUID(), settings, startIndex);
+            if (typeof newMarker === 'number') {
+                try { toastr.success(`Auto-sync will re-scan from message ${newMarker}. Send a message to trigger it.`, 'VectFox'); } catch (_) {}
+            } else {
+                try { toastr.info('Could not set the re-scan point for this chat.', 'VectFox'); } catch (_) {}
+            }
+            await refreshAutoSyncCheckbox(settings);
+        });
     }
 }
 

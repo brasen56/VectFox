@@ -375,6 +375,68 @@ export function resetAutoSyncMarkerToTail(chatUUID, settings) {
 }
 
 /**
+ * Index where the LAST complete extraction window starts in the current
+ * (effective, ILS-expanded) chat. Windows are built at `step` boundaries
+ * (0, step, 2·step, …) and a window is only eligible once it holds a full
+ * `windowSize` messages, so the last valid start is
+ * floor((effLen - windowSize) / step) · step. Returns 0 when the chat is
+ * shorter than one window.
+ *
+ * Load-bearing for the rescan UI: parking the marker ABOVE this index filters
+ * out every window and extracts nothing. resetAutoSyncMarkerToTail's
+ * `effLen - windowSize` can land between window starts (when windowSize doesn't
+ * divide the tail gap, e.g. windowSize=15 over 1279 msgs → 1264 while the last
+ * window starts at 1260), which is exactly the "0 windows" trap. Snap to this
+ * instead.
+ * @param {object} settings
+ * @returns {number}
+ */
+export function getLastCompleteWindowStart(settings) {
+    const effLen = getEffectiveChatLength(settings);
+    const windowSize = Math.max(2, settings?.eventbase_window_size || 6);
+    if (effLen < windowSize) return 0;
+    const overlap = Math.max(0, Math.min(windowSize - 1, settings?.eventbase_window_overlap ?? 0));
+    const step = Math.max(1, windowSize - overlap);
+    return Math.floor((effLen - windowSize) / step) * step;
+}
+
+/**
+ * Explicitly park the auto-sync start marker at a user-chosen message index so
+ * auto-sync re-scans from there to the chat tail. The value is clamped to
+ * [0, getLastCompleteWindowStart] so it always lands on/below a REAL window
+ * start — otherwise the marker filter in runEventBaseIngestion rejects every
+ * window and nothing extracts.
+ *
+ * Unlike restampAutoSyncMarkerAtChatTail / resetAutoSyncMarkerToTail (which
+ * no-op without a pre-existing marker so they never invent one for a chat that
+ * never enabled auto-sync), this is an EXPLICIT user action taken from the
+ * locked-state UI — so it writes the marker unconditionally, creating it if
+ * needed. Already-saved events in the re-scanned range are skipped by
+ * source-hash dedup in runEventBaseIngestion; only genuinely-uncovered windows
+ * extract. This is the in-UI replacement for the manual
+ * `extension_settings…autosync_start_marker[uuid] = N` console workaround used
+ * after flattening/removing ILS summaries strands recent messages.
+ *
+ * @param {string} chatUUID
+ * @param {object} settings
+ * @param {number} startIndex     Desired first message index to re-scan from.
+ * @returns {number|undefined}    The clamped marker actually written, or undefined on bad input.
+ */
+export function setAutoSyncRescanMarker(chatUUID, settings, startIndex) {
+    if (!chatUUID || typeof startIndex !== 'number' || !Number.isFinite(startIndex)) return undefined;
+    if (!extension_settings?.vectfox) return undefined;
+    if (!extension_settings.vectfox.eventbase_autosync_start_marker) {
+        extension_settings.vectfox.eventbase_autosync_start_marker = {};
+    }
+    const lastStart = getLastCompleteWindowStart(settings);
+    const marker = Math.max(0, Math.min(Math.floor(startIndex), lastStart));
+    extension_settings.vectfox.eventbase_autosync_start_marker[chatUUID] = marker;
+    saveSettingsDebounced();
+    log.lifecycle(`[EventBase] AutoSyncMarker rescan set: uuid=${chatUUID}, requested=${startIndex}, marker=${marker} (lastWindowStart=${lastStart})`);
+    return marker;
+}
+
+/**
  * Look up the auto-sync start marker for a chat.
  * @param {string} chatUUID
  * @returns {number|undefined}  Marker (message index), or undefined if not stamped.

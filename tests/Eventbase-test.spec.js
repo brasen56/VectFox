@@ -3342,6 +3342,152 @@ test('TEST 016b — resetAutoSyncMarkerToTail repairs a stale (ahead-of-chat) ma
 });
 
 // ═══════════════════════════════════════════════════════════════════
+//  TEST 016c — setAutoSyncRescanMarker parks the marker on a real window start
+// ═══════════════════════════════════════════════════════════════════
+//
+//  Backs the "Re-sync from a chosen message…" button (ui-manager.js, shown in
+//  the vectorization-ahead and Locked status branches). The button is the in-UI
+//  replacement for the manual console marker set used after flattening/removing
+//  ILS summaries strands recent messages below the marker.
+//
+//  Contract:
+//    - getLastCompleteWindowStart(settings) returns the start of the last
+//      COMPLETE window: a multiple of step, <= effLen - windowSize, >= 0.
+//    - setAutoSyncRescanMarker clamps the requested index to
+//      [0, getLastCompleteWindowStart] so it can never land in the "0 windows"
+//      dead zone above the last window start, floors fractional input, and —
+//      unlike resetAutoSyncMarkerToTail — WRITES (creates) the marker even when
+//      none existed, because it is an explicit user action.
+//    - Bad input (non-number / NaN / missing uuid) returns undefined and writes
+//      nothing.
+//
+//  Pure settings math + shared getEffectiveChatLength helper — no backend/LLM.
+//
+//  ✓ DO use a synthetic chat UUID prefixed with __vf_playwright_test_.
+//
+test('TEST 016c — setAutoSyncRescanMarker clamps to a real window start and creates the marker', async () => {
+    const logs = await runTestInPage(async () => {
+        const TEST = 'TEST 016c [AutoSyncRescan]';
+        const base = '/scripts/extensions/third-party/VectFox/';
+        const {
+            setAutoSyncRescanMarker,
+            getLastCompleteWindowStart,
+            getAutoSyncMarker,
+            clearAutoSyncMarker,
+        } = await import(base + 'core/eventbase-store.js');
+        const { expandILSMessages } = await import(base + 'core/ils-expander.js');
+        const { extension_settings } = await import('/scripts/extensions.js');
+
+        const ctx = window.SillyTavern?.getContext?.() ?? window.getContext?.() ?? {};
+        const settings = extension_settings?.vectfox || {};
+        const windowSize = Math.max(2, settings.eventbase_window_size || 6);
+        const overlap = Math.max(0, Math.min(windowSize - 1, settings.eventbase_window_overlap ?? 0));
+        const step = Math.max(1, windowSize - overlap);
+
+        const effectiveChatLength = () => {
+            let msgs = (Array.isArray(ctx?.chat) ? ctx.chat : []).filter(m => m.mes && m.mes.trim().length > 0);
+            if (settings.expand_ils_summaries !== false) {
+                const { expanded, stats } = expandILSMessages(msgs);
+                if (stats.summariesFound > 0) msgs = expanded;
+            }
+            return msgs.length;
+        };
+
+        const testUUID = '__vf_playwright_test_016c__rescan';
+
+        try {
+            if (!extension_settings.vectfox.eventbase_autosync_start_marker) {
+                extension_settings.vectfox.eventbase_autosync_start_marker = {};
+            }
+            const store = extension_settings.vectfox.eventbase_autosync_start_marker;
+            delete store[testUUID];
+
+            const effLen = effectiveChatLength();
+
+            // ═══ Phase 1 — getLastCompleteWindowStart is a real window start ═══
+            const lastStart = getLastCompleteWindowStart(settings);
+            const expectedLastStart = effLen < windowSize ? 0 : Math.floor((effLen - windowSize) / step) * step;
+            if (lastStart !== expectedLastStart) {
+                console.error(`${TEST} [FAIL] Phase 1: getLastCompleteWindowStart=${lastStart}, expected ${expectedLastStart} (effLen=${effLen}, windowSize=${windowSize}, step=${step})`);
+                return;
+            }
+            if (lastStart < 0 || (lastStart % step) !== 0 || (effLen >= windowSize && lastStart > effLen - windowSize)) {
+                console.error(`${TEST} [FAIL] Phase 1: ${lastStart} is not a valid window start for effLen=${effLen}`);
+                return;
+            }
+            console.log(`${TEST} Phase 1 ✓ lastWindowStart=${lastStart} (effLen=${effLen}, step=${step})`);
+
+            // ═══ Phase 2 — index above the last window start clamps DOWN ═══
+            // This is the bug the button fixes: a value near/at the tail must not
+            // pin auto-sync at 0 windows.
+            const tooHigh = effLen + 50;
+            const clampedHigh = setAutoSyncRescanMarker(testUUID, settings, tooHigh);
+            if (clampedHigh !== lastStart) {
+                console.error(`${TEST} [FAIL] Phase 2: requested ${tooHigh} → got ${clampedHigh}, expected clamp to lastWindowStart ${lastStart}`);
+                return;
+            }
+            if (getAutoSyncMarker(testUUID) !== lastStart) {
+                console.error(`${TEST} [FAIL] Phase 2: persisted ${getAutoSyncMarker(testUUID)} != ${lastStart}`);
+                return;
+            }
+            console.log(`${TEST} Phase 2 ✓ over-tail index clamped to last window start (${tooHigh} → ${lastStart})`);
+
+            // ═══ Phase 3 — negative clamps to 0; fractional floors ═══
+            const neg = setAutoSyncRescanMarker(testUUID, settings, -999);
+            if (neg !== 0) {
+                console.error(`${TEST} [FAIL] Phase 3: negative index → ${neg}, expected 0`);
+                return;
+            }
+            const inRange = Math.min(step, lastStart); // a low, valid window start (or 0)
+            const frac = setAutoSyncRescanMarker(testUUID, settings, inRange + 0.9);
+            if (frac !== inRange) {
+                console.error(`${TEST} [FAIL] Phase 3: fractional ${inRange + 0.9} → ${frac}, expected floor ${inRange}`);
+                return;
+            }
+            console.log(`${TEST} Phase 3 ✓ negative→0, fractional floored (${inRange + 0.9} → ${inRange})`);
+
+            // ═══ Phase 4 — creates the marker when none existed (vs reset's no-op) ═══
+            delete store[testUUID];
+            const created = setAutoSyncRescanMarker(testUUID, settings, inRange);
+            if (created !== inRange || !Object.prototype.hasOwnProperty.call(store, testUUID)) {
+                console.error(`${TEST} [FAIL] Phase 4: explicit rescan must CREATE the marker; got ${created}, present=${Object.prototype.hasOwnProperty.call(store, testUUID)}`);
+                return;
+            }
+            console.log(`${TEST} Phase 4 ✓ marker created on explicit action (no pre-existing marker required)`);
+
+            // ═══ Phase 5 — bad input returns undefined, writes nothing ═══
+            delete store[testUUID];
+            const badNum = setAutoSyncRescanMarker(testUUID, settings, NaN);
+            const badType = setAutoSyncRescanMarker(testUUID, settings, '5');
+            const badUuid = setAutoSyncRescanMarker('', settings, 5);
+            if (badNum !== undefined || badType !== undefined || badUuid !== undefined) {
+                console.error(`${TEST} [FAIL] Phase 5: bad input must return undefined (NaN=${badNum}, '5'=${badType}, noUuid=${badUuid})`);
+                return;
+            }
+            if (Object.prototype.hasOwnProperty.call(store, testUUID)) {
+                console.error(`${TEST} [FAIL] Phase 5: bad input wrote a marker entry`);
+                return;
+            }
+            console.log(`${TEST} Phase 5 ✓ bad input rejected, nothing written`);
+
+            console.log(`${TEST} [PASS] setAutoSyncRescanMarker clamps to a real window start, floors/creates correctly, and rejects bad input`);
+        } finally {
+            try {
+                clearAutoSyncMarker(testUUID);
+                if (getAutoSyncMarker(testUUID) !== undefined) {
+                    console.warn(`${TEST} [WARN] clearAutoSyncMarker left a stale value`);
+                } else {
+                    console.log(`${TEST} Cleanup ✓ marker cleared for ${testUUID}`);
+                }
+            } catch (cleanupErr) {
+                console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`);
+            }
+        }
+    });
+    assertPassed(logs);
+});
+
+// ═══════════════════════════════════════════════════════════════════
 //  TEST 017 — Pause button (enabled=false) blocks activation
 // ═══════════════════════════════════════════════════════════════════
 //
