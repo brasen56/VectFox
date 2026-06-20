@@ -273,7 +273,21 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     if (useTipFallback) {
         try {
             const tip = await ensureVectorizationTip(uuid, collectionId, settings);
-            if (typeof tip === 'number' && tip > 0) {
+            // Staleness guard. The tip is a POSITION (max source_window_end + 1) read
+            // from Qdrant payloads, so it lives in the coordinate space the chat had
+            // when those events were extracted. If the chat later SHRANK — ILS summaries
+            // flattened/removed, messages deleted — that space is dead: the stored tip
+            // (e.g. 9330) sits far past the current tail (e.g. 1277). Position-based
+            // fast-forward (`window.end < tip`) would then mark EVERY window
+            // already-extracted and silently skip the whole chat — 0 events, no error,
+            // and no marker reset can rescue it because this runs after the marker filter.
+            // When the tip exceeds the current effective chat length we know it's stale,
+            // so we DON'T position-fast-forward; the per-window content-fingerprint dedup
+            // below (isWindowAlreadyExtracted) still skips anything genuinely covered.
+            // Symmetric with the stampAutoSyncMarker clamp in eventbase-store.js.
+            if (typeof tip === 'number' && tip > messages.length) {
+                log.lifecycle(`[EventBase] Tip-based fast-forward SKIPPED: tip=${tip} is past chat length ${messages.length} (stale/shrunken coordinates) — relying on content dedup instead`);
+            } else if (typeof tip === 'number' && tip > 0) {
                 let i = 0;
                 while (i < windows.length && windows[i].end < tip) {
                     const win = windows[i];
