@@ -3225,6 +3225,123 @@ test('TEST 016 — stampAutoSyncMarker smart placement (production-function smok
 });
 
 // ═══════════════════════════════════════════════════════════════════
+//  TEST 016b — resetAutoSyncMarkerToTail repairs a stale ("ahead") marker
+// ═══════════════════════════════════════════════════════════════════
+//
+//  Backs the auto-sync start marker off to just behind the current chat
+//  tail when it is stranded in stale coordinates — the situation the
+//  "Reset auto-sync to current chat" button (ui-manager.js, the
+//  'vectorization-ahead' status branch) exists to fix. Common trigger:
+//  flattening / removing ILS summaries shrinks the ILS-expanded coordinate
+//  space, leaving the old marker past the chat tail forever.
+//
+//  Contract:
+//    - No-op (returns undefined, creates nothing) when the chat has no
+//      stamped marker — never invents one auto-sync didn't set.
+//    - With a marker present, rewrites it to
+//      max(0, getEffectiveChatLength(settings) - windowSize) so the trailing
+//      window is re-checked (source-hash dedup makes that free) and the
+//      uncovered tail isn't skipped.
+//
+//  Pure settings math + the shared getEffectiveChatLength helper — runs in
+//  every environment, no backend/LLM. effectiveChatLength is recomputed
+//  independently (as in TEST 016) so a regression in the production helper
+//  still trips the assertion.
+//
+//  ✓ DO use a synthetic chat UUID prefixed with __vf_playwright_test_.
+
+test('TEST 016b — resetAutoSyncMarkerToTail repairs a stale (ahead-of-chat) marker', async () => {
+    const logs = await runTestInPage(async () => {
+        const TEST = 'TEST 016b [AutoSyncResetTail]';
+        const base = '/scripts/extensions/third-party/VectFox/';
+        const {
+            resetAutoSyncMarkerToTail,
+            getAutoSyncMarker,
+            clearAutoSyncMarker,
+        } = await import(base + 'core/eventbase-store.js');
+        const { expandILSMessages } = await import(base + 'core/ils-expander.js');
+        const { extension_settings } = await import('/scripts/extensions.js');
+
+        const ctx = window.SillyTavern?.getContext?.() ?? window.getContext?.() ?? {};
+        const settings = extension_settings?.vectfox || {};
+        const windowSize = Math.max(2, settings.eventbase_window_size || 6);
+
+        // Same independent effective-length computation as TEST 016, so a
+        // regression in getEffectiveChatLength is still caught here.
+        const effectiveChatLength = () => {
+            let msgs = (Array.isArray(ctx?.chat) ? ctx.chat : []).filter(m => m.mes && m.mes.trim().length > 0);
+            if (settings.expand_ils_summaries !== false) {
+                const { expanded, stats } = expandILSMessages(msgs);
+                if (stats.summariesFound > 0) msgs = expanded;
+            }
+            return msgs.length;
+        };
+
+        const testUUID = '__vf_playwright_test_016b__reset_tail';
+
+        try {
+            if (!extension_settings.vectfox.eventbase_autosync_start_marker) {
+                extension_settings.vectfox.eventbase_autosync_start_marker = {};
+            }
+            const store = extension_settings.vectfox.eventbase_autosync_start_marker;
+
+            // ═══ Phase 1 — no marker → no-op, creates nothing ═══
+            console.log(`${TEST} Phase 1: resetAutoSyncMarkerToTail on an unmarked UUID returns undefined and writes nothing`);
+            delete store[testUUID];
+            const noop = resetAutoSyncMarkerToTail(testUUID, settings);
+            if (noop !== undefined) {
+                console.error(`${TEST} [FAIL] Phase 1: expected undefined on unmarked UUID, got ${noop}`);
+                return;
+            }
+            if (Object.prototype.hasOwnProperty.call(store, testUUID)) {
+                console.error(`${TEST} [FAIL] Phase 1: a marker entry was created for an unmarked UUID — must never invent one`);
+                return;
+            }
+            console.log(`${TEST} Phase 1 ✓ no-op when no marker present`);
+
+            // ═══ Phase 2 — stale "ahead" marker → reset to (tail - windowSize) ═══
+            // Simulate the post-flatten state: marker stranded far past the tail.
+            const effLen = effectiveChatLength();
+            const aheadMarker = effLen + 100;
+            store[testUUID] = aheadMarker;
+            console.log(`${TEST} Phase 2: stale marker=${aheadMarker} (effectiveChatLength=${effLen}, windowSize=${windowSize}) → reset`);
+
+            const expected = Math.max(0, effLen - windowSize);
+            const result = resetAutoSyncMarkerToTail(testUUID, settings);
+            if (result !== expected) {
+                console.error(`${TEST} [FAIL] Phase 2: reset returned ${result}, expected max(0, ${effLen} - ${windowSize}) = ${expected}`);
+                return;
+            }
+            const persisted = getAutoSyncMarker(testUUID);
+            if (persisted !== expected) {
+                console.error(`${TEST} [FAIL] Phase 2: persisted ${persisted} does not match returned ${expected}`);
+                return;
+            }
+            if (expected > effLen) {
+                console.error(`${TEST} [FAIL] Phase 2: new marker ${expected} is still ahead of the chat tail ${effLen} — would not clear the 'ahead' state`);
+                return;
+            }
+            console.log(`${TEST} Phase 2 ✓ stale marker repaired: ${aheadMarker} → ${expected} (at/below tail, backed off one window)`);
+
+            console.log(`${TEST} [PASS] resetAutoSyncMarkerToTail no-ops without a marker and otherwise rewrites it to max(0, effectiveChatLength - windowSize), clearing the ahead-of-chat state without skipping the trailing window`);
+        } finally {
+            try {
+                clearAutoSyncMarker(testUUID);
+                const after = getAutoSyncMarker(testUUID);
+                if (after !== undefined) {
+                    console.warn(`${TEST} [WARN] clearAutoSyncMarker left a stale value: ${after}`);
+                } else {
+                    console.log(`${TEST} Cleanup ✓ marker cleared for ${testUUID}`);
+                }
+            } catch (cleanupErr) {
+                console.warn(`${TEST} [WARN] Cleanup failed: ${cleanupErr.message}`);
+            }
+        }
+    });
+    assertPassed(logs);
+});
+
+// ═══════════════════════════════════════════════════════════════════
 //  TEST 017 — Pause button (enabled=false) blocks activation
 // ═══════════════════════════════════════════════════════════════════
 //

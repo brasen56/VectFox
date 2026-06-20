@@ -1891,8 +1891,31 @@ export async function refreshAutoSyncCheckbox(settings) {
             `<div style="margin-top:4px;font-size:0.82em;opacity:0.75;">` +
             `If this looks wrong, you may have bound a chat vectorization from a different / longer chat. ` +
             `Auto-sync will resume once the chat catches up to ${status.markerValue} messages.` +
+            `</div>` +
+            `<div style="margin-top:6px;">` +
+            `<button id="VectFox_autosync_reset_tail" class="menu_button" style="font-size:0.82em;padding:3px 10px;width:auto;" ` +
+            `title="Re-stamp the auto-sync marker just behind the current chat tail. Use this if the marker is stranded in stale coordinates (e.g. after flattening/removing ILS summaries).">` +
+            `<i class="fa-solid fa-arrows-rotate"></i> Reset auto-sync to current chat</button>` +
             `</div>`
         );
+        // The marker is stranded ahead of the chat tail — usually because the
+        // ILS-expanded coordinate space shrank (flattened/removed summaries). One
+        // click re-stamps it just behind the current tail so auto-sync resumes for
+        // new messages; source-hash dedup keeps the re-checked trailing window from
+        // duplicating anything. See resetAutoSyncMarkerToTail in core/eventbase-store.js.
+        $('#VectFox_autosync_reset_tail').off('click').on('click', async () => {
+            const [{ getChatUUID }, { resetAutoSyncMarkerToTail }] = await Promise.all([
+                import('../core/collection-ids.js'),
+                import('../core/eventbase-store.js'),
+            ]);
+            const newMarker = resetAutoSyncMarkerToTail(getChatUUID(), settings);
+            if (typeof newMarker === 'number') {
+                try { toastr.success(`Auto-sync reset — it will sync forward from message ${newMarker}.`, 'VectFox'); } catch (_) {}
+            } else {
+                try { toastr.info('No auto-sync marker to reset for this chat.', 'VectFox'); } catch (_) {}
+            }
+            await refreshAutoSyncCheckbox(settings);
+        });
     } else if (status.state === 'fully-vectorized') {
         $status.html(`${LED.green} Ready — fully synced${counts}`);
     } else {

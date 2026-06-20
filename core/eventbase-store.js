@@ -340,6 +340,41 @@ export function restampAutoSyncMarkerAtChatTail(chatUUID, settings) {
 }
 
 /**
+ * Reset the auto-sync start marker to just behind the current chat tail. Backs
+ * the marker off by one window size from the effective (ILS-expanded) chat length
+ * so the trailing window is re-checked on the next auto-sync: anything already in
+ * the collection is skipped by source-hash dedup in runEventBaseIngestion, and
+ * only a genuinely-uncovered tail gets extracted — so recent messages aren't
+ * skipped and nothing already-vectorized is duplicated.
+ *
+ * This is the repair for a marker stranded in STALE coordinates — most commonly
+ * after flattening/removing ILS summaries, which shrinks the ILS-expanded space
+ * the marker lives in and makes getChatAutoSyncStatus report 'vectorization-ahead'
+ * forever. Staying near the tail (rather than dropping to 0) means the
+ * changed-content flattened region far below is never re-scanned. Wired to the
+ * "Reset auto-sync to current chat" button in ui-manager.js's 'vectorization-ahead'
+ * status branch. Covered by TEST 016b.
+ *
+ * No-op (returns undefined) when the chat has no stamped marker — there is nothing
+ * to repair, and we must not invent a marker where auto-sync never set one.
+ *
+ * @param {string} chatUUID
+ * @param {object} settings
+ * @returns {number|undefined}  The new marker, or undefined if none existed.
+ */
+export function resetAutoSyncMarkerToTail(chatUUID, settings) {
+    const store = extension_settings?.vectfox?.eventbase_autosync_start_marker;
+    if (!store || !chatUUID) return undefined;
+    if (!Object.prototype.hasOwnProperty.call(store, chatUUID)) return undefined;
+    const windowSize = Math.max(2, settings?.eventbase_window_size || 6);
+    const marker = Math.max(0, getEffectiveChatLength(settings) - windowSize);
+    store[chatUUID] = marker;
+    saveSettingsDebounced();
+    log.lifecycle(`[EventBase] AutoSyncMarker reset to chat tail: uuid=${chatUUID}, marker=${marker} (windowSize=${windowSize})`);
+    return marker;
+}
+
+/**
  * Look up the auto-sync start marker for a chat.
  * @param {string} chatUUID
  * @returns {number|undefined}  Marker (message index), or undefined if not stamped.
@@ -368,12 +403,20 @@ export function clearAutoSyncMarker(chatUUID) {
  * the auto-sync workflow will process.
  *
  * Smart placement:
- *   - If the EventBase collection has existing events → marker = max(source_window_end) + 1
- *     (backfill the gap between last-covered message and current chat tail
- *     at the user's new window size).
+ *   - If the EventBase collection has existing events → marker =
+ *     min(max(source_window_end) + 1, effective chat length) — backfill the gap
+ *     at the user's new window size, but NEVER past the chat tail.
  *   - If the collection is empty → marker = effective chat length
  *     (auto-sync starts "from now on" — no full backfill of a long pre-existing
  *     chat that was never vectorized).
+ *
+ * The min() clamp is load-bearing when source_window_end is in STALE coordinates:
+ * after ILS summaries are flattened/removed the ILS-expanded chat shrinks, so the
+ * stored ends (recorded against the longer chat, e.g. 9330) are far beyond the new
+ * tail. Without the clamp, every enable would stamp a marker past the tail, pinning
+ * auto-sync in 'vectorization-ahead' forever and re-stranding it after each
+ * disable/re-enable — no reset button could hold against it. Same guard covers a
+ * vectorization bound from a genuinely longer chat.
  *
  * COORDINATE SYSTEM: the marker is compared against window.start indexes in
  * runEventBaseIngestion, and those windows are built over the filtered
@@ -417,7 +460,11 @@ export async function stampAutoSyncMarker(chatUUID, settings) {
         }
     }
 
-    const marker = maxEnd >= 0 ? maxEnd + 1 : chatLength;
+    // Clamp to the effective chat length: a marker past the tail filters out every
+    // window forever ('vectorization-ahead'). maxEnd can exceed chatLength when the
+    // stored source_window_end values are in stale (pre-ILS-flatten) coordinates or
+    // came from a longer chat.
+    const marker = maxEnd >= 0 ? Math.min(maxEnd + 1, chatLength) : chatLength;
 
     if (!store.eventbase_autosync_start_marker) store.eventbase_autosync_start_marker = {};
     store.eventbase_autosync_start_marker[chatUUID] = marker;
