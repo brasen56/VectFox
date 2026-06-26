@@ -601,18 +601,32 @@ export async function vectfoxChatCompletion({ provider, customUrl, body, timeout
 }
 
 /**
- * Normalize a user-supplied base URL to a /v1/chat/completions endpoint.
+ * Normalize a user-supplied base URL to a chat-completions endpoint.
+ *
+ * Version-aware normalization so non-standard OpenAI-compatible providers
+ * (e.g. Z.ai which uses /v4/chat/completions) are reachable:
+ *
+ *   1. URL already ends with /chat/completions → used verbatim (explicit
+ *      override — lets the user paste the full endpoint URL).
+ *   2. URL ends with /v<N> (any version: /v1, /v4, …) → appends
+ *      /chat/completions, preserving the provider's version segment.
+ *   3. Bare base URL (e.g. http://localhost:8000) → appends the default
+ *      OpenAI path /v1/chat/completions (backward-compatible behavior).
+ *
  * Exported so summarizer.js's buildVllmChatCompletionsUrl can stay in sync.
  *
  * @param {string} baseUrl
  * @returns {string}
  */
 export function buildCustomChatCompletionsUrl(baseUrl) {
-    return String(baseUrl || '')
-        .trim()
-        .replace(/\/+$/, '')        // trailing slashes
-        .replace(/\/v1$/, '')       // trailing /v1
-        + '/v1/chat/completions';
+    const url = String(baseUrl || '').trim().replace(/\/+$/, ''); // trailing slashes
+    if (!url) return '/v1/chat/completions';
+    // Explicit override: user pasted a full endpoint path.
+    if (/\/chat\/completions$/i.test(url)) return url;
+    // Preserve any version segment (v1, v4, v2, …).
+    if (/\/v\d+$/i.test(url)) return url + '/chat/completions';
+    // Default: bare base URL → standard OpenAI-compatible path.
+    return url + '/v1/chat/completions';
 }
 
 // ─── One-shot shared→isolated migration ─────────────────────────────────

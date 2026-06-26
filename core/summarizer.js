@@ -287,15 +287,21 @@ async function _callOpenRouter(prompt, model, settings, originalLength, maxToken
 }
 
 /**
- * Build the `/v1/chat/completions` endpoint URL from a user-supplied vLLM base URL.
+ * Build the chat-completions endpoint URL from a user-supplied vLLM base URL.
  *
- * Tolerates whether the user pasted `http://localhost:8000` (no /v1 suffix) or
- * `https://openrouter.ai/api/v1` (with /v1 suffix) — strips the trailing `/v1`
- * if present, then re-appends `/v1/chat/completions` so we always hit the same
- * canonical OpenAI-compatible path. Mirrors the suffix-normalization pattern
- * core-vector-api.js already uses for the embeddings URL.
+ * Version-aware normalization so non-standard OpenAI-compatible providers
+ * (e.g. Z.ai which uses /v4/chat/completions) are reachable:
  *
- * Exported so eventbase-extractor.js and agentic-retrieval.js share the same
+ *   1. URL already ends with /chat/completions → used verbatim (explicit
+ *      override — lets the user paste the full endpoint URL).
+ *   2. URL ends with /v<N> (any version: /v1, /v4, …) → appends
+ *      /chat/completions, preserving the provider's version segment.
+ *   3. Bare base URL (e.g. http://localhost:8000) → appends the default
+ *      OpenAI path /v1/chat/completions (backward-compatible behavior).
+ *
+ * Mirrors `buildCustomChatCompletionsUrl` in core/api-keys.js — kept in sync
+ * so the two normalization helpers never drift. Exported so
+ * eventbase-extractor.js and agentic-retrieval.js share the same
  * normalization — the vLLM-style base URL flows through three call sites and
  * inline regex drift was the bug that surfaced this helper.
  *
@@ -303,11 +309,14 @@ async function _callOpenRouter(prompt, model, settings, originalLength, maxToken
  * @returns {string} fully-qualified chat-completions URL
  */
 export function buildVllmChatCompletionsUrl(baseUrl) {
-    return String(baseUrl || '')
-        .trim()
-        .replace(/\/+$/, '')        // trailing slashes
-        .replace(/\/v1$/, '')       // trailing /v1 (e.g. openrouter.ai/api/v1)
-        + '/v1/chat/completions';
+    const url = String(baseUrl || '').trim().replace(/\/+$/, ''); // trailing slashes
+    if (!url) return '/v1/chat/completions';
+    // Explicit override: user pasted a full endpoint path.
+    if (/\/chat\/completions$/i.test(url)) return url;
+    // Preserve any version segment (v1, v4, v2, …).
+    if (/\/v\d+$/i.test(url)) return url + '/chat/completions';
+    // Default: bare base URL → standard OpenAI-compatible path.
+    return url + '/v1/chat/completions';
 }
 
 async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS, timeoutMs = DEFAULT_TIMEOUT_MS) {

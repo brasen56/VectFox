@@ -369,8 +369,8 @@ export function renderSettings(containerId, settings, callbacks) {
                                             <small>vLLM Base URL</small>
                                         </label>
                                         <input type="text" id="VectFox_summarize_vllm_url" class="vectfox-input"
-                                            placeholder="http://localhost:8000" />
-                                        <small class="VectFox_hint">Base URL of your vLLM server (OpenAI-compatible)</small>
+                                            placeholder="http://localhost:8000 or https://api.z.ai/v4/chat/completions" />
+                                        <small class="VectFox_hint">Base URL of your vLLM / OpenAI-compatible server. Supports non-standard version paths (e.g. /v4) — paste the full /chat/completions URL to override the default /v1 path.</small>
                                         <label for="VectFox_summarize_vllm_apikey" style="margin-top:8px;">
                                             <small>vLLM API Key <span style="opacity:0.6;">(optional — leave blank if not required)</span></small>
                                         </label>
@@ -2364,7 +2364,12 @@ function bindSettingsEvents(settings, callbacks) {
                 const data = await resp.json();
                 models = (data?.data || []).map(m => ({ id: m.id, label: m.name ? `${m.id} — ${m.name}` : m.id }));
             } else if (provider === 'vllm') {
-                const baseUrl = (settings.summarize_vllm_url || '').replace(/\/$/, '').replace(/\/v1$/, '');
+                // Version-aware: strip a trailing /chat/completions so the
+                // /status endpoint gets a clean base URL for its /models
+                // lookup. Keeps any /v<N> segment (e.g. /v4 for Z.ai).
+                const baseUrl = (settings.summarize_vllm_url || '')
+                    .replace(/\/$/, '')
+                    .replace(/\/chat\/completions$/i, '');
                 if (!baseUrl) {
                     toastr.error('Set the vLLM Base URL first.', 'vLLM not configured');
                     return;
