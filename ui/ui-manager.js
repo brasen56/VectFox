@@ -2236,7 +2236,7 @@ function bindSettingsEvents(settings, callbacks) {
             const $checkbox = $(this);
 
             const { getChatAutoSyncStatus } = await import('../core/eventbase-workflow.js');
-            const { setCollectionAutoSync, setCollectionLock, removeCollectionLock } = await import('../core/collection-metadata.js');
+            const { setCollectionAutoSync, setCollectionLock } = await import('../core/collection-metadata.js');
             const status = await getChatAutoSyncStatus(settings);
             const chatId = getCurrentChatId();
 
@@ -2284,11 +2284,17 @@ function bindSettingsEvents(settings, callbacks) {
                 toastr.success(message);
                 log.lifecycle(`VectFox: Chat auto-sync ENABLED for ${lockKey} (state=${status.state})`);
             } else {
-                // Uncheck — clear the flag and release the chat lock.
+                // Uncheck — clear the auto-sync flag ONLY. Do NOT release the
+                // chat lock: retrieval/injection uses the lock as its activation
+                // gate (see core/eventbase-workflow.js _gatherLockedEventBaseCollections),
+                // so unlocking here would silently stop injection even though the
+                // collection is fully intact. Disabling auto-sync should only stop
+                // *new* content from being ingested; the existing collection stays
+                // locked and queryable. The user can release the lock explicitly
+                // via the Database Browser "Active for this chat" toggle if desired.
                 if (status.state !== 'no-collection') {
                     const lockKey = status.registryKey || status.collectionId;
                     setCollectionAutoSync(lockKey, false);
-                    if (chatId) removeCollectionLock(lockKey, chatId);
 
                     // Clear the marker so re-enabling later re-computes a fresh one
                     // against whatever collection state exists at that time.
