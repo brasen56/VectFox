@@ -19,7 +19,7 @@ import { queryCollection } from './core-vector-api.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { EventBaseFatalError, EventBaseExtractionError } from './eventbase-schema.js';
 import { extractEvents } from './eventbase-extractor.js';
-import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtractionCachesForChat, buildEventBaseCollectionId, isLastWindowExtracted, setVectorizationTip, ensureVectorizationTip, shouldUseTipFallback } from './eventbase-store.js';
+import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtractionCachesForChat, buildEventBaseCollectionId, isLastWindowExtracted, setVectorizationTip, ensureVectorizationTip, shouldUseTipFallback, getVectorizationTip } from './eventbase-store.js';
 import { getSavedHashes, DynamicRateLimiter } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
@@ -838,11 +838,14 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
         setLastUsedWindowSize(uuid, windowSize);
     }
 
-    // Notify the UI so the Chat Auto-Sync LED can flip from yellow → green.
-    // Cheap signal; listeners just re-evaluate state, they don't read this payload.
+    // Notify the UI so the Chat Auto-Sync LED can flip from yellow → green, and
+    // give external consumers (e.g. OpenVault's Stage 3 adapter, VISION.md
+    // "Deliverable zero") the emit-after-upsert signal: `chatUUID` + `tip` let a
+    // subscriber call getEventsSince(chatUUID, lastMarker, settings) for just the
+    // delta instead of polling. Cheap signal either way — payload is a few scalars.
     if (typeof document !== 'undefined' && typeof CustomEvent === 'function') {
         document.dispatchEvent(new CustomEvent('vectfox:eventbase-synced', {
-            detail: { collectionId, eventsExtracted, windowsProcessed }
+            detail: { collectionId, eventsExtracted, windowsProcessed, chatUUID: uuid, tip: getVectorizationTip(uuid) ?? null }
         }));
     }
 
