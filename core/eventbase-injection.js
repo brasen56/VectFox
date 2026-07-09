@@ -26,6 +26,37 @@ function _summaryFromText(text) {
     return match ? match[1] : firstLine;
 }
 
+const _MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/**
+ * Render a stored ISO-8601 story timestamp in the readable in-story time
+ * convention most RP chats already use ("3:45 PM, June 12, 2026") so the
+ * LLM can line injected events up against in-chat time markers.
+ *
+ * Uses UTC getters throughout: DateTime values are normalized to UTC ISO at
+ * extraction, and local-time getters would shift the story clock by the host
+ * machine's timezone. A weekday is deliberately NOT computed — RP dates are
+ * often invented, and a derived weekday can contradict what the story says.
+ * Midnight-exact values are treated as date-only (a bare date parses to
+ * T00:00:00Z) and rendered without the clock. Unparseable values pass
+ * through unchanged.
+ * @param {string|null|undefined} iso
+ * @returns {string|null}
+ */
+function _formatStoryTime(iso) {
+    if (!iso) return null;
+    const ms = Date.parse(String(iso));
+    if (Number.isNaN(ms)) return String(iso);
+    const d = new Date(ms);
+    const datePart = `${_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+    if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
+        return datePart;
+    }
+    const h12 = d.getUTCHours() % 12 || 12;
+    const ampm = d.getUTCHours() < 12 ? 'AM' : 'PM';
+    return `${h12}:${String(d.getUTCMinutes()).padStart(2, '0')} ${ampm}, ${datePart}`;
+}
+
 /**
  * Strip internal scoring/ingestion fields that should not be injected.
  * Returns only the canonical EventRecord fields.
@@ -38,7 +69,7 @@ function _cleanEventForInjection(event) {
         importance: event.importance,
         message_order: event.source_window_end ?? null,
         summary: _summaryFromText(event.text),
-        DateTime: event.DateTime || null,
+        DateTime: _formatStoryTime(event.DateTime),
         cause: event.cause || '',
         result: event.result || '',
         characters: event.characters || [],
@@ -88,7 +119,7 @@ function _formatAsDenseText(events) {
             `importance: ${event.importance ?? '-'}`,
             `message_order: ${event.message_order ?? '-'}`,
             `summary: ${event.summary || '-'}`,
-            `DateTime: ${event.DateTime || '-'}`,
+            `In-story time: ${event.DateTime || '-'}`,
             `cause: ${event.cause || '-'}`,
             `result: ${event.result || '-'}`,
             `characters: ${_stringifyList(event.characters)}`,
@@ -115,7 +146,7 @@ function _formatAsSummaryOnly(events) {
             `# Event ${idx + 1}`,
             `message_order: ${event.message_order ?? '-'}`,
             `summary: ${event.summary || '-'}`,
-            `DateTime: ${event.DateTime || '-'}`,
+            `In-story time: ${event.DateTime || '-'}`,
         ].join('\n');
     }).join('\n\n');
 }
