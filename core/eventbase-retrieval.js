@@ -8,6 +8,8 @@
  *  1. Dual vector query — user's last message + full context (Promise.all); merge by max score
  *  2. Filter by minimum importance
  *  3. Re-rank using weighted formula: cosine + importance + persist + recency
+ *     (recency term: message-index decay by default; narrative-clock decay via
+ *      story-time.js when eventbase_recency_source = 'story_time')
  *  4. Suppress near-duplicate events (same type + high character overlap)
  *  5. Return top-K events with debug metadata
  * ============================================================================
@@ -18,6 +20,7 @@ import { getBackendForCollection, getBackend } from '../backends/backend-manager
 import { parseRegistryKey } from './collection-ids.js';
 import { parseEmbedText } from './eventbase-schema.js';
 import { checkPluginAvailable } from './collection-loader.js';
+import { buildStoryRecencyCtx, storyRecencyBonus } from './story-time.js';
 import { log } from './log.js';
 
 // ---------------------------------------------------------------------------
@@ -320,9 +323,12 @@ function _logRerankComparison(colId, queryText, native, js, nativeMs, jsMs, sett
  * @param {boolean}  [params.skipContextDedup] - When true, skip the dedup-depth step.
  *        Set when locked cross-chat: source_window_end values belong to a different conversation
  *        and cannot be compared to the current chat length.
+ * @param {string[]} [params.recentMessageTexts] - Newest-first raw texts of the last few chat
+ *        messages. Story-time recency (eventbase_recency_source = 'story_time') parses the
+ *        first in-story timestamp found in them to anchor "now"; unused in index mode.
  * @returns {Promise<{ events: object[], debug: object }>}
  */
-export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false }) {
+export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false, recentMessageTexts }) {
     const topK = (settings.eventbase_retrieval_top_k || 8) * 2; // overfetch for re-rank
     const minImportance = settings.eventbase_retrieval_min_importance || 1;
 
@@ -330,6 +336,13 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     // keyword_scoring_method setting never accidentally switches EventBase into
     // client-side hybrid mode. Default is 'bm25'; override via eventbase_keyword_scoring_method.
     const ebSettings = { ...settings, keyword_scoring_method: settings.eventbase_keyword_scoring_method || 'bm25' };
+
+    // Story-time recency (Inline-Summary-proof narrative-clock decay) is a
+    // JS-only computation: the Qdrant formula's recency term is hardwired to
+    // source_window_end/chatLength, so letting the native rerank run would
+    // re-introduce the exact index-coordinate distortion this mode exists to
+    // escape. Force the JS re-rank path while it's active.
+    const useStoryRecency = settings.eventbase_recency_source === 'story_time';
 
     // Native rerank: push importance filter + dedup-depth filter + weighted-sum
     // scoring into Qdrant via a formula query, in the same /query call as the
@@ -342,7 +355,11 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         settings.vector_backend === 'qdrant'
         && settings.hybrid_native_prefer !== false
         && settings.eventbase_native_rerank === true
+        && !useStoryRecency
     );
+    if (useStoryRecency && settings.eventbase_native_rerank === true && settings.vector_backend === 'qdrant') {
+        log.lifecycle('[EventBase] Native rerank suppressed: story-time recency is active (JS re-rank carries the recency term)');
+    }
     const compareMode = useNativeRerank && log.domainEnabled('rerank');
 
     // Detect "no vector scoring" state — Standard backend without the Similharity
@@ -504,6 +521,16 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     // message, not tokenized any-of). Configurable via `eventbase_anchor_boost`.
     const anchorBoostAmount = _resolveAnchorBoostAmount(settings);
 
+    // Story-time recency context — built over the candidate set (only candidates
+    // are ever scored, so the half-life self-normalizes to their temporal
+    // spread). Null in index mode; storyRecencyBonus degrades to neutral 0.5
+    // per-event when DateTime is missing/unparseable.
+    const storyCtx = useStoryRecency ? buildStoryRecencyCtx(importanceFiltered, recentMessageTexts) : null;
+    if (storyCtx && log.enabled('lifecycle')) {
+        const days = (storyCtx.halfLifeMs / 86400000).toFixed(1);
+        log.lifecycle(`[EventBase] Story-time recency: now=${storyCtx.valid ? new Date(storyCtx.nowMs).toISOString() : 'unresolved'} (source=${storyCtx.nowSource || 'none'}), halfLife=${days} story-day(s), dated=${storyCtx.datedCandidates}/${importanceFiltered.length} candidates`);
+    }
+
     const scored = importanceFiltered.map(meta => {
         const anchorBoost = _anchorBoostFor(meta, anchorText, anchorBoostAmount);
 
@@ -525,7 +552,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
             : (typeof meta.score === 'number' ? meta.score : 0);
         const importanceNorm = (meta.importance ?? 5) / 10;
         const persistBonus = meta.should_persist === true ? 1 : 0;
-        const recencyBonus = _recencyBonus(meta, chatLength);
+        const recencyBonus = storyCtx ? storyRecencyBonus(meta, storyCtx) : _recencyBonus(meta, chatLength);
 
         const finalScore =
             weights.cosine * cosineScore +
@@ -687,6 +714,14 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
             nativeHybridPrefer: settings.hybrid_native_prefer !== false,
             fusionMethod: settings.hybrid_fusion_method || 'rrf',
             nativeRerank: useNativeRerank,
+            recencySource: useStoryRecency ? 'story_time' : 'index',
+            storyRecency: storyCtx ? {
+                valid: storyCtx.valid,
+                now: storyCtx.valid ? new Date(storyCtx.nowMs).toISOString() : null,
+                nowSource: storyCtx.nowSource,
+                halfLifeDays: +(storyCtx.halfLifeMs / 86400000).toFixed(2),
+                datedCandidates: storyCtx.datedCandidates,
+            } : undefined,
             rerankComparison: comparisonLog || undefined,
             rawCount: rawCandidates.length,
             archiveCandidates: additionalCandidates?.length || 0,

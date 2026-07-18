@@ -1031,11 +1031,24 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     // canonical re-ranker. Otherwise it returns the pre-search output unchanged,
     // making it a safe drop-in replacement.
     const retrieveFn = settings.agentic_retrieval_enabled ? retrieveEventsWithAgent : retrieveEvents;
+
+    // Newest-first tail texts for story-time recency's "now" anchor. A handful
+    // is enough: the first message containing a parseable timestamp wins, and
+    // falling through a user one-liner to the model's last (timestamped) reply
+    // is exactly the intended behavior. Cheap to build, so not gated on the
+    // eventbase_recency_source setting.
+    const recentMessageTexts = [...(getContext().chat || chat || [])]
+        .reverse()
+        .filter(m => !m?.is_system && m?.mes)
+        .slice(0, 4)
+        .map(m => m.mes);
+
     const { events, debug } = await retrieveFn({
         searchText: effectiveSearchText,
         keywordQuery,
         chatLength: getContext().chat?.length || chat?.length || 0,
         settings,
+        recentMessageTexts,
         // Canonical routing (Doc/collection_helper.md): pass registry-key form
         // ("backend:id") so queryCollection's resolveBackendForCollection picks the right
         // backend per-collection. Previously passing the bare collectionId

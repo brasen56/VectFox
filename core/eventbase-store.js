@@ -243,6 +243,11 @@ export async function insertEvents(events, settings, abortSignal = null, collect
                 ...eventWithoutSummary,
                 eventbase: true,        // marker for filter queries
                 eventbase_schema_version: event.schema_version,
+                // Real-world ingestion timestamp (epoch ms). Monotonic recency
+                // anchor that survives ILS flattening / index-coordinate drift,
+                // unlike source_window_end. Scoring-only: _cleanEventForInjection
+                // whitelists injected fields, so the LLM never sees this date.
+                inserted_at: Date.now(),
             },
         };
     });
