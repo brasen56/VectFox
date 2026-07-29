@@ -25,7 +25,7 @@
 import { getRequestHeaders } from '../../../../../script.js';
 import { extension_settings, modules } from '../../../../extensions.js';
 import { secret_state } from '../../../../secrets.js';
-import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
+import { textgen_types, textgenerationwebui_settings } from './host-textgen-compat.js';
 // Embedding-side: no key helpers needed here. vLLM, Ollama, and other
 // "local-or-self-hosted" providers either resolve keys server-side via ST
 // (vLLM → SECRET_KEYS.VLLM) or send no auth at all (Ollama — ST has no

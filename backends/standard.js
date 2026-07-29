@@ -32,7 +32,7 @@ import { throwIfModelConfigError } from '../core/model-http-errors.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
 import { INTERNAL_COLLECTION_IDS } from '../core/collection-ids.js';
 import { extension_settings } from '../../../../extensions.js';
-import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
+import { textgen_types, textgenerationwebui_settings } from '../core/host-textgen-compat.js';
 import { oai_settings } from '../../../../openai.js';
 import { secret_state } from '../../../../secrets.js';
 import { log } from '../core/log.js';

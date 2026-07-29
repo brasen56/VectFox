@@ -11,7 +11,7 @@
 
 import { getRequestHeaders } from '../../../../../script.js';
 import { secret_state } from '../../../../secrets.js';
-import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
+import { textgen_types, textgenerationwebui_settings } from '../core/host-textgen-compat.js';
 import {
     EMBEDDING_PROVIDERS,
     getValidProviderIds,
