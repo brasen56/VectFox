@@ -10,7 +10,7 @@
  */
 
 import { getRequestHeaders } from '../../../../../script.js';
-import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
+import { textgen_types, textgenerationwebui_settings } from '../core/host-textgen-compat.js';
 import { getSavedHashes, purgeVectorIndex } from '../core/core-vector-api.js';
 import { getModelField, getModelFromSettings, getProviderConfig } from '../core/providers.js';
 import { unregisterCollection } from '../core/collection-loader.js';

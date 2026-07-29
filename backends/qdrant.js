@@ -33,7 +33,7 @@ import { VectorBackend } from './backend-interface.js';
 import { getModelFromSettings } from '../core/providers.js';
 import { throwIfModelConfigError } from '../core/model-http-errors.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
-import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
+import { textgen_types, textgenerationwebui_settings } from '../core/host-textgen-compat.js';
 import { getQdrantApiKey } from '../core/api-keys.js';
 import { log } from '../core/log.js';
 
