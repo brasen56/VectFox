@@ -692,17 +692,27 @@ jQuery(async () => {
         }).catch(() => {});
     }
 
-    // D5: Cross-repo version check — warn loud if similharity is behind.
-    const SIMILHARITY_EXPECTED_VERSION = '3.3.3';
+    // D5: Cross-repo version check — only warn on a MAJOR version mismatch.
+    // VectFox targets a major line of similharity; minor/patch updates are
+    // treated as compatible, so this only fires when a real break is possible.
+    const SIMILHARITY_MAJOR_VERSION = 3;
     (async () => {
         try {
             const resp = await fetch('/api/plugins/similharity/version');
             if (resp.ok) {
                 const { pluginVersion } = await resp.json();
-                if (pluginVersion !== SIMILHARITY_EXPECTED_VERSION) {
-                    console.warn(`[VectFox] VERSION MISMATCH: expected similharity v${SIMILHARITY_EXPECTED_VERSION}, got v${pluginVersion}. Pull matching versions.`);
+                if (typeof pluginVersion !== 'string') {
+                    return; // unknown/missing version — not our warning to raise
+                }
+                const major = parseInt(pluginVersion.split('.')[0], 10);
+                if (Number.isNaN(major)) {
+                    console.warn(`[VectFox] Could not parse similharity version "${pluginVersion}" — skipping compatibility check.`);
+                    return;
+                }
+                if (major !== SIMILHARITY_MAJOR_VERSION) {
+                    console.warn(`[VectFox] MAJOR VERSION MISMATCH: VectFox targets similharity v${SIMILHARITY_MAJOR_VERSION}.x, got v${pluginVersion}. A major update may require a VectFox refresh.`);
                     toastr.warning(
-                        `similharity version mismatch (expected ${SIMILHARITY_EXPECTED_VERSION}, got ${pluginVersion}) — see console`,
+                        `similharity v${pluginVersion} may not be compatible with this VectFox (targets v${SIMILHARITY_MAJOR_VERSION}.x)`,
                         'VectFox',
                         { timeOut: 10000 }
                     );
