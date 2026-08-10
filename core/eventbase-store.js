@@ -15,13 +15,15 @@ import {
     getAdditionalArgs,
     getSavedHashes,
 } from './core-vector-api.js';
-import { saveSettingsDebounced, getRequestHeaders, getCurrentChatId } from '../../../../../script.js';
+import { saveSettingsDebounced, getRequestHeaders, getCurrentChatId, chat_metadata } from '../../../../../script.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID, buildEventBaseCollectionId, getRegistryBackend, COLLECTION_PREFIXES, parseRegistryKey, buildChatSearchPatterns, matchesPatterns } from './collection-ids.js';
 import { registerCollection, getCollectionRegistry, getCollectionListing } from './collection-loader.js';
 import { getChatLockedCollections, isCollectionActiveForContextAnyKey } from './collection-metadata.js';
 import { buildEmbedText } from './eventbase-schema.js';
 import { log } from './log.js';
+import { prepareMessagesForEventBase } from './ils-expander.js';
+import { getShrinkRecoveryMarker } from './autosync-coordinates.js';
 
 // Re-export so callers can import from here if needed
 export { buildEventBaseCollectionId };
@@ -78,6 +80,25 @@ export function setVectorizationTip(chatUUID, tip) {
             store.eventbase_vectorization_tip[chatUUID] = tip;
             saveSettingsDebounced();
         }
+    }
+}
+
+/**
+ * Replace a stale positional tip after the effective chat coordinate space
+ * demonstrably shrank. Normal writes remain monotonic through
+ * setVectorizationTip(); this deliberately non-monotonic path is only used
+ * when the old tip is beyond the current end of the chat.
+ */
+function repairVectorizationTipAfterShrink(chatUUID, chatLength, repairedTip) {
+    if (!chatUUID) return;
+    const current = getVectorizationTip(chatUUID);
+    if (typeof current === 'number' && current <= chatLength) return;
+
+    _vectorizationTipByUuid.set(chatUUID, repairedTip);
+    const store = extension_settings?.vectfox;
+    if (store) {
+        if (!store.eventbase_vectorization_tip) store.eventbase_vectorization_tip = {};
+        store.eventbase_vectorization_tip[chatUUID] = repairedTip;
     }
 }
 
@@ -417,6 +438,27 @@ export function clearAutoSyncMarker(chatUUID) {
 }
 
 /**
+ * Repair marker/tip coordinates that point beyond a now-shorter chat. This is
+ * expected after destructive InlineSummary flattening or message deletion.
+ * The restart point backs up over the two most recent committed auto-sync
+ * windows; normal fingerprint dedup prevents needless extraction when their
+ * contents did not actually change.
+ */
+export function repairAutoSyncCoordinatesAfterShrink(chatUUID, chatLength, settings) {
+    if (!chatUUID) return 0;
+    const store = extension_settings?.vectfox;
+    if (!store) return 0;
+
+    const repairedMarker = getShrinkRecoveryMarker(chatLength, settings);
+    if (!store.eventbase_autosync_start_marker) store.eventbase_autosync_start_marker = {};
+    store.eventbase_autosync_start_marker[chatUUID] = repairedMarker;
+    repairVectorizationTipAfterShrink(chatUUID, chatLength, repairedMarker);
+    saveSettingsDebounced();
+    log.lifecycle(`[EventBase] Repaired stale auto-sync coordinates after chat shrink: uuid=${chatUUID}, chatLength=${chatLength}, marker=${repairedMarker}`);
+    return repairedMarker;
+}
+
+/**
  * Stamp the auto-sync start marker for a chat. Used to gate which windows
  * the auto-sync workflow will process.
  *
@@ -442,7 +484,11 @@ export async function stampAutoSyncMarker(chatUUID, settings, options = {}) {
     const store = extension_settings?.vectfox;
     if (!store) return 0;
 
-    const chatLength = getContext()?.chat?.length ?? 0;
+    // Markers share the same coordinate system as source_window_end. InlineSummary
+    // can collapse hundreds of stored originals into one visible message, so the
+    // visible chat length would incorrectly place the marker behind existing data
+    // and provoke a needless catch-up/re-sync after toggling auto-sync.
+    const chatLength = prepareMessagesForEventBase(getContext()?.chat, chat_metadata).messages.length;
 
     // Explicit "from now on" — skip the coverage scan entirely.
     if (options.floor === 'chatLength') {
@@ -476,13 +522,21 @@ export async function stampAutoSyncMarker(chatUUID, settings, options = {}) {
         }
     }
 
-    const marker = maxEnd >= 0 ? maxEnd + 1 : chatLength;
+    const storedTip = maxEnd >= 0 ? maxEnd + 1 : null;
+    // A stored source position beyond the effective chat tail means messages
+    // truly disappeared (ordinary ILS compaction does not trigger this because
+    // its preserved originals are expanded above). Rewind automatically so
+    // auto-sync cannot freeze behind an impossible marker.
+    const coordinatesShrank = typeof storedTip === 'number' && storedTip > chatLength;
+    const marker = coordinatesShrank
+        ? repairAutoSyncCoordinatesAfterShrink(chatUUID, chatLength, settings)
+        : (storedTip ?? chatLength);
 
     if (!store.eventbase_autosync_start_marker) store.eventbase_autosync_start_marker = {};
     store.eventbase_autosync_start_marker[chatUUID] = marker;
     saveSettingsDebounced();
 
-    log.lifecycle(`[EventBase] AutoSyncMarker stamped: uuid=${chatUUID}, marker=${marker} (maxEnd=${maxEnd}, chatLength=${chatLength}, active=${active?.collectionId ?? 'none'})`);
+    log.lifecycle(`[EventBase] AutoSyncMarker stamped: uuid=${chatUUID}, marker=${marker} (maxEnd=${maxEnd}, chatLength=${chatLength}, repairedShrink=${coordinatesShrank}, active=${active?.collectionId ?? 'none'})`);
     return marker;
 }
 

@@ -953,6 +953,7 @@ export function renderSettings(containerId, settings, callbacks) {
                             </label>
                             <small id="VectFox_autosync_hint" class="VectFox_hint">Auto-Sync new messages (requires initial vectorization)</small>
                             <div id="VectFox_autosync_status" style="margin-top: 6px; font-size: 0.82em;"></div>
+                            <small class="VectFox_hint" style="display:block; margin-top:6px;">InlineSummary messages are expanded to their stored originals automatically. Turning auto-sync off pauses new extraction without changing that message mapping or disabling retrieval from existing events.</small>
 
                             <div class="vectfox-form-group" style="margin-top: 12px;">
                                 <label class="vectfox-label">

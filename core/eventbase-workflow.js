@@ -11,7 +11,7 @@
  * ============================================================================
  */
 
-import { setExtensionPrompt, extension_prompts, getCurrentChatId, substituteParams } from '../../../../../script.js';
+import { setExtensionPrompt, extension_prompts, getCurrentChatId, substituteParams, chat_metadata } from '../../../../../script.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID, parseRegistryKey, COLLECTION_PREFIXES, buildRegistryKey } from './collection-ids.js';
 import { getCollectionRegistry } from './collection-loader.js';
@@ -20,7 +20,7 @@ import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { EventBaseFatalError, EventBaseExtractionError } from './eventbase-schema.js';
 import { extractEvents } from './eventbase-extractor.js';
 import { generationRateLimiter, generationRateLimitSettings } from './generation-rate-limiter.js';
-import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtractionCachesForChat, buildEventBaseCollectionId, isLastWindowExtracted, setVectorizationTip, ensureVectorizationTip, shouldUseTipFallback, resolveActiveEventBaseCollection } from './eventbase-store.js';
+import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtractionCachesForChat, buildEventBaseCollectionId, isLastWindowExtracted, setVectorizationTip, ensureVectorizationTip, shouldUseTipFallback, resolveActiveEventBaseCollection, repairAutoSyncCoordinatesAfterShrink } from './eventbase-store.js';
 import { getSavedHashes } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
@@ -28,6 +28,7 @@ import { formatEventsForInjectionDetailed } from './eventbase-injection.js';
 import { isCollectionEnabled, isCollectionActiveForContextAnyKey, setCollectionLock, setCollectionMeta } from './collection-metadata.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { log } from './log.js';
+import { prepareMessagesForEventBase } from './ils-expander.js';
 
 /** Extension prompt tag for EventBase (distinct from legacy chunks tag) */
 const EVENTBASE_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_eventbase`;
@@ -120,6 +121,13 @@ export function countUnfinishedWindows(result) {
 
 export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null, parallelWindows = 3, isAutoSync = false, suppressAutoSyncPopup = false, skipTipFallback = false, windowSizeOverride = undefined, windowOverlapOverride = undefined }) {
     const uuid = chatUUID || getChatUUID();
+
+    // Defensive normalization for direct ingestion callers (notably uploaded
+    // archives). Live-chat callers already pass an expanded sequence with access
+    // to chat_metadata; repeating the pure transform is intentionally idempotent.
+    // Do not use the current chat's metadata here: an uploaded archive with a Ref
+    // must never resolve against an unrelated open chat that happens to share a key.
+    messages = prepareMessagesForEventBase(messages).messages;
 
     // Resolve the write target. Precedence:
     //   1. Explicit override (archive uploads pass a fixed ID; auto-sync passes the
@@ -375,7 +383,14 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     if (useTipFallback) {
         try {
             const tip = await ensureVectorizationTip(uuid, collectionId, settings);
-            if (typeof tip === 'number' && tip > 0) {
+            // A tip beyond the current effective chat length belongs to an old
+            // coordinate space (destructive ILS flattening / message deletion).
+            // It must never fast-forward every current window. Marker repair on
+            // auto-sync handles the recent tail; manual runs fall back to content
+            // fingerprints and can safely discover the changed windows.
+            if (typeof tip === 'number' && tip > messages.length) {
+                log.lifecycle(`[EventBase] Ignoring stale tip-based fast-forward: tip=${tip}, effectiveChatLength=${messages.length}`);
+            } else if (typeof tip === 'number' && tip > 0) {
                 let i = 0;
                 while (i < windows.length && windows[i].end < tip) {
                     const win = windows[i];
@@ -1167,10 +1182,14 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     // canonical re-ranker. Otherwise it returns the pre-search output unchanged,
     // making it a safe drop-in replacement.
     const retrieveFn = settings.agentic_retrieval_enabled ? retrieveEventsWithAgent : retrieveEvents;
+    const liveChat = getContext()?.chat || chat || [];
+    const effectiveChatLength = prepareMessagesForEventBase(liveChat, chat_metadata).messages.length;
     const { events, debug } = await retrieveFn({
         searchText: effectiveSearchText,
         keywordQuery,
-        chatLength: getContext().chat?.length || chat?.length || 0,
+        // EventBase source_window_end is stamped in InlineSummary-expanded
+        // coordinates, so recency and in-context dedup must use the same space.
+        chatLength: effectiveChatLength,
         settings,
         // Canonical routing (Doc/collection_helper.md): pass registry-key form
         // ("backend:id") so queryCollection's resolveBackendForCollection picks the right
@@ -1371,9 +1390,7 @@ export async function getChatAutoSyncStatus(settings) {
     if (!match) return { state: 'no-collection' };
 
     const ctx = getContext();
-    const messages = Array.isArray(ctx?.chat)
-        ? ctx.chat.filter(m => m.mes && m.mes.trim().length > 0)
-        : [];
+    const messages = prepareMessagesForEventBase(ctx?.chat, chat_metadata).messages;
     const chatMessageCount = messages.length;
 
     // Read the auto-sync marker (per-chat message-index threshold). When this
@@ -1386,15 +1403,9 @@ export async function getChatAutoSyncStatus(settings) {
     // The marker may be undefined when auto-sync was never enabled — in that
     // case we don't have enough info to detect the ahead-of-chat condition,
     // so fall through to the existing partial / fully-vectorized branch.
-    const markerValue = extension_settings?.vectfox?.eventbase_autosync_start_marker?.[uuid];
+    let markerValue = extension_settings?.vectfox?.eventbase_autosync_start_marker?.[uuid];
     if (typeof markerValue === 'number' && markerValue > chatMessageCount) {
-        return {
-            state: 'vectorization-ahead',
-            collectionId: match.collectionId,
-            registryKey: match.registryKey,
-            chatMessageCount,
-            markerValue,
-        };
+        markerValue = repairAutoSyncCoordinatesAfterShrink(uuid, chatMessageCount, settings);
     }
 
     // Evaluate auto-sync "fully vectorized" against the AUTO-SYNC window (turns*2,
@@ -1415,7 +1426,11 @@ export async function getChatAutoSyncStatus(settings) {
     // After first session-warmup, the ingestion loop keeps this up-to-date
     // via setVectorizationTip after each window. See eventbase-store.js for
     // the cache lifecycle docs.
-    const vectorizationTip = await ensureVectorizationTip(uuid, match.collectionId, settings);
+    let vectorizationTip = await ensureVectorizationTip(uuid, match.collectionId, settings);
+    if (typeof vectorizationTip === 'number' && vectorizationTip > chatMessageCount) {
+        markerValue = repairAutoSyncCoordinatesAfterShrink(uuid, chatMessageCount, settings);
+        vectorizationTip = markerValue;
+    }
 
     return {
         state: fullyVectorized ? 'fully-vectorized' : 'partial',

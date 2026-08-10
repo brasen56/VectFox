@@ -25,7 +25,7 @@ import {
     CHARACTER_FIELDS,
 } from '../core/content-types.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
-import { saveSettingsDebounced } from '../../../../../script.js';
+import { saveSettingsDebounced, chat_metadata } from '../../../../../script.js';
 import { getChatUUID, vectorizeAll } from '../core/chat-vectorization.js';
 import { validateLLMConfig } from '../core/summarizer.js';
 import { getOpenRouterApiKey } from '../core/api-keys.js';
@@ -37,6 +37,7 @@ import { callGenericPopup, POPUP_TYPE } from '../../../../popup.js';
 import { openTextCleaningManager } from './text-cleaning-manager.js';
 import { getCleaningSettings } from '../core/text-cleaning.js';
 import { progressTracker } from './progress-tracker.js';
+import { prepareMessagesForEventBase } from '../core/ils-expander.js';
 
 // ============================================================================
 // STATE
@@ -3126,14 +3127,22 @@ async function _runEventBaseBackfill({ resetCaches = false } = {}) {
             const sizeCheck = checkWindowSizeChanged(chatUUID, Math.max(2, settings.eventbase_window_size || 6));
             let freshExtractionOpts = null;
             if (sizeCheck.changed) {
+                const preparedForEstimate = prepareMessagesForEventBase(context.chat, chat_metadata);
+                const effectiveCount = preparedForEstimate.messages.length;
+                const estimateStart = startFromMessage > 1
+                    ? Math.min(startFromMessage - 1, effectiveCount)
+                    : 0;
                 const estimatedWindows = Math.max(0, Math.floor(
-                    context.chat.filter(m => m.mes && m.mes.trim().length > 0).length / sizeCheck.newSize
+                    (effectiveCount - estimateStart) / sizeCheck.newSize
                 ));
+                const expansionNote = effectiveCount > preparedForEstimate.visibleCount
+                    ? ` InlineSummary expands ${preparedForEstimate.visibleCount} visible messages to <strong>${effectiveCount}</strong> extraction messages.`
+                    : '';
                 const proceed = await callGenericPopup(
                     `<div style="text-align: left;">
                         <p><strong>Window size changed</strong> since the last extraction on this chat (was <strong>${sizeCheck.oldSize}</strong>, now <strong>${sizeCheck.newSize}</strong>).</p>
                         <p>The dedup cache is window-size-dependent, so Resume will re-extract from message ${startFromMessage || 1} at the new window size.</p>
-                        <p style="margin-top: 10px;">Estimated cost: <strong>~${estimatedWindows} LLM calls</strong>. Existing events will not be deleted, so the collection will contain overlapping-coverage events at both sizes.</p>
+                        <p style="margin-top: 10px;">Estimated cost: <strong>~${estimatedWindows} LLM calls</strong>.${expansionNote} Existing events will not be deleted, so the collection will contain overlapping-coverage events at both sizes.</p>
                         <p style="margin-top: 10px;">Proceed anyway?</p>
                     </div>`,
                     POPUP_TYPE.CONFIRM,
@@ -3171,7 +3180,8 @@ async function _runEventBaseBackfill({ resetCaches = false } = {}) {
 
             const legacyStrategy = currentSettings.strategy || 'per_message';
             const legacyBatchSize = Number(currentSettings.batchSize) || 4;
-            const legacyChunks = await chunkText(context.chat.filter(m => m.mes && m.mes.trim().length > 0), {
+            const effectiveMessages = prepareMessagesForEventBase(context.chat, chat_metadata).messages;
+            const legacyChunks = await chunkText(effectiveMessages, {
                 strategy: legacyStrategy,
                 chunkSize: currentSettings.chunkSize || 1000,
                 chunkOverlap: currentSettings.chunkOverlap || 200,

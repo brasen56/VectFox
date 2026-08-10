@@ -17,7 +17,7 @@
  * ============================================================================
  */
 
-import { setExtensionPrompt } from '../../../../../script.js';
+import { setExtensionPrompt, chat_metadata } from '../../../../../script.js';
 import { getContext } from '../../../../extensions.js';
 import { getWorldInfoSettings, getSortedEntries } from '../../../../world-info.js';
 import { getBackend } from '../backends/backend-manager.js';
@@ -25,6 +25,7 @@ import { getChatUUID } from './collection-ids.js';
 import { resolveActiveEventBaseCollection, getVectorizationTip } from './eventbase-store.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { log } from './log.js';
+import { mapEffectiveTipToTopLevel } from './ils-expander.js';
 
 const SUMMARIZER_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_summarizer`; // '3_vectfox_summarizer'
 
@@ -176,24 +177,21 @@ export function applyGhosting(chat, settings) {
 
     const keepRecent = Math.max(0, Math.floor(Number(settings.eventbase_ghost_keep_recent) || 0));
     const uuid = getChatUUID();
-    // tip = highest extracted message index + 1, in FULL-chat index space.
+    // tip = highest extracted message index + 1, in EventBase's effective
+    // (InlineSummary-expanded) message space.
     const tip = uuid ? getVectorizationTip(uuid) : undefined;
 
     if (Array.isArray(chat) && chat.length > 0 && typeof tip === 'number' && tip > 0) {
-        // INDEX-SPACE FIX: `tip` indexes the full chat (incl. is_system messages), but the
-        // interceptor hands us coreChat — ST filters is_system OUT before calling us. Using
-        // `tip` directly as a coreChat cutoff over-reaches whenever system/narrator messages
-        // sit below the tip, wiping into the kept-recent tail. Translate by counting how many
-        // full-chat messages below the tip survive coreChat's filter (non-system). Conservative:
-        // a system message kept only via tool_invocations isn't counted, so we under-wipe rather
-        // than risk a not-yet-vectorized message. Falls back to raw `tip` if the live chat is
-        // unavailable (the keepFloor below still caps the reach).
+        // Translate that effective tip back into coreChat coordinates. A collapsed
+        // ILS summary is eligible only when every original beneath it is covered;
+        // partially-covered summaries remain visible. ST also removes is_system
+        // messages before handing the interceptor its coreChat array.
         let vectorizedInCore = tip;
         const fullChat = getContext()?.chat;
         if (Array.isArray(fullChat)) {
             vectorizedInCore = 0;
-            const end = Math.min(tip, fullChat.length);
-            for (let k = 0; k < end; k++) {
+            const { topLevelExclusive } = mapEffectiveTipToTopLevel(fullChat, tip, chat_metadata);
+            for (let k = 0; k < topLevelExclusive; k++) {
                 if (fullChat[k] && !fullChat[k].is_system) vectorizedInCore++;
             }
         }

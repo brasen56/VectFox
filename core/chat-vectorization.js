@@ -38,6 +38,7 @@ import { runBoundedRetrieval } from './bounded-retrieval.js';
 import { resolveEventBaseRetrievalTimeoutMs } from './retrieval-budget.js';
 import { log } from './log.js';
 import { isVectFoxEnabled } from './feature-gate.js';
+import { prepareMessagesForEventBase } from './ils-expander.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
 import {
     getChatUUID,
@@ -329,7 +330,15 @@ export async function synchronizeChat(settings, batchSize = 5, triggerEvent = nu
     }
 
     const { runEventBaseIngestion, getAutoSyncWindowSize } = await import('./eventbase-workflow.js');
-    const messages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+    const prepared = prepareMessagesForEventBase(context.chat, chat_metadata);
+    const messages = prepared.messages;
+    if (prepared.stats.summariesFound > 0) {
+        log.lifecycle(
+            `[AutoSync] InlineSummary expansion: ${prepared.stats.summariesFound} summary message(s) `
+            + `recovered ${prepared.stats.originalsRecovered} original message(s) `
+            + `(${prepared.visibleCount} visible -> ${messages.length} effective)`,
+        );
+    }
     log.lifecycle(`[AutoSync] calling runEventBaseIngestion: messages=${messages.length}`);
     let result;
     try {
@@ -1700,7 +1709,15 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null, {
         const context = getContext();
         if (!Array.isArray(context.chat)) return;
 
-        const allMessages = context.chat.filter(m => m.mes && m.mes.trim().length > 0);
+        const prepared = prepareMessagesForEventBase(context.chat, chat_metadata);
+        const allMessages = prepared.messages;
+        if (prepared.stats.summariesFound > 0) {
+            log.lifecycle(
+                `[VectorizeAll] InlineSummary expansion: ${prepared.stats.summariesFound} summary message(s) `
+                + `recovered ${prepared.stats.originalsRecovered} original message(s) `
+                + `(${prepared.visibleCount} visible -> ${allMessages.length} effective)`,
+            );
+        }
         const messages = startFromMessage > 1
             ? allMessages.slice(Math.min(startFromMessage - 1, allMessages.length))
             : allMessages;

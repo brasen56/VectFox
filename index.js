@@ -646,6 +646,12 @@ jQuery(async () => {
     // query/UI path). Idempotent, in-memory only. See Migration/mg_embedding_source_key.js.
     const _srcRename = migration_embedding_source_key(extension_settings.vectfox);
     if (_srcRename.migrated > 0) {
+        // The live settings object was merged with defaults before migrations.
+        // Apply the migrated provider immediately; otherwise the first upgraded
+        // session uses the default "transformers" even though the old provider
+        // was saved correctly for the next reload. That one-session mismatch can
+        // query an existing Qdrant collection with the wrong vector dimension.
+        settings.embedding_provider = extension_settings.vectfox.embedding_provider;
         log.lifecycle('VectFox: Renamed embedding `source` → `embedding_provider`');
         const { saveSettings } = await import('../../../../script.js');
         await saveSettings();
