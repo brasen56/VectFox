@@ -17,10 +17,10 @@ import {
 } from './core-vector-api.js';
 import { saveSettingsDebounced, getRequestHeaders, getCurrentChatId, chat_metadata } from '../../../../../script.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
-import { getChatUUID, buildEventBaseCollectionId, getRegistryBackend, COLLECTION_PREFIXES, parseRegistryKey, buildChatSearchPatterns, matchesPatterns } from './collection-ids.js';
+import { getChatUUID, buildEventBaseCollectionId, getRegistryBackend, getBackendFromCollectionId, COLLECTION_PREFIXES, parseRegistryKey, buildChatSearchPatterns, matchesPatterns } from './collection-ids.js';
 import { registerCollection, getCollectionRegistry, getCollectionListing } from './collection-loader.js';
 import { getChatLockedCollections, isCollectionActiveForContextAnyKey } from './collection-metadata.js';
-import { buildEmbedText } from './eventbase-schema.js';
+import { buildEmbedText, parseEmbedText, EVENTBASE_SCHEMA_VERSION } from './eventbase-schema.js';
 import { log } from './log.js';
 import { prepareMessagesForEventBase } from './ils-expander.js';
 import { getShrinkRecoveryMarker } from './autosync-coordinates.js';
@@ -195,6 +195,77 @@ export async function ensureVectorizationTip(chatUUID, collectionId, settings) {
         log.warn(`[EventBase VectorizationTip] probe failed for ${collectionId} — falling back to marker:`, err?.message || err);
         return null;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Interop surface (Stage 3 / VISION.md "Deliverable zero")
+// ---------------------------------------------------------------------------
+
+/**
+ * Versioned read accessor for other extensions (e.g. OpenVault's Stage 3
+ * adapter) to consume newly-ingested events without reaching into internal
+ * storage/backend modules directly — the alternative is scraping Qdrant via
+ * backend-manager.js + eventbase-schema.js internals, which couples the
+ * caller to payload shape, collection naming, and the registry, all under
+ * active development here. This is the one blessed read path for external
+ * consumers; extend it (not the internals) when a consumer needs more.
+ *
+ * Qdrant-only, matching the rest of the EventBase read path: the
+ * Standard/Vectra backend loses `importance` and `event_id` at storage time
+ * (see parseEmbedText's "does NOT recover" list), so a caller driving an
+ * importance-gated trigger off this data cannot use that backend.
+ *
+ * @param {string} chatUUID
+ * @param {number} marker - INCLUSIVE lower bound on source_window_end (events
+ *   with source_window_end >= marker are returned). Pass a negative number for
+ *   "everything." Inclusive is load-bearing: `tip` is `max + 1`, so a window
+ *   ending exactly at a persisted tip must still be returned by the next call —
+ *   an exclusive bound would skip that window forever. Callers dedup any
+ *   boundary re-reads by event_id.
+ * @param {object} settings - VectFox settings
+ * @returns {Promise<{schemaVersion: number, events: object[], tip: number}>}
+ *   `events` are full EventRecord-shaped objects (recovered summary + stored
+ *   metadata, same shape `parseEmbedText` + payload produce). `tip` is
+ *   `max(source_window_end) + 1` across the WHOLE collection (not just the
+ *   events returned) — callers should persist it as their next marker
+ *   unconditionally, even when `events` comes back empty.
+ */
+export async function getEventsSince(chatUUID, marker, settings) {
+    const lowerBound = Number.isFinite(marker) ? marker : -1;
+    const emptyResult = { schemaVersion: EVENTBASE_SCHEMA_VERSION, events: [], tip: lowerBound };
+    if (!chatUUID) return emptyResult;
+
+    const candidates = findEventBaseCollectionsForChat(chatUUID, 'qdrant');
+    const qdrantMatch = candidates.find((c) => getBackendFromCollectionId(c.collectionId) === 'qdrant');
+    if (!qdrantMatch) return emptyResult;
+
+    let items;
+    try {
+        const { getBackend } = await import('../backends/backend-manager.js');
+        const backendInstance = await getBackend(settings);
+        const result = await backendInstance.listChunks(qdrantMatch.collectionId, settings, { limit: 10000 });
+        items = Array.isArray(result?.items) ? result.items : [];
+    } catch (err) {
+        log.warn(`[EventBase Interop] getEventsSince: listChunks failed for ${qdrantMatch.collectionId}:`, err?.message || err);
+        return emptyResult;
+    }
+
+    let maxEnd = -1;
+    const events = [];
+    for (const item of items) {
+        const md = item?.metadata || {};
+        const end = md.source_window_end;
+        if (typeof end === 'number' && end > maxEnd) maxEnd = end;
+        if (typeof end === 'number' && end >= lowerBound) {
+            events.push({ ...parseEmbedText(item.text || ''), ...md });
+        }
+    }
+
+    return {
+        schemaVersion: EVENTBASE_SCHEMA_VERSION,
+        events,
+        tip: maxEnd >= 0 ? maxEnd + 1 : lowerBound,
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -714,6 +785,85 @@ export function clearWindowCacheForChat(chatUUID) {
     delete store.eventbase_extracted_windows[uuid];
     _windowCacheSet.delete(uuid);
     saveSettingsDebounced();
+}
+
+/**
+ * Rebuild a chat's LOCAL EventBase dedup state from the events that were just
+ * imported into its collection. Solves the "recovery flood": an import (or a
+ * direct Qdrant restore) repopulates the collection but leaves the local
+ * dedup memory empty — no auto-sync marker, no window fingerprints — so the
+ * next auto-sync run can't tell the history is already extracted and re-does
+ * the entire chat (thousands of LLM calls + duplicate events).
+ *
+ * Each event carries the exact data the two local caches need:
+ *   - source_message_hashes → the per-window fingerprint markWindowExtracted
+ *     persists (rebuilds the fast-forward cache; matches future windows when
+ *     message hashes haven't drifted).
+ *   - source_window_end → max+1 gives the auto-sync marker and vectorization
+ *     tip. The marker is the COORDINATE-based gate that protects even when the
+ *     fingerprints later miss (e.g. ILS re-expansion shifts message indices),
+ *     so it's the load-bearing half of this restore.
+ *
+ * No-op for non-EventBase collections. Best-effort by contract — callers wrap
+ * it so a failure never fails the import.
+ *
+ * @param {string}   collectionId  Bare or registry-key form of the imported collection.
+ * @param {object[]} chunks        The imported chunks (each with `.metadata`).
+ * @returns {{ uuid: string, windows: number, marker: number|null } | null}
+ */
+export function restoreEventBaseDedupStateFromChunks(collectionId, chunks) {
+    if (!Array.isArray(chunks) || chunks.length === 0) return null;
+    const idLower = String(collectionId || '').toLowerCase();
+    if (!idLower.includes(COLLECTION_PREFIXES.VECTFOX_EVENTBASE)) return null;
+
+    // Resolve the chat UUID: prefer the events' own chat_uuid (authoritative),
+    // fall back to the trailing UUID embedded in the collection id.
+    let uuid = null;
+    for (const c of chunks) {
+        const u = c?.metadata?.chat_uuid;
+        if (typeof u === 'string' && u) { uuid = u; break; }
+    }
+    if (!uuid) {
+        const m = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(collectionId || '');
+        if (m) uuid = m[1].toLowerCase();
+    }
+    if (!uuid) return null;
+
+    const store = extension_settings?.vectfox;
+    if (!store) return null;
+
+    // Rebuild the window-fingerprint cache + find the highest covered index.
+    const fpSet = new Set();
+    const fpArr = [];
+    let maxEnd = -1;
+    for (const c of chunks) {
+        const md = c?.metadata || {};
+        const end = md.source_window_end;
+        if (typeof end === 'number' && end > maxEnd) maxEnd = end;
+        const hashes = md.source_message_hashes;
+        if (Array.isArray(hashes) && hashes.length) {
+            const fp = windowFingerprint(hashes);
+            if (!fpSet.has(fp)) { fpSet.add(fp); fpArr.push(fp); }
+        }
+    }
+
+    if (fpArr.length) {
+        if (!store.eventbase_extracted_windows) store.eventbase_extracted_windows = {};
+        store.eventbase_extracted_windows[uuid] = fpArr;
+        _windowCacheSet.set(uuid, fpSet);
+    }
+
+    let marker = null;
+    if (maxEnd >= 0) {
+        if (!store.eventbase_autosync_start_marker) store.eventbase_autosync_start_marker = {};
+        marker = maxEnd + 1;
+        store.eventbase_autosync_start_marker[uuid] = marker;
+        setVectorizationTip(uuid, marker);
+    }
+
+    saveSettingsDebounced();
+    log.lifecycle(`[EventBase] Restored dedup state after import: uuid=${uuid}, windows=${fpArr.length}, marker=${marker ?? '(none)'}, maxEnd=${maxEnd}`);
+    return { uuid, windows: fpArr.length, marker };
 }
 
 /**
