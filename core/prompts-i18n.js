@@ -631,6 +631,8 @@ export function getDefaultSummarizePrompt(mode) {
 const _EXTRACTION_TOP =
 `You are a story event archivist for a roleplay session. Extract ONLY narratively significant story events from the excerpt below.
 
+An event is significant only if it CHANGES the story — not merely because something happened. Routine daily activities, schedules, and plans are NOT events.
+
 =========================
 ABSOLUTE RULES (DO NOT BREAK)
 =========================
@@ -732,21 +734,42 @@ const _EXTRACTION_RULES_BODY =
    - DO NOT invent events. DO NOT duplicate the same event under different names.
 
 3. WHEN TO RETURN ZERO EVENTS ([]):
-   Return [] if BOTH of the following are true:
-   a) The excerpt does not contain any event that maps to the defined event_type list above.
-   OR
-   b) It does map to an event_type, but the event has no lasting consequence worth retrieving later.
+   An event is worth extracting ONLY if it passes ALL THREE gates below.
+   If it fails ANY gate → SKIP it (do not return it).
 
-   THE ONE-WEEK TEST — ask yourself: "If someone reads this story one week from now, would knowing this event change their understanding of the characters, world, or plot?"
-   - If YES → extract it.
-   - If NO → skip it.
+   ── GATE 1: THE STORY-CHANGE TEST ──
+   "Could you delete this scene entirely and the story would read the same the next day?"
+   - If YES (nothing would change) → SKIP.
+   - If NO (something genuinely shifted) → continue to Gate 2.
 
-   Examples that FAIL the test (return []):
+   ── GATE 2: THE RETRIEVAL VALUE TEST ──
+   "Would anyone ever search a memory database for this event?"
+   Imagine a reader asking "Do you remember when…?" about it weeks later.
+   - If no one would ever ask → SKIP.
+   - If it is a plausible search target → continue to Gate 3.
+
+   ── GATE 3: THE DAILY-ROUTINE FILTER ──
+   The following are NOT events unless something narratively significant
+   happens DURING them. The routine itself is never the event:
+   - Attending class / school / work / training (routine)
+   - Doing homework / studying / paperwork / chores (routine)
+   - Eating meals / cooking / shopping / commuting (routine)
+   - Future / scheduled statements — mentions of things that WILL happen
+     (a deadline, a planned event, an upcoming test, a due date) are NOT
+     events. Only extract once the thing has actually occurred AND had a
+     consequence.
+   EXCEPTION: if a routine activity CONTAINS a real story change (a
+   confession during dinner, a fight in class, a secret revealed during
+   study), extract the CHANGE — not the routine activity around it.
+
+   Examples that FAIL the gates (return []):
+   - Character goes to class — routine, nothing changes.
+   - Character has homework due tomorrow — future schedule mention, nothing happened yet.
    - The party has dinner at home with no plot discussion.
    - The main character teases the heroine playfully with no consequence.
    - Characters chat about the weather or daily routine.
 
-   Examples that PASS the test (extract):
+   Examples that PASS all gates (extract):
    - Main character pays for the heroine's freedom — her status permanently changed. Money involved is a concrete detail worth remembering.
    - A promise or oath is made — it shapes future obligations.
    - A character's inner fear or secret is revealed — it reframes past or future behaviour.
@@ -775,8 +798,12 @@ Return ONLY a valid JSON array. No prose. No markdown. No code fences.
 
 Each event object MUST have these fields:
 - event_type: one of [main_quest_update, side_quest_update, combat, travel, discovery, dialogue_significant, relationship_change, character_introduction, character_state_change, item_acquired, item_lost, faction_change, location_change, revelation, promise_or_oath, betrayal, death, other]
-- importance: integer 1-10. Use the one-week test: higher = more likely to matter one week later.
-  Anchor your score against these per-type guidelines:
+- importance: integer 1-10.
+  BEFORE ASSIGNING A SCORE — identify the CONCRETE LASTING CONSEQUENCE:
+  - If you CANNOT name one → importance 1-2 → DO NOT EXTRACT THE EVENT.
+    "It happened" is not a consequence. "Character X now knows Y",
+    "Relationship shifted because of Z", "Item X is now lost" ARE consequences.
+  - If you identified a concrete consequence → score below.
 
   PERMANENT / IRREVERSIBLE changes score highest — they reshape the story permanently.
   EPHEMERAL moments score lowest — they happened but leave no lasting trace.
