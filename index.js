@@ -343,6 +343,20 @@ const defaultSettings = {
     eventbase_rerank_w_persist: 0.15,
     eventbase_rerank_w_recency: 0.10,
 
+    // Recency term source for the re-rank formula.
+    // 'index'      → message-index decay over source_window_end vs live chat
+    //                length (legacy). Distorted on ILS-summarized chats: events
+    //                are stamped in ILS-EXPANDED coordinates while the live
+    //                chat is collapsed, and flattening summaries breaks the
+    //                mapping permanently.
+    // 'story_time' → narrative-clock decay over the event's LLM-extracted
+    //                DateTime vs the story "now" (parsed from the newest chat
+    //                messages, floored by max candidate DateTime). Immune to
+    //                ILS coordinate drift; forces the JS re-rank path (the
+    //                Qdrant native formula's recency is index-hardwired).
+    //                See core/story-time.js.
+    eventbase_recency_source: 'index',
+
     // Anchor boost: flat additive bonus when an event's keyword appears verbatim
     // in the user's last message. Rescues historically-distant events the user
     // explicitly asks about. Slider 0.00-0.50, default 0.20 (selected from

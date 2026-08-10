@@ -1247,6 +1247,14 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <input type="number" id="VectFox_eventbase_rerank_w_recency" class="vectfox-input" min="0" max="1" step="0.05" style="width:80px;" />
                                 </div>
                             </div>
+                            <div class="vectfox-form-group" style="margin-top:8px;">
+                                <label class="vectfox-label">Recency Source</label>
+                                <select id="VectFox_eventbase_recency_source" class="vectfox-select">
+                                    <option value="index">Message index (legacy)</option>
+                                    <option value="story_time">Story time (event DateTime)</option>
+                                </select>
+                                <small class="VectFox_hint">Story time decays events by narrative distance from the story's current date (parsed from recent messages / event DateTimes) instead of message position. Recommended with Inline Summary — message-index recency distorts when summaries collapse or flatten the chat. Uses the JS re-ranker (native Qdrant rerank formula is index-based).</small>
+                            </div>
                             <button id="VectFox_eventbase_reset_weights" class="vectfox-btn vectfox-btn-secondary" style="margin-top:6px; font-size:0.8em;">Reset to defaults</button>
 
                             <hr style="margin: 16px 0; opacity:0.2;" />
@@ -4748,6 +4756,14 @@ function bindSettingsEvents(settings, callbacks) {
         saveSettingsDebounced();
         toastr.success('Re-rank weights reset to defaults');
     });
+
+    $('#VectFox_eventbase_recency_source')
+        .val(settings.eventbase_recency_source === 'story_time' ? 'story_time' : 'index')
+        .on('change', function() {
+            settings.eventbase_recency_source = $(this).val() === 'story_time' ? 'story_time' : 'index';
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
 
     // Custom extraction prompt textarea — pre-fill with default if nothing saved.
     // The "default" is now localized via CJK Tokenizer Mode (intl / jieba /

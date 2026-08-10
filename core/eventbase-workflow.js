@@ -1184,6 +1184,18 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     const retrieveFn = settings.agentic_retrieval_enabled ? retrieveEventsWithAgent : retrieveEvents;
     const liveChat = getContext()?.chat || chat || [];
     const effectiveChatLength = prepareMessagesForEventBase(liveChat, chat_metadata).messages.length;
+
+    // Newest-first tail texts for story-time recency's "now" anchor. A handful
+    // is enough: the first message containing a parseable timestamp wins, and
+    // falling through a user one-liner to the model's last (timestamped) reply
+    // is exactly the intended behavior. Cheap to build, so not gated on the
+    // eventbase_recency_source setting.
+    const recentMessageTexts = [...liveChat]
+        .reverse()
+        .filter(m => !m?.is_system && m?.mes)
+        .slice(0, 4)
+        .map(m => m.mes);
+
     const { events, debug } = await retrieveFn({
         searchText: effectiveSearchText,
         keywordQuery,

@@ -221,3 +221,110 @@ describe('retrieveEvents', () => {
         expect(debug.afterImportanceFilter).toBe(1);
     });
 });
+
+describe('retrieveEvents — story-time recency (eventbase_recency_source)', () => {
+    // Recency-only weights so ranking isolates the recency term. Cosine 0 also
+    // sidesteps the mocked-score interference; importance/persist equal on all
+    // events; distinct event_types keep the pairwise dedup out of the way.
+    const storySettings = {
+        ...baseSettings,
+        eventbase_recency_source: 'story_time',
+        eventbase_rerank_w_cosine: 0,
+        eventbase_rerank_w_importance: 0,
+        eventbase_rerank_w_persist: 0,
+        eventbase_rerank_w_recency: 1,
+        eventbase_anchor_boost: 0,
+    };
+
+    // The ILS-flatten scenario: stale expanded-coordinate index (1900) on the
+    // OLD event vs fresh collapsed-coordinate index (10) on the NEW event, in
+    // a chat whose live length is 400. Index recency clamps the stale event to
+    // age 0 (max bonus) and decays the fresh one — inverted. Story time reads
+    // the narrative clock instead.
+    const oldEvent = () => makeEvent(1, {
+        source_window_end: 1900, DateTime: '2025-01-01', score: 0.5,
+    });
+    const newEvent = () => makeEvent(2, {
+        source_window_end: 10, DateTime: '2026-06-12', score: 0.5,
+    });
+
+    it('ranks by narrative clock where index mode inverts (stale ILS coordinates)', async () => {
+        const metadata = [oldEvent(), newEvent()];
+        queryCollectionMock.mockResolvedValue({
+            hashes: metadata.map(m => m.event_id),
+            metadata,
+        });
+
+        // Index mode first: the stale-coordinate event wins (the distortion).
+        const indexRun = await retrieveEvents({
+            searchText: 'recap', keywordQuery: 'recap', chatLength: 400,
+            settings: { ...storySettings, eventbase_recency_source: 'index' },
+            liveCollectionIds: ['standard:vf_eventbase_x'],
+            additionalCandidates: [], skipLiveQuery: false,
+        });
+        expect(indexRun.events[0].event_id).toBe('evt_1');
+
+        // Story mode: the narratively-recent event wins.
+        queryCollectionMock.mockResolvedValue({
+            hashes: metadata.map(m => m.event_id),
+            metadata: [oldEvent(), newEvent()],
+        });
+        const storyRun = await retrieveEvents({
+            searchText: 'recap', keywordQuery: 'recap', chatLength: 400,
+            settings: storySettings,
+            liveCollectionIds: ['standard:vf_eventbase_x'],
+            additionalCandidates: [], skipLiveQuery: false,
+            recentMessageTexts: ['3:45 PM, June 12, 2026 — the plaza was quiet.'],
+        });
+        expect(storyRun.events[0].event_id).toBe('evt_2');
+        expect(storyRun.debug.recencySource).toBe('story_time');
+        expect(storyRun.debug.storyRecency.valid).toBe(true);
+        expect(storyRun.debug.storyRecency.nowSource).toBe('both');
+        expect(storyRun.debug.storyRecency.halfLifeDays).toBeGreaterThan(0);
+    });
+
+    it('suppresses native rerank while story-time recency is active', async () => {
+        queryCollectionMock.mockResolvedValue({ hashes: [], metadata: [] });
+
+        const nativeSettings = {
+            ...storySettings,
+            vector_backend: 'qdrant',
+            eventbase_native_rerank: true,
+        };
+        const storyRun = await retrieveEvents({
+            searchText: 'q', keywordQuery: 'q', chatLength: 100,
+            settings: nativeSettings,
+            liveCollectionIds: ['qdrant:vf_eventbase_x'],
+            additionalCandidates: [], skipLiveQuery: false,
+        });
+        expect(storyRun.debug.nativeRerank).toBe(false);
+
+        const indexRun = await retrieveEvents({
+            searchText: 'q', keywordQuery: 'q', chatLength: 100,
+            settings: { ...nativeSettings, eventbase_recency_source: 'index' },
+            liveCollectionIds: ['qdrant:vf_eventbase_x'],
+            additionalCandidates: [], skipLiveQuery: false,
+        });
+        expect(indexRun.debug.nativeRerank).toBe(true);
+    });
+
+    it('degrades to neutral scoring when no DateTime exists anywhere', async () => {
+        const metadata = [makeEvent(1), makeEvent(2)];   // no DateTime fields
+        queryCollectionMock.mockResolvedValue({
+            hashes: metadata.map(m => m.event_id),
+            metadata,
+        });
+
+        const { events, debug } = await retrieveEvents({
+            searchText: 'recap', keywordQuery: 'recap', chatLength: 400,
+            settings: storySettings,
+            liveCollectionIds: ['standard:vf_eventbase_x'],
+            additionalCandidates: [], skipLiveQuery: false,
+            recentMessageTexts: ['no timestamps in this message'],
+        });
+
+        // Nothing throws, events still come back, ctx reports invalid.
+        expect(events.length).toBe(2);
+        expect(debug.storyRecency.valid).toBe(false);
+    });
+});
