@@ -1,6 +1,6 @@
 # EventBase recall plan
 
-Status: proposal, no code written. Revision 2, 2026-10-02 (incorporates co-author review; changes listed at the end).
+Status: Phase 0a and Phase 1 implemented; later phases remain proposals. Revision 2, 2026-10-02 (incorporates co-author review; changes listed at the end).
 
 ## Problem
 
@@ -65,6 +65,15 @@ New module, `core/character-roster.js`.
 - **Leads are alias groups.** A group is a lead when its share of events exceeds a threshold (proposed `eventbase_lead_share_threshold`, default 0.25), with a minimum event count before anyone qualifies. This is load-bearing: if share were computed per raw spelling, a lead stored as "Kai" and "Kai Tanaka" could miss the threshold under both, stay in `characters_any`, and root cause 2 would survive every later phase.
 - **Extraction.** Pass the roster to the extraction prompt through a new `{{knownCharacters}}` placeholder ([eventbase-extractor.js:308](../core/eventbase-extractor.js)), rendered grouped so the model learns the spellings are one person: `Howard Brennan (also: Brennan)`. Custom prompts without the placeholder are unaffected. Cap the list by event count and recency to bound prompt growth.
 - Stored events are not rewritten. Alias expansion happens at read time.
+
+**Phase 1 implementation notes (2026-10-03):**
+- Index builds use 500-item pages, route each collection to its own backend, and coalesce concurrent builds. Writes/deletes during a build are replayed after the paged snapshot; invalidation prevents stale builds from restoring a dropped index.
+- Startup, chat changes, ingestion, and retrieval schedule nonblocking warm-up. Reads expose `ready` and `pendingCollections`; a future cast lane must check these before using the roster. Live and archive-event lock gathering is shared with the workflow.
+- Generic insert/delete/purge and Database Browser text/metadata edits also update or invalidate the index. Fresh extraction invalidates the chat's collection indexes. Backend writes outside VectFox remain unobservable until a reload or invalidation.
+- Lead eligibility requires at least `eventbase_lead_min_events` distinct events in the collection union (default 20); the share must strictly exceed `eventbase_lead_share_threshold` (default 0.25). Both settings are editable in the EventBase tab.
+- The EventBase tab's **Review / Refresh roster** list works per locked collection. Save names, merge selected groups, split selected groups into stored spellings, or restore automatic grouping. Saving freezes the reviewed groups as explicit overrides. If locked collections contain conflicting overrides, the first collection in workflow order wins for an overlapping spelling.
+- Extraction's grouped list is sorted by event count, then latest source-window position. Defaults cap it at 40 groups and 4000 characters (`eventbase_known_characters_limit`, `eventbase_known_characters_max_chars`). Built-in prompts in all language modes use the placeholder; custom prompts without it remain unchanged.
+- Phase 0b and the actual cast-history injection remain deferred to Phase 2, where the detection signals and cast block are introduced. Phase 1 does not change planner filters or retrieval selection.
 
 ### Phase 2: Scene-cast history block
 

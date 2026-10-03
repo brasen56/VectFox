@@ -148,6 +148,8 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     const collectionId = collectionIdOverride
         || resolveActiveEventBaseCollection(settings, uuid)?.collectionId
         || buildEventBaseCollectionId(uuid, settings?.vector_backend);
+    const { ensureCharacterIndex } = await import('./character-roster.js');
+    void ensureCharacterIndex(collectionId, settings);
 
     // Lock to current chat at start so the index is populated even if vectorization is interrupted.
     // Archive collections are excluded — they are locked manually by the user.
@@ -503,6 +505,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                             windowEnd: win.end,
                             settings,
                             windowIndex: wIdx,
+                            collectionIds: [...new Set([collectionId, ...getLockedCharacterCollections().map(c => c.registryKey)])],
                         }),
                         generationRateLimitSettings(settings),
                         'extraction',
@@ -1091,6 +1094,17 @@ function _gatherLockedEventBaseCollections(currentChatId) {
     return results;
 }
 
+/** One lock gathering path shared by retrieval, roster review, and extraction. */
+export function getLockedCharacterCollections(currentChatId = getCurrentChatId()) {
+    const collections = [..._gatherLockedEventBaseCollections(currentChatId), ..._gatherArchiveEventCollections(currentChatId)];
+    return [...new Map(collections.map(c => [c.collectionId, c])).values()];
+}
+
+export async function warmCharacterRoster(settings) {
+    const { ensureCharacterIndex } = await import('./character-roster.js');
+    await Promise.all(getLockedCharacterCollections().map(c => ensureCharacterIndex(c.registryKey, settings)));
+}
+
 /**
  * Run the EventBase retrieval pipeline and inject the result into the prompt.
  *
@@ -1117,6 +1131,9 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
 
     // --- Find archive event collections locked to this chat ---
     const archiveCollections = _gatherArchiveEventCollections(currentChatId);
+    // Schedule a background build, never await it during retrieval. Lock changes
+    // are resolved afresh here; the per-collection cache needs no chat invalidation.
+    void warmCharacterRoster(settings);
 
     if (!queryEventbase && archiveCollections.length === 0) {
         log.lifecycle('[EventBase] No live collection and no archive collections — skipping Phase A');

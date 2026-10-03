@@ -319,7 +319,7 @@ export const DEFAULT_EXTRACTION_PROMPT = getEventBaseExtractionPrompt('intl');
  *      user's CJK Tokenizer Mode (defaults to 'intl' / English when mode is
  *      unset or unrecognized)
  *
- * Then `{{text}}` and `{{maxCount}}` are substituted before returning.
+ * Then `{{text}}`, `{{maxCount}}`, and `{{knownCharacters}}` are substituted.
  *
  * @param {string} text  - The chat excerpt (already joined messages)
  * @param {number} maxCount - Max events to return (eventbase_max_events_per_window)
@@ -327,13 +327,17 @@ export const DEFAULT_EXTRACTION_PROMPT = getEventBaseExtractionPrompt('intl');
  * @param {string} [mode] - CJK Tokenizer Mode (intl / jieba / jieba_tw /
  *                          tiny_segmenter / korean / others). Ignored when
  *                          customPrompt is provided.
+ * @param {string} [knownCharacters] - Bounded grouped roster, empty while indexing
  * @returns {string}
  */
-export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl') {
+export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl', knownCharacters = '') {
     const template = (customPrompt && customPrompt.trim())
         ? customPrompt
         : getEventBaseExtractionPrompt(mode);
     return template
-        .replace(/\{\{maxCount\}\}/g, String(maxCount))
-        .replace(/\{\{text\}\}/g, text);
+        .replace(/\{\{maxCount\}\}|\{\{knownCharacters\}\}|\{\{text\}\}/g, placeholder => {
+            if (placeholder === '{{maxCount}}') return String(maxCount);
+            if (placeholder === '{{knownCharacters}}') return knownCharacters;
+            return text;
+        });
 }

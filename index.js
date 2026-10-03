@@ -337,6 +337,11 @@ const defaultSettings = {
     eventbase_debug_qdrant_backend: false,
     debug_vectorizing_log: false,                // Verbose vectorization progress logs in console
     eventbase_custom_prompt: '',                  // Custom extraction prompt (empty = use built-in default)
+    eventbase_lead_share_threshold: 0.25,
+    eventbase_lead_min_events: 20,
+    eventbase_known_characters_limit: 40,
+    eventbase_known_characters_max_chars: 4000,
+    eventbase_character_alias_overrides: {},       // Per-collection manual roster groups
     // Re-rank weights (sum is normalized to 1.0 at runtime)
     eventbase_rerank_w_cosine: 0.55,
     eventbase_rerank_w_importance: 0.20,
@@ -800,7 +805,9 @@ jQuery(async () => {
     eventSource.on(event_types.CHAT_CHANGED, () => {
         log.lifecycle('VectFox: Chat changed, refreshing UI state');
         refreshAutoSyncCheckbox(settings);
+        void import('./core/eventbase-workflow.js').then(({ warmCharacterRoster }) => warmCharacterRoster(settings));
     });
+    void import('./core/eventbase-workflow.js').then(({ warmCharacterRoster }) => warmCharacterRoster(settings));
 
     // Keep the ghosting WI-scan floor accurate: refresh the cached deepest per-entry World
     // Info scanDepth whenever the active books or WI settings change (off the hot path, so

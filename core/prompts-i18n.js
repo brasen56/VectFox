@@ -942,7 +942,15 @@ const _EXTRACTION_PROMPTS = {
  * @returns {string}
  */
 export function getEventBaseExtractionPrompt(mode) {
-    return _EXTRACTION_PROMPTS[mode] ?? _EXTRACTION_PROMPTS.intl;
+    const rosterInstructions = {
+        intl: 'Known characters (aliases in parentheses refer to the same person). Prefer these names when supported by the excerpt; do not invent events from this list:',
+        jieba: '已知角色（括号中的别名指同一人）。当节选支持时优先使用这些名字；不要根据此列表编造事件：',
+        jieba_tw: '已知角色（括號中的別名指同一人）。當節選支持時優先使用這些名字；不要根據此列表編造事件：',
+        tiny_segmenter: '既知の登場人物（括弧内の別名は同一人物）。抜粋に裏付けがある場合はこれらの名前を使用し、この一覧から出来事を創作しないでください：',
+        korean: '알려진 인물(괄호 안 별칭은 동일 인물). 발췌문이 뒷받침할 때 이 이름을 사용하고 목록에서 사건을 지어내지 마세요:',
+        others: 'Known characters (aliases in parentheses refer to the same person). Prefer these names when supported by the excerpt; do not invent events from this list:',
+    };
+    return `${rosterInstructions[mode] ?? rosterInstructions.intl}\n{{knownCharacters}}\n\n${_EXTRACTION_PROMPTS[mode] ?? _EXTRACTION_PROMPTS.intl}`;
 }
 
 

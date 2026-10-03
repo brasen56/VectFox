@@ -1262,9 +1262,19 @@ export function renderSettings(containerId, settings, callbacks) {
                             <hr style="margin: 16px 0; opacity:0.2;" />
 
                             <!-- Extraction Prompt -->
+                            <div class="vectfox-form-group">
+                                <label class="vectfox-label">Character roster and aliases</label>
+                                <small class="VectFox_hint">Review names in enabled collections locked to this chat. Manual merge, split, and rename choices are saved per collection; stored events are not changed.</small>
+                                <div style="display:flex; gap:8px; margin:8px 0;">
+                                    <label>Lead share <input id="VectFox_eventbase_lead_share_threshold" type="number" class="vectfox-input" min="0" max="1" step="0.05" style="width:70px;" /></label>
+                                    <label>Minimum collection events <input id="VectFox_eventbase_lead_min_events" type="number" class="vectfox-input" min="1" step="1" style="width:70px;" /></label>
+                                </div>
+                                <button type="button" id="VectFox_character_roster_refresh" class="vectfox-btn vectfox-btn-secondary">Review / Refresh roster</button>
+                                <div id="VectFox_character_roster_review" style="margin-top:8px;"></div>
+                            </div>
                             <div class="vectfox-setting-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
                                 <label style="font-weight:600;">Extraction Prompt</label>
-                                <small class="VectFox_hint">Full prompt sent to the LLM for each window. Use <code>{{text}}</code> where the excerpt goes and <code>{{maxCount}}</code> for the event cap. Leave empty to use the built-in default.</small>
+                                <small class="VectFox_hint">Full prompt sent to the LLM for each window. Use <code>{{text}}</code> where the excerpt goes, <code>{{maxCount}}</code> for the event cap, and <code>{{knownCharacters}}</code> for the bounded roster with grouped aliases. Custom prompts without that placeholder are unchanged. Leave empty to use the built-in default.</small>
                                 <div style="display:flex; gap:6px; width:100%; margin-bottom:4px;">
                                     <button id="VectFox_eventbase_prompt_reset" class="vectfox-action-btn vectfox-btn-secondary" style="font-size:11px; padding:3px 10px;">Reset to Default</button>
                                 </div>
@@ -4766,6 +4776,19 @@ function bindSettingsEvents(settings, callbacks) {
         });
 
     // Custom extraction prompt textarea — pre-fill with default if nothing saved.
+    for (const [key, fallback] of [['eventbase_lead_share_threshold', 0.25], ['eventbase_lead_min_events', 20]]) {
+        $(`#VectFox_${key}`).val(settings[key] ?? fallback).on('change', function() {
+            const value = Number($(this).val());
+            settings[key] = Number.isFinite(value) ? (key.endsWith('threshold') ? Math.max(0, Math.min(1, value)) : Math.max(1, Math.floor(value))) : fallback;
+            $(this).val(settings[key]);
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+    }
+    $('#VectFox_character_roster_refresh').on('click', async () => {
+        const { openCharacterRosterReview } = await import('./character-roster-review.js');
+        await openCharacterRosterReview(settings);
+    });
     // The "default" is now localized via CJK Tokenizer Mode (intl / jieba /
     // jieba_tw / tiny_segmenter / korean / others). When no custom prompt has
     // been saved, we show the localized built-in so the user sees the variant

@@ -24,6 +24,7 @@ import { buildEmbedText, parseEmbedText, EVENTBASE_SCHEMA_VERSION } from './even
 import { log } from './log.js';
 import { prepareMessagesForEventBase } from './ils-expander.js';
 import { getShrinkRecoveryMarker } from './autosync-coordinates.js';
+import { upsertCharacterEvents, pruneCharacterEvents, invalidateCharacterIndex } from './character-roster.js';
 
 // Re-export so callers can import from here if needed
 export { buildEventBaseCollectionId };
@@ -377,6 +378,7 @@ export async function insertEvents(events, settings, abortSignal = null, collect
     log.lifecycle(`[EventBase] Inserting ${items.length} event(s) into collection "${collectionId}"`);
 
     await insertVectorItems(collectionId, items, settings, null, abortSignal);
+    upsertCharacterEvents(collectionId, items);
 
     // Register collection so it appears in the registry / DB browser.
     // Use backend:collectionId format so the key survives plugin-based discovery
@@ -452,6 +454,7 @@ export async function deleteEventByHash(hash, settings, chatUUID) {
     if (!collectionId) return;
 
     await deleteVectorItems(collectionId, [hash], settings);
+    pruneCharacterEvents(collectionId, [hash]);
 }
 
 // ---------------------------------------------------------------------------
@@ -889,6 +892,7 @@ export function clearExtractionCachesForChat(chatUUID) {
     if (!uuid) return;
     clearWindowCacheForChat(uuid);
     clearVectorizationTip(uuid);
+    for (const collection of findEventBaseCollectionsForChat(uuid)) invalidateCharacterIndex(collection.collectionId);
 }
 
 /**

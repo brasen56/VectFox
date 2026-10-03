@@ -26,6 +26,7 @@ import {
 import { cleanText } from './text-cleaning.js';
 import StringUtils from '../utils/string-utils.js';
 import { log } from './log.js';
+import { getCharacterRoster, renderKnownCharacters } from './character-roster.js';
 
 // Cap each message's reasoning (chain-of-thought) fed to the extractor as a
 // date/time/location fallback. Tunable — raise if a game places the scene recap
@@ -262,7 +263,7 @@ function _resolveWindowRealWorldDate(messages) {
  * @param {number} [params.windowIndex] - Window index for error reporting
  * @returns {Promise<object[]>} Array of full EventRecord objects (ingestion fields attached)
  */
-export async function extractEvents({ messages, windowStart, windowEnd, settings, windowIndex = 0 }) {
+export async function extractEvents({ messages, windowStart, windowEnd, settings, windowIndex = 0, collectionIds = [] }) {
     // Logging routes through core/log.js. Per-window flow → Verbose; per-item
     // parse detail → Trace; raw LLM/parser dumps → 'raw_llm' domain deep-dive.
 
@@ -310,6 +311,7 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         maxCount,
         settings.eventbase_custom_prompt || '',
         settings.cjk_tokenizer_mode || 'intl',
+        renderKnownCharacters(getCharacterRoster(collectionIds, settings), settings),
     );
     if (languageHint) {
         basePrompt = `DETECTED EXCERPT LANGUAGE: ${languageHint}. You MUST write ALL string fields in that language — no exceptions.\n\n${basePrompt}`;
