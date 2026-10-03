@@ -20,6 +20,7 @@ import { parseEmbedText } from './eventbase-schema.js';
 import { checkPluginAvailable } from './collection-loader.js';
 import { buildStoryRecencyCtx, storyRecencyBonus } from './story-time.js';
 import { log } from './log.js';
+import { createCandidateOutcomes, recordCandidateOutcome } from './eventbase-retrieval-debug.js';
 
 // ---------------------------------------------------------------------------
 // Default re-rank weights (tuned for long-form SillyTavern RP)
@@ -526,11 +527,14 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     // is never persisted for native-inserted events. When importance is absent,
     // default to minImportance (i.e. just-pass) rather than 0 so native users
     // still get results. Plugin/Qdrant data always carries the field.
+    const candidateOutcomes = createCandidateOutcomes(allCandidates);
     const importanceFiltered = allCandidates.filter(m => {
         if (m._rerankApplied) return true;
         const imp = m.importance ?? m.metadata?.importance;
         if (imp == null) return true;   // missing importance → pass (native backend)
-        return imp >= minImportance;
+        const passes = imp >= minImportance;
+        if (!passes) recordCandidateOutcome(candidateOutcomes, m, 'failed_importance_filter');
+        return passes;
     });
 
     log.verbose(`[EventBase] After importance filter (>=${minImportance}): ${importanceFiltered.length} candidates`);
@@ -696,6 +700,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
             }
 
             isDuplicate = true;
+            recordCandidateOutcome(candidateOutcomes, candidate, 'suppressed_by_dedup');
             if (log.enabled('trace')) {
                 const simForLog = _candidateSimScore(candidate);
                 log.trace(`[EventBase] Dedup: "${candidate.event_type}" suppressed (sim=${simForLog.toFixed(3)}${candidate._rerankApplied ? ' [formula]' : ''}, ${haveTiming ? `windows ${Math.abs(aEnd - cEnd)} msgs apart` : 'no timing info'})`);
@@ -723,6 +728,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
             const windowEnd = e.source_window_end ?? -1;
             const inRecentContext = windowEnd >= visibleThreshold;
             if (inRecentContext) {
+                recordCandidateOutcome(candidateOutcomes, e, 'removed_by_context_dedup');
                 log.trace(`[EventBase] Dedup-depth skip: event "${e.event_type}" source_window_end=${windowEnd} is within last ${dedupDepth} messages (threshold=${visibleThreshold})`);
             }
             return !inRecentContext;
@@ -735,6 +741,9 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     // 7. Trim to requested top-K
     const finalTopK = settings.eventbase_retrieval_top_k || 8;
     const finalEvents = contextDedupedEvents.slice(0, finalTopK);
+    contextDedupedEvents.forEach((event, index) => {
+        recordCandidateOutcome(candidateOutcomes, event, index < finalTopK ? 'injected' : 'cut_at_trim');
+    });
 
     log.lifecycle(`[EventBase] Final events after dedup + trim: ${finalEvents.length}`);
     if (log.enabled('trace')) {
@@ -746,6 +755,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     return {
         events: finalEvents,
         debug: {
+            candidateOutcomes,
             dualQuery,
             keywordScoringMethod: ebSettings.keyword_scoring_method,
             nativeHybridPrefer: settings.hybrid_native_prefer !== false,

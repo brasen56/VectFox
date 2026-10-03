@@ -29,6 +29,7 @@ import { postChatCompletion, resolveModelParameterStyle, LlmCallError } from './
 import { generationRateLimiter, generationRateLimitSettings } from './generation-rate-limiter.js';
 import { resolveAgenticPlannerTimeoutMs, resolveAgenticQueryTimeoutMs, resolveAgenticMaxTokens } from './retrieval-budget.js';
 import { log } from './log.js';
+import { summarizePlannerQueries } from './eventbase-retrieval-debug.js';
 
 // ============================================================================
 // Public API
@@ -233,7 +234,7 @@ export async function retrieveEventsWithAgent(params) {
                         } else {
                             log.warn(`[VectFox-Agentic] Query failed (${colId}, "${queryText}"): ${err?.message || err}`);
                         }
-                        return { queryText, hits: [] };
+                        return { queryText, hits: [], error: err?.__timeout ? 'timeout' : 'failed' };
                     })
             );
         }
@@ -284,6 +285,14 @@ export async function retrieveEventsWithAgent(params) {
         events: final.events,
         debug: {
             ...(final.debug || {}),
+            // Keep pre-search cuts visible; the final pass is authoritative for
+            // candidates encountered again (including all pre-search survivors).
+            candidateOutcomes: {
+                ...(preSearch.debug?.candidateOutcomes || {}),
+                ...(final.debug?.candidateOutcomes || {}),
+            },
+            preSearchCandidateOutcomes: preSearch.debug?.candidateOutcomes || {},
+            plannerQuerySummary: summarizePlannerQueries(validatedQueries, fanoutResults, final.events || []),
             agenticMode: true,
             agenticQueries: validatedQueries,
             agenticRationale: typeof plan?.rationale === 'string' ? plan.rationale : null,

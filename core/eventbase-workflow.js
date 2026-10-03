@@ -1120,7 +1120,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
 
     if (!queryEventbase && archiveCollections.length === 0) {
         log.lifecycle('[EventBase] No live collection and no archive collections — skipping Phase A');
-        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length };
+        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length, debug: { candidateOutcomes: {}, plannerQuerySummary: [] } };
         setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }
@@ -1221,6 +1221,9 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
 
     log.trace('[EventBase] Retrieval debug:', debug);
 
+    // Return diagnostics even when every candidate was cut.
+    const dryRunDebug = { candidateOutcomes: {}, plannerQuerySummary: [], ...debug };
+
     if (!events?.length) {
         log.lifecycle('[EventBase] No events to inject');
         log.verbose(`[EventBase Popup] no-events branch gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result} → fire=${!!settings.retrieval_popup_on_result}`);
@@ -1231,7 +1234,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
                 : 'EventBase: no events matched';
             toastr.info(msg, 'VectFox Retrieval');
         }
-        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length };
+        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length, debug: dryRunDebug };
         setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }
@@ -1241,7 +1244,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     const injectedCount = injectionResult.includedCount;
     if (!injectionText) {
         log.verbose('[EventBase] Injection text empty after formatting');
-        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length };
+        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length, debug: dryRunDebug };
         setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }
@@ -1265,7 +1268,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
 
     // Dry-run: return text without touching the extension prompt slot
     if (dryRun) {
-        return { injectionText, eventCount: injectedCount, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length };
+        return { injectionText, eventCount: injectedCount, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length, debug: dryRunDebug };
     }
 
     // Clear any previous EventBase injection

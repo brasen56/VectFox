@@ -15,6 +15,7 @@
  */
 
 import StringUtils from '../utils/string-utils.js';
+import { formatRetrievalDiagnostics } from '../core/eventbase-retrieval-debug.js';
 
 // ============================================================================
 // STATE
@@ -1569,6 +1570,12 @@ export function openQueryTestModal() {
                             <small style="font-weight:bold; color:#4a9eff;">EventBase <span id="VectFox_qtester_meta_eb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
                             <textarea id="VectFox_qtester_output_eb" readonly rows="8"
                                 style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.78em; resize:vertical; white-space:pre-wrap; overflow-wrap:break-word;"></textarea>
+                            <div id="VectFox_qtester_queries_eb" style="white-space:pre-wrap; font-size:0.8em;"></div>
+                            <details id="VectFox_qtester_cuts_eb">
+                                <summary id="VectFox_qtester_cuts_label_eb">Considered but cut</summary>
+                                <small>Only returned candidates are traced; server-side filters and events no query found are not visible here.</small>
+                                <div id="VectFox_qtester_cuts_text_eb" style="white-space:pre-wrap; overflow-wrap:anywhere; font-size:0.8em;"></div>
+                            </details>
                         </div>
                         <div style="${sectionStyle} border-color:#4dbb6e;">
                             <small style="font-weight:bold; color:#4dbb6e;">ChunkBase <span id="VectFox_qtester_meta_cb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
@@ -1642,6 +1649,13 @@ export function openQueryTestModal() {
                         : `(searched ${locked} collection(s) — 0 events matched. Try a more specific query or lower the score threshold.)`
                 );
             }
+
+            // --- EventBase diagnostics ---
+            const diagnostics = formatRetrievalDiagnostics(ebResult?.debug);
+            $('#VectFox_qtester_queries_eb').text(diagnostics.queryText);
+            $('#VectFox_qtester_cuts_eb').prop('open', false);
+            $('#VectFox_qtester_cuts_label_eb').text(`Considered but cut (${diagnostics.cutCount})`);
+            $('#VectFox_qtester_cuts_text_eb').text(diagnostics.cutText);
 
             // --- ChunkBase ---
             if (cbResult?.injectionText) {

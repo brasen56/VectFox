@@ -97,6 +97,54 @@ beforeEach(() => {
 });
 
 describe('retrieveEvents', () => {
+    it('traces each cut stage and injection without changing selected events', async () => {
+        const candidates = [
+            makeEvent(1, { score: 0.7, characters: ['Hero'], event_type: 'combat', source_window_end: 10 }),
+            makeEvent(2, { score: 0.6, characters: ['Hero'], event_type: 'combat', source_window_end: 11 }),
+            makeEvent(3, { importance: 1 }),
+            makeEvent(4, { source_window_end: 99 }),
+            makeEvent(5, { score: 0.1 }),
+        ];
+        const { events, debug } = await retrieveEvents({
+            searchText: 'recap', chatLength: 100, skipLiveQuery: true,
+            additionalCandidates: candidates,
+            settings: { ...baseSettings, eventbase_retrieval_top_k: 1,
+                eventbase_retrieval_min_importance: 3, deduplication_depth: 5 },
+        });
+        expect(events.map(e => e.event_id)).toEqual(['evt_1']);
+        expect(Object.fromEntries(Object.entries(debug.candidateOutcomes)
+            .map(([id, entry]) => [id, entry.outcome]))).toEqual({
+            evt_1: 'injected', evt_2: 'suppressed_by_dedup',
+            evt_3: 'failed_importance_filter', evt_4: 'removed_by_context_dedup', evt_5: 'cut_at_trim',
+        });
+        for (const entry of Object.values(debug.candidateOutcomes)) {
+            expect(entry.stages).toEqual(['reached_pool', entry.outcome]);
+            expect(entry.summary).toContain('happened in the story');
+        }
+        expect(candidates.every(e => !e._finalScore)).toBe(true);
+    });
+
+    it('traces identity-merged hits once, using hash fallback and bounded snippets', async () => {
+        const { debug } = await retrieveEvents({
+            searchText: 'recap', chatLength: 100, skipLiveQuery: true, settings: baseSettings,
+            additionalCandidates: [
+                makeEvent(1, { score: 0.2 }), makeEvent(1, { score: 0.9 }),
+                makeEvent(2, { event_id: undefined, _hash: 'hash_2', text: 'long\n'.repeat(100) }),
+            ],
+        });
+        expect(Object.keys(debug.candidateOutcomes)).toEqual(['evt_1', 'hash_2']);
+        expect(debug.candidateOutcomes.hash_2.event_id).toBeNull();
+        expect(debug.candidateOutcomes.hash_2.summary).toHaveLength(160);
+        expect(debug.candidateOutcomes.hash_2.summary).not.toContain('\n');
+    });
+
+    it('reports empty outcomes when nothing was returned', async () => {
+        const { debug } = await retrieveEvents({
+            searchText: 'recap', chatLength: 100, skipLiveQuery: true, settings: baseSettings,
+        });
+        expect(debug.candidateOutcomes).toEqual({});
+    });
+
     it('runs without throwing a ReferenceError (missing-import regression guard)', async () => {
         // THE guard: the original bug threw "ReferenceError: log is not defined"
         // on the first line of the function body. This call would have failed.
