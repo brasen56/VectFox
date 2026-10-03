@@ -18,6 +18,14 @@ export function rosterCollectionId(id) {
     return String(id || '').replace(/^(?:qdrant|standard|vectra):/, '');
 }
 
+/** Exact stored spellings; ignoring one tag must not hide similarly named people. */
+export function getIgnoredCharacterTags(collectionId, settings = {}) {
+    const tags = settings.eventbase_character_ignored_tags?.[rosterCollectionId(collectionId)];
+    return Array.isArray(tags)
+        ? [...new Set(tags.filter(tag => typeof tag === 'string' && tag.trim()).map(tag => tag.trim()))]
+        : [];
+}
+
 export function normalizeCharacterName(name) {
     return String(name || '').normalize('NFKC').trim().replace(HONORIFICS, '')
         .replace(/\s+/g, ' ').toLocaleLowerCase();
@@ -221,15 +229,23 @@ export function buildCharacterRoster(events, overrides = [], settings = {}) {
 /** Sync read of the current lock union; never waits for an index on the turn path. */
 export function getCharacterRoster(collectionIds, settings = {}) {
     const events = new Map();
+    const rosterEvents = [];
     const overrides = [];
     const pendingCollections = [];
     for (const id of new Set(collectionIds.map(rosterCollectionId))) {
         const entry = indexes.get(id);
         if (!entry?.ready) { pendingCollections.push(id); continue; }
-        for (const event of entry.events.values()) if (!events.has(event.event_id)) events.set(event.event_id, event);
+        const ignored = new Set(getIgnoredCharacterTags(id, settings));
+        for (const event of entry.events.values()) {
+            if (!events.has(event.event_id)) events.set(event.event_id, event);
+            // Project each collection separately: a tag ignored in one lock may
+            // still be valid in another, even on a duplicate event ID. Keep the
+            // cached and returned event records intact so restoration is lossless.
+            rosterEvents.push({ ...event, characters: event.characters.filter(name => !ignored.has(name)) });
+        }
         overrides.push(...(settings.eventbase_character_alias_overrides?.[id] || []));
     }
-    return { ...buildCharacterRoster([...events.values()], overrides, settings), events: [...events.values()], pendingCollections, ready: pendingCollections.length === 0 };
+    return { ...buildCharacterRoster(rosterEvents, overrides, settings), events: [...events.values()], pendingCollections, ready: pendingCollections.length === 0 };
 }
 
 export function renderKnownCharacters(roster, settings = {}) {

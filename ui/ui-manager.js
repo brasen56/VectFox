@@ -1264,7 +1264,7 @@ export function renderSettings(containerId, settings, callbacks) {
                             <!-- Extraction Prompt -->
                             <div class="vectfox-form-group">
                                 <label class="vectfox-label">Character roster and aliases</label>
-                                <small class="VectFox_hint">Review names in enabled collections locked to this chat. Manual merge, split, and rename choices are saved per collection; stored events are not changed.</small>
+                                <small class="VectFox_hint">Review names in enabled collections locked to this chat. Merge, split, rename, and reversible ignore choices are saved per collection; stored events are not changed. Ignored tags are omitted from the roster and known-character extraction hints.</small>
                                 <div style="display:flex; gap:8px; margin:8px 0;">
                                     <label>Lead share <input id="VectFox_eventbase_lead_share_threshold" type="number" class="vectfox-input" min="0" max="1" step="0.05" style="width:70px;" /></label>
                                     <label>Minimum collection events <input id="VectFox_eventbase_lead_min_events" type="number" class="vectfox-input" min="1" step="1" style="width:70px;" /></label>

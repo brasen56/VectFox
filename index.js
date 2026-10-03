@@ -342,6 +342,7 @@ const defaultSettings = {
     eventbase_known_characters_limit: 40,
     eventbase_known_characters_max_chars: 4000,
     eventbase_character_alias_overrides: {},       // Per-collection manual roster groups
+    eventbase_character_ignored_tags: {},          // Per-collection reversible roster exclusions
     // Re-rank weights (sum is normalized to 1.0 at runtime)
     eventbase_rerank_w_cosine: 0.55,
     eventbase_rerank_w_importance: 0.20,

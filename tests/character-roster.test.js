@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
     buildCharacterRoster, ensureCharacterIndex, getCharacterRoster,
     invalidateCharacterIndex, upsertCharacterEvents, pruneCharacterEvents,
-    renderKnownCharacters, normalizeCharacterName,
+    renderKnownCharacters, normalizeCharacterName, getIgnoredCharacterTags,
 } from '../core/character-roster.js';
 import { buildExtractionPrompt, buildEmbedText } from '../core/eventbase-schema.js';
 
@@ -16,6 +16,12 @@ const item = (id, characters, extra = {}) => {
 const group = (roster, name) => roster.groups.find(g => g.name === name);
 
 describe('character alias grouping', () => {
+    it('combines Ezra and Ezra Blackwell automatically when the longer name is unique', () => {
+        const roster = buildCharacterRoster([event('1', ['Ezra']), event('2', ['Ezra Blackwell']), event('3', ['Ezra', 'Ezra Blackwell'])]);
+        expect(roster.groups).toHaveLength(1);
+        expect(roster.groups[0]).toMatchObject({ name: 'Ezra Blackwell', aliases: ['Ezra', 'Ezra Blackwell'], eventCount: 3 });
+    });
+
     it('groups a unique shorter name after stripping honorifics', () => {
         const roster = buildCharacterRoster([event('1', ['Brennan']), event('2', ['Dr. Howard Brennan'])]);
         expect(roster.groups).toHaveLength(1);
@@ -195,6 +201,68 @@ describe('collection event index', () => {
         expect(indexed.summary).toBe('Summary 1');
         expect(indexed.heavy).toBeUndefined();
         expect(indexed.scene_time).toBe('10:00');
+    });
+
+    it('ignores junk in the roster and extraction hints without changing events or their total', async () => {
+        const junk = ['physics-ugrad-advising', 'nurse, the waitress'];
+        const items = [item('1', ['Ezra', ...junk]), item('2', ['Ezra Blackwell']), item('3', junk)];
+        const original = JSON.stringify(items);
+        const listChunks = vi.fn(async () => ({ items }));
+        await ensureCharacterIndex('one', {}, async () => ({ listChunks }));
+        const settings = { eventbase_character_ignored_tags: { one: junk }, eventbase_lead_min_events: 3 };
+        const roster = getCharacterRoster(['one'], settings);
+        expect(roster.totalEvents).toBe(3);
+        expect(roster.groups).toHaveLength(1);
+        expect(group(roster, 'Ezra Blackwell')).toMatchObject({ eventCount: 2, share: 2 / 3, isLead: true });
+        expect(renderKnownCharacters(roster)).toBe('Ezra Blackwell (also: Ezra)');
+        expect(roster.events.find(e => e.event_id === '1').characters).toEqual(['Ezra', ...junk]);
+        expect(getCharacterRoster(['one']).groups.map(g => g.name)).toEqual(expect.arrayContaining(junk));
+        expect(JSON.stringify(items)).toBe(original);
+        expect(listChunks).toHaveBeenCalledTimes(1);
+    });
+
+    it('restores ignored manual aliases and names losslessly from persisted settings', async () => {
+        await ensureCharacterIndex('one', {}, async () => ({ listChunks: async () => ({ items: [item('1', ['Ezra']), item('2', ['Ezra Blackwell'])] }) }));
+        const settings = JSON.parse(JSON.stringify({
+            eventbase_character_alias_overrides: { one: [{ name: 'Ezra B.', aliases: ['Ezra', 'Ezra Blackwell'] }] },
+            eventbase_character_ignored_tags: { one: ['Ezra', 'Ezra Blackwell'] },
+        }));
+        expect(getCharacterRoster(['one'], settings).groups).toHaveLength(0);
+        settings.eventbase_character_ignored_tags.one = ['Ezra'];
+        expect(getCharacterRoster(['one'], settings).groups[0]).toMatchObject({ name: 'Ezra B.', aliases: ['Ezra Blackwell'], eventCount: 1 });
+        settings.eventbase_character_ignored_tags.one = [];
+        expect(getCharacterRoster(['one'], settings).groups[0]).toMatchObject({ name: 'Ezra B.', aliases: ['Ezra', 'Ezra Blackwell'], eventCount: 2 });
+    });
+
+    it('keeps ignored tags excluded after later inserts and restores them without reloading', async () => {
+        const listChunks = vi.fn(async () => ({ items: [item('1', ['the nurse'])] }));
+        await ensureCharacterIndex('one', {}, async () => ({ listChunks }));
+        const settings = { eventbase_character_ignored_tags: { one: ['the nurse'] } };
+        upsertCharacterEvents('one', [item('2', ['the nurse', 'Ezra'])]);
+        expect(getCharacterRoster(['one'], settings).groups.map(g => g.name)).toEqual(['Ezra']);
+        settings.eventbase_character_ignored_tags.one = [];
+        expect(group(getCharacterRoster(['one'], settings), 'the nurse').eventCount).toBe(2);
+        expect(listChunks).toHaveBeenCalledTimes(1);
+    });
+
+    it('scopes ignores to each collection even when locked collections share an event ID', async () => {
+        const items = [item('1', ['Ezra', 'the nurse'])];
+        for (const id of ['one', 'two']) await ensureCharacterIndex(id, {}, async () => ({ listChunks: async () => ({ items }) }));
+        const settings = { eventbase_character_ignored_tags: { one: ['the nurse'] } };
+        expect(group(getCharacterRoster(['one'], settings), 'the nurse')).toBeUndefined();
+        expect(group(getCharacterRoster(['qdrant:one', 'two'], settings), 'the nurse').eventCount).toBe(1);
+        settings.eventbase_character_ignored_tags.two = ['the nurse'];
+        const union = getCharacterRoster(['one', 'two'], settings);
+        expect(union.totalEvents).toBe(1);
+        expect(union.groups.map(g => g.name)).toEqual(['Ezra']);
+    });
+
+    it('ignores exact spellings without suppressing normalized name variants', async () => {
+        await ensureCharacterIndex('one', {}, async () => ({ listChunks: async () => ({ items: [item('1', ['Kai', 'Dr. Kai', 'KAI'])] }) }));
+        const settings = { eventbase_character_ignored_tags: { one: ['Kai', 'Kai', '', null] } };
+        expect(getIgnoredCharacterTags('qdrant:one', settings)).toEqual(['Kai']);
+        expect(getCharacterRoster(['one'], settings).groups[0].aliases).toEqual(['Dr. Kai', 'KAI']);
+        expect(getIgnoredCharacterTags('two', settings)).toEqual([]);
     });
 });
 
