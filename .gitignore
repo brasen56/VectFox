@@ -17,6 +17,7 @@ yarn-debug.log**
 yarn-error.log*
 .vscode/
 Doc/settings.json
+temp_bug_list.md
 
 # Playwright test artifacts — regenerated on every run
 playwright-report/
