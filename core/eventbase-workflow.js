@@ -1144,7 +1144,10 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
 
     if (!queryEventbase && archiveCollections.length === 0) {
         log.lifecycle('[EventBase] No live collection and no archive collections — skipping Phase A');
-        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length, debug: { candidateOutcomes: {}, plannerQuerySummary: [] } };
+        const crossEncoder = { enabled: settings.eventbase_cross_encoder_enabled === true, used: false, documentsSent: 0,
+            skippedReason: 'no enabled EventBase collections are locked to this chat' };
+        if (crossEncoder.enabled) log.lifecycle(`[EventBase cross-encoder] Skipped: ${crossEncoder.skippedReason}.`);
+        if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length, debug: { candidateOutcomes: {}, plannerQuerySummary: [], crossEncoder } };
         setExtensionPrompt(EVENTBASE_PROMPT_TAG, '', settings.position, settings.depth, false);
         return;
     }

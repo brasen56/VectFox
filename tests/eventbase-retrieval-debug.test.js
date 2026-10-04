@@ -5,6 +5,18 @@ import {
 } from '../core/eventbase-retrieval-debug.js';
 
 describe('EventBase recall diagnostics', () => {
+    it('distinguishes reranker skips from failures and successful calls', () => {
+        const base = { enabled: true, used: false, documentsSent: 0 };
+        const skipped = formatRetrievalDiagnostics({ crossEncoder: { ...base,
+            skippedReason: 'only 1 candidate(s) survived retrieval; at least 2 are required' } });
+        expect(skipped.castText).toContain('Cross-encoder: skipped; 0 document(s)');
+        expect(skipped.castText).toContain('only 1 candidate(s) survived retrieval');
+        expect(formatRetrievalDiagnostics({ crossEncoder: { ...base, error: 'Reranker API HTTP 401' } }).castText)
+            .toContain('Cross-encoder: original order; 0 document(s); 0ms; Reranker API HTTP 401');
+        expect(formatRetrievalDiagnostics({ crossEncoder: { ...base, used: true, documentsSent: 10, durationMs: 50 } }).castText)
+            .toContain('Cross-encoder: used; 10 document(s); 50ms');
+    });
+
     it('distinguishes same-text queries by index and renders their individual scopes', () => {
         const queries = [{ query: 'same text', characters_any: ['Brennan'] },
             { query: 'same text', characters_any: ['Other'] }];

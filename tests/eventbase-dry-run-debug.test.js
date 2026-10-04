@@ -179,4 +179,15 @@ describe('EventBase dry-run diagnostic contract', () => {
         expect(retrieveEvents).not.toHaveBeenCalled();
         expect(setExtensionPrompt).not.toHaveBeenCalled();
     });
+
+    it('explains why enabled reranking never runs without an active collection', async () => {
+        getCollectionRegistry.mockReturnValue([]);
+        const result = await runEventBaseRetrieval({ ...params, settings: { eventbase_cross_encoder_enabled: true } });
+        expect(result.debug.crossEncoder).toMatchObject({ enabled: true, used: false, documentsSent: 0,
+            skippedReason: 'no enabled EventBase collections are locked to this chat' });
+        expect(formatRetrievalDiagnostics(result.debug).castText).toContain('Cross-encoder: skipped');
+        expect(log.lifecycle).toHaveBeenCalledWith(expect.stringContaining('[EventBase cross-encoder] Skipped:'));
+        expect(retrieveEvents).not.toHaveBeenCalled();
+        expect(setExtensionPrompt).not.toHaveBeenCalled();
+    });
 });

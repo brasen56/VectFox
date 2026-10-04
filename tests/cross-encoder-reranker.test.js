@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-vi.mock('../core/log.js', () => ({ log: { warn: vi.fn() } }));
+vi.mock('../core/log.js', () => ({ log: { warn: vi.fn(), lifecycle: vi.fn() } }));
 import { rerankEventCandidates, parseCrossEncoderResults } from '../core/cross-encoder-reranker.js';
+import { log } from '../core/log.js';
 import { resolveCrossEncoderMaxDocuments, resolveCrossEncoderTimeoutMs } from '../core/cross-encoder-settings.js';
 import { resolveEventBaseRetrievalTimeoutMs } from '../core/retrieval-budget.js';
 
 const settings = { eventbase_cross_encoder_enabled: true, eventbase_cross_encoder_api_url: 'http://localhost:8000/v1/' };
 const events = [0, 1, 2].map(i => ({ event_id: `e${i}`, summary: `summary ${i}`, _finalScore: 1 - i / 10 }));
-beforeEach(() => vi.stubGlobal('fetch', vi.fn()));
+beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', vi.fn()); });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('cross-encoder reranker', () => {
@@ -16,6 +17,24 @@ describe('cross-encoder reranker', () => {
             expect((await rerankEventCandidates(pool, query, config)).events).toBe(pool);
         }
         expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('explains unsent requests and leaves disabled reranking quiet', async () => {
+        const disabled = await rerankEventCandidates(events, 'query', {});
+        expect(disabled.meta.skippedReason).toBeUndefined();
+        expect(log.lifecycle).not.toHaveBeenCalled();
+        for (const [pool, query, reason] of [[events, '', 'query is empty'],
+            [[], 'query', 'only 0 candidate(s) survived retrieval'],
+            [events.slice(0, 1), 'query', 'only 1 candidate(s) survived retrieval'],
+            [[{}, events[0]], 'query', 'only 1 candidate(s) have non-empty text']]) {
+            const result = await rerankEventCandidates(pool, query, settings);
+            expect(result.events).toBe(pool);
+            expect(result.meta).toMatchObject({ used: false, documentsSent: 0 });
+            expect(result.meta.skippedReason).toContain(reason);
+            expect(log.lifecycle).toHaveBeenLastCalledWith(expect.stringContaining(reason));
+        }
+        expect(fetch).not.toHaveBeenCalled();
+        expect(log.warn).not.toHaveBeenCalled();
     });
 
     it('normalizes the endpoint, sends auth/model and all top_n, preserves scores and inputs', async () => {
@@ -32,6 +51,25 @@ describe('cross-encoder reranker', () => {
         expect(result.events[0]).toMatchObject({ _finalScore: 0.9, _crossEncoderScore: 0.9 });
         expect(events[1]._crossEncoderScore).toBeUndefined();
         expect(result.meta).toMatchObject({ used: true, documentsSent: 2, resultsReturned: 2 });
+        expect(log.lifecycle).toHaveBeenCalledWith(expect.stringContaining('Requesting scores for 2 document(s)'));
+        expect(log.lifecycle).toHaveBeenLastCalledWith(expect.stringContaining('Completed: 2 score(s)'));
+        expect(log.lifecycle.mock.calls.flat().join(' ')).not.toMatch(/localhost|summary|Bearer|key/);
+    });
+
+    it.each([
+        ['http://127.0.0.1:8081', 'http://127.0.0.1:8081/rerank'],
+        ['http://127.0.0.1:8081/', 'http://127.0.0.1:8081/rerank'],
+        ['http://127.0.0.1:8081///', 'http://127.0.0.1:8081/rerank'],
+        ['http://127.0.0.1:8081/rerank', 'http://127.0.0.1:8081/rerank'],
+        ['http://127.0.0.1:8081/rerank/', 'http://127.0.0.1:8081/rerank'],
+        ['https://example.com/v1/', 'https://example.com/v1/rerank'],
+        ['https://example.com/v1/rerank', 'https://example.com/v1/rerank'],
+    ])('posts to one rerank path for %s', async (apiUrl, expected) => {
+        fetch.mockResolvedValue({ ok: true, json: async () => [0.1, 0.8, 0.2] });
+        const result = await rerankEventCandidates(events, 'query', { ...settings, eventbase_cross_encoder_api_url: apiUrl });
+        expect(fetch).toHaveBeenCalledWith(expected, expect.objectContaining({ method: 'POST' }));
+        expect(result.meta.used).toBe(true);
+        expect(result.events.map(e => e.event_id)).toEqual(['e1', 'e2', 'e0']);
     });
 
     it('preserves omitted and empty-text events with correct explicit index mapping', async () => {

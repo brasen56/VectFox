@@ -53,10 +53,17 @@ function documentText(event) {
 export async function rerankEventCandidates(events, query, settings = {}) {
     const meta = { enabled: settings.eventbase_cross_encoder_enabled === true, used: false, documentsSent: 0 };
     const fallback = { events, meta };
-    if (!meta.enabled || !String(query || '').trim() || events.length < 2) return fallback;
+    if (!meta.enabled) return fallback;
+    const skip = reason => {
+        meta.skippedReason = reason;
+        log.lifecycle(`[EventBase cross-encoder] Skipped: ${reason}.`);
+        return fallback;
+    };
+    if (!String(query || '').trim()) return skip('the retrieval query is empty');
+    if (events.length < 2) return skip(`only ${events.length} candidate(s) survived retrieval; at least 2 are required`);
     const candidates = events.map((event, position) => ({ event, position, text: documentText(event) }))
         .filter(candidate => candidate.text).slice(0, resolveCrossEncoderMaxDocuments(settings));
-    if (candidates.length < 2) return fallback;
+    if (candidates.length < 2) return skip(`only ${candidates.length} candidate(s) have non-empty text; at least 2 are required`);
 
     const started = Date.now();
     const controller = new AbortController();
@@ -66,8 +73,10 @@ export async function rerankEventCandidates(events, query, settings = {}) {
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
             throw new Error('Reranker URL must be an HTTP(S) endpoint without credentials, query or fragment');
         }
-        url.pathname = url.pathname.replace(/\/+$/, '');
-        if (!url.pathname.endsWith('/rerank')) url.pathname += '/rerank';
+        // URL restores an empty pathname to '/', so normalize and append before
+        // assigning it. Assigning twice turned a bare base URL into '//rerank'.
+        const pathname = url.pathname.replace(/\/+$/, '');
+        url.pathname = pathname.endsWith('/rerank') ? pathname : `${pathname}/rerank`;
         const headers = { 'Content-Type': 'application/json' };
         const apiKey = String(settings.eventbase_cross_encoder_api_key || '').trim();
         if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
@@ -82,6 +91,7 @@ export async function rerankEventCandidates(events, query, settings = {}) {
             }, timeoutMs);
         });
         meta.documentsSent = candidates.length;
+        log.lifecycle(`[EventBase cross-encoder] Requesting scores for ${candidates.length} document(s) (timeout ${timeoutMs}ms).`);
         const request = (async () => {
             const response = await fetch(url.href, {
                 method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
@@ -97,6 +107,7 @@ export async function rerankEventCandidates(events, query, settings = {}) {
         ordered.push(...events.filter((_, position) => !positions.has(position)));
         meta.used = true;
         meta.resultsReturned = ranked.length;
+        log.lifecycle(`[EventBase cross-encoder] Completed: ${ranked.length} score(s) returned in ${Date.now() - started}ms.`);
         return { events: ordered, meta };
     } catch (error) {
         // Avoid embedding endpoint URLs/keys in diagnostics, including fetch errors.

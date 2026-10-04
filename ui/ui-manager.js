@@ -1230,7 +1230,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <input id="VectFox_eventbase_cross_encoder_enabled" type="checkbox" />
                                     Enable cross-encoder reranker (external API)
                                 </label>
-                                <small class="VectFox_hint">Optional second pass before Top-K, including AgentMode results. Requires a compatible /rerank API with browser CORS access. Sends the current query and event summaries/text to this endpoint. API key is stored in extension settings (not the server secret store); settings exports may include it.</small>
+                                <small class="VectFox_hint">Optional second pass before Top-K, including AgentMode results. Runs when at least two EventBase candidates survive filtering and deduplication. Requires a compatible /rerank API with browser CORS access. Sends the current query and event summaries/text to this endpoint. API key is stored in extension settings (not the server secret store); settings exports may include it.</small>
                             </div>
                             <div id="VectFox_eventbase_cross_encoder_options">
                                 <div class="vectfox-form-group">
@@ -1252,7 +1252,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <div class="vectfox-form-group">
                                     <label class="vectfox-label" for="VectFox_eventbase_cross_encoder_timeout_ms">Reranker Timeout (ms, 1000–60000)</label>
                                     <input id="VectFox_eventbase_cross_encoder_timeout_ms" type="number" min="1000" max="60000" step="1000" class="text_pole" />
-                                    <small class="VectFox_hint">Default 10 seconds; added to the EventBase retrieval budget. Failures preserve the original relevance order.</small>
+                                    <small class="VectFox_hint">Default 10 seconds; added to the EventBase retrieval budget. Failures preserve the original relevance order. Debug Query shows use, errors and skip reasons; Action → Console verbosity → Lifecycle logs requests and skips in the browser console.</small>
                                 </div>
                             </div>
 
