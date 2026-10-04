@@ -63,6 +63,14 @@ describe('scene cast detection', () => {
         expect(resolveCastSetting({ eventbase_cast_token_budget: NaN }, 'eventbase_cast_token_budget')).toBe(700);
         expect(resolveCastSetting({ eventbase_cast_token_budget: -1 }, 'eventbase_cast_token_budget')).toBe(0);
     });
+    it('can report all detections without changing the default injection cap', () => {
+        const chat = messages('Ann', 'Brennan');
+        const settings = { eventbase_cast_max_characters: 1 };
+        expect(names(detect(roster, chat, { settings }))).toEqual(['Howard Brennan']);
+        expect(names(detect(roster, chat, { settings, includeAll: true }))).toEqual(['Howard Brennan', 'Ann']);
+        expect(names(detect(roster, chat, { settings: { eventbase_cast_max_characters: 0 }, includeAll: true })))
+            .toEqual(['Howard Brennan', 'Ann']);
+    });
 });
 
 describe('cast history injection', () => {
@@ -159,6 +167,28 @@ describe('cast history injection', () => {
     it('does not duplicate shared events across character blocks', () => {
         const roster = rosterFor([event(1, ['Ann', 'Brennan'])]);
         expect(formatCastHistoryDetailed({ roster, cast: detect(roster, messages('Ann Brennan')) }).includedCount).toBe(1);
+    });
+    it('counts shared injected events for diagnostic characters outside the cap', () => {
+        const roster = rosterFor([event(1, ['Ann', 'Brennan'])]);
+        const diagnosticCast = detect(roster, messages('Ann Brennan'), { includeAll: true });
+        const result = formatCastHistoryDetailed({ roster, cast: diagnosticCast.slice(0, 1), diagnosticCast });
+        expect(result.includedCount).toBe(1);
+        expect(result.zeroInjectionCharacters).toEqual([]);
+    });
+    it('counts main-lane coverage across aliases even when cast injection is disabled', () => {
+        const events = [event(1, ['Brennan']), event(2, ['Howard Brennan'])];
+        const roster = rosterFor(events);
+        const diagnosticCast = detect(roster, messages('Brennan'), { includeAll: true });
+        const result = formatCastHistoryDetailed({ roster, cast: [], diagnosticCast, mainEvents: [events[1]] });
+        expect(result.text).toBe('');
+        expect(result.zeroInjectionCharacters).toEqual([]);
+    });
+    it('reports visible-context exclusions as zero injection, not injected coverage', () => {
+        const roster = rosterFor([event(1, ['Brennan'], { _collectionIds: ['current'], source_window_end: 98 })]);
+        const result = formatCastHistoryDetailed({ roster, cast: detect(roster, messages('Brennan')),
+            chatLength: 100, currentCollectionId: 'current', settings: { deduplication_depth: 5 } });
+        expect(result.includedCount).toBe(0);
+        expect(result.zeroInjectionCharacters).toEqual([{ name: 'Brennan', signals: ['text'] }]);
     });
     it('reports zero injection with signals, including disabled or too-small budgets', () => {
         const roster = rosterFor([event(1, ['Brennan'])]), cast = detect(roster, messages('Brennan'), { plannerCharacters: ['Brennan'] });

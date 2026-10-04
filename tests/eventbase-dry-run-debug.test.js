@@ -45,6 +45,7 @@ import { formatEventsForInjectionDetailed } from '../core/eventbase-injection.js
 import { setExtensionPrompt } from '../../../../../script.js';
 import { ensureCharacterIndex, invalidateCharacterIndex } from '../core/character-roster.js';
 import { formatRetrievalDiagnostics } from '../core/eventbase-retrieval-debug.js';
+import { log } from '../core/log.js';
 
 const params = { chat: [], searchText: 'scene', settings: {}, dryRun: true, testMessage: 'scene' };
 const debug = {
@@ -62,6 +63,56 @@ beforeEach(() => {
 });
 
 describe('EventBase dry-run diagnostic contract', () => {
+    it.each([false, true])('reports cap-excluded characters and their signals (Agent Mode=%s)', async agentic => {
+        const events = [
+            { event_id: 'ann', summary: 'Ann opened the shop.', characters: ['Ann'] },
+            { event_id: 'llc', summary: 'Filed the LLC.', characters: ['Brennan', 'Howard Brennan'] },
+        ];
+        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({
+            items: events.map(event => ({ hash: event.event_id, metadata: event })),
+        }) }));
+        retrieveEvents.mockResolvedValue({ events: [], debug: {} });
+        retrieveEventsWithAgent.mockResolvedValue({ events: [], debug: { plannerCharacters: ['Brennan'] } });
+        const result = await runEventBaseRetrieval({ ...params, chat: [{ mes: 'Brennan', is_user: true }], testMessage: 'Ann',
+            settings: { agentic_retrieval_enabled: agentic, eventbase_cast_max_characters: 1 } });
+        expect(result.debug.sceneCast.map(c => c.name)).toEqual(['Ann']);
+        expect(result.debug.inPlayCharacters.map(c => c.name)).toEqual(['Ann', 'Howard Brennan']);
+        const signals = agentic ? ['text', 'planner'] : ['text'];
+        expect(result.debug.zeroInjectionCharacters).toEqual([{ name: 'Howard Brennan', signals }]);
+        expect(result.injectionText).toContain('Known history with Ann');
+        expect(result.injectionText).not.toContain('Known history with Howard Brennan');
+        expect(formatRetrievalDiagnostics(result.debug).castText).toContain(`Howard Brennan (${signals.join(' + ')})`);
+        expect(log.lifecycle).toHaveBeenCalledWith(expect.stringContaining(`Howard Brennan (${signals.join(' + ')})`));
+        expect(setExtensionPrompt).not.toHaveBeenCalled();
+    });
+
+    it.each([0, 1])('preserves no-query misses when maximum characters is %s', async maxCharacters => {
+        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: {
+            event_id: 'llc', summary: 'Filed the LLC.', characters: ['Brennan'],
+        } }] }) }));
+        retrieveEvents.mockResolvedValue({ events: [], debug: {} });
+        const result = await runEventBaseRetrieval({ ...params, testMessage: 'Brennan',
+            settings: { eventbase_cast_max_characters: maxCharacters, eventbase_cast_token_budget: 0 } });
+        expect(result.injectionText).toBeNull();
+        expect(result.debug.candidateOutcomes).toEqual({});
+        expect(result.debug.zeroInjectionCharacters).toEqual([{ name: 'Brennan', signals: ['text'] }]);
+        expect(formatRetrievalDiagnostics(result.debug).castText).toBe('In play with zero events injected: Brennan (text).');
+        expect(setExtensionPrompt).not.toHaveBeenCalled();
+    });
+
+    it('does not count an unformatted main result as injected character coverage', async () => {
+        const event = { event_id: 'llc', summary: 'Filed the LLC.', characters: ['Brennan'] };
+        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({
+            items: [{ hash: 'llc', metadata: event }],
+        }) }));
+        retrieveEvents.mockResolvedValue({ events: [event], debug: {} });
+        formatEventsForInjectionDetailed.mockReturnValue({ text: '', includedCount: 0 });
+        const result = await runEventBaseRetrieval({ ...params, testMessage: 'Brennan', settings: { eventbase_cast_max_characters: 0 } });
+        expect(result.injectionText).toBeNull();
+        expect(result.debug.finalInjectedEventIds).toEqual([]);
+        expect(result.debug.zeroInjectionCharacters).toEqual([{ name: 'Brennan', signals: ['text'] }]);
+    });
+
     it.each([false, true])('recalls the LLC via cast history even with an empty main lane (Agent Mode=%s)', async agentic => {
         const event = { event_id: 'llc', summary: 'Drafted and filed the LLC formation and operating agreement.',
             characters: ['Howard Brennan'], DateTime: '2026-06-03', importance: 1, source_window_end: 1 };

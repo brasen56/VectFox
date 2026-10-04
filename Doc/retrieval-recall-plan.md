@@ -53,6 +53,11 @@ Small, and it verifies every later phase. It ships in two parts.
 - A summary line listing characters in play that have zero events in the final injection (main block plus cast block), and which signal detected each one.
 - Per-candidate outcomes can only explain events that reached a stage. The Brennan miss was that no query asked at all, and this line is what catches that.
 
+**0b implementation notes (2026-10-03):**
+- Diagnostics inspect all detected non-lead alias groups before the cast injection cap, including when maximum characters is zero. The cap and token budget still control only cast injection; the sticky lookback still controls detection.
+- Coverage is evaluated against actual main-block and cast-block events together. Shared events cover every associated group; events excluded as already visible in chat do not count as injected.
+- Dry-run debug exposes `inPlayCharacters` (uncapped), `sceneCast` (capped), and `zeroInjectionCharacters` with text/planner signals. The query tester renders the summary as plain text, and lifecycle logs report misses. Pending roster indexes report a warm-up notice rather than a misleading “none”.
+
 ### Phase 1: Character roster, aliases, and event index
 
 New module, `core/character-roster.js`.
@@ -127,7 +132,7 @@ Built in [eventbase-injection.js](../core/eventbase-injection.js) from the exist
 - Session-local planner memory is keyed by chat ID and UUID, ages by non-system message count, and validates the observed chat prefix so edits, swipes, and shrink do not preserve stale detections. It is bounded to 20 chats and is not persisted across reloads. Dry-runs neither write nor prune memory; a tester message is treated as a hypothetical additional message.
 - Small histories are allocated first; larger histories retain earliest/latest events, persistent or high-importance (7+) events, then farthest timeline gaps. Lines are rendered chronologically by parseable story dates, with source-window order as the fallback. Shared events appear only once across cast blocks.
 - Main-injected event IDs and already-visible current-chat source windows are excluded. Archive and cross-chat source windows are not compared with current-chat coordinates. The compact block follows the main block under the same global context/XML wrapper and can inject even when main retrieval is empty.
-- Phase 0b is exposed in dry-run diagnostics and lifecycle logs: each capped in-play character with no event in either injection lane is listed with its text/planner signals.
+- Phase 0b is exposed in dry-run diagnostics and lifecycle logs: each in-play character with no event in either injection lane is listed with its text/planner signals, even when excluded by the cast cap.
 - Automated regression fixtures verify the Brennan LLC miss with Agent Mode on and off. The real-chat dry-run remains a manual verification step.
 
 ### Phase 3: Planner and pool fixes

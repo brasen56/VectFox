@@ -6,7 +6,7 @@ import { resolveCastSetting } from './scene-cast-settings.js';
 const plannerMemory = new Map();
 
 /** Prefix validation invalidates planner observations after edits, swipes or shrink. */
-export function detectSceneCast({ roster, chat = [], plannerCharacters = [], chatId = '', settings = {}, dryRun = false, testMessage = null }) {
+export function detectSceneCast({ roster, chat = [], plannerCharacters = [], chatId = '', settings = {}, dryRun = false, testMessage = null, includeAll = false }) {
     const messages = chat.filter(m => !m?.is_system);
     const fingerprints = messages.map(m => JSON.stringify([m.is_user, m.name, m.mes]));
     const texts = messages.map(m => stripGameSystemBlocks(stripReasoningBlocks(String(m.mes || ''))).normalize('NFKC').toLocaleLowerCase());
@@ -52,6 +52,7 @@ export function detectSceneCast({ roster, chat = [], plannerCharacters = [], cha
         // Bound session memory across chat switches.
         if (plannerMemory.size > 20) plannerMemory.delete(plannerMemory.keys().next().value);
     }
-    return [...detected.values()].sort((a, b) => b.lastMention - a.lastMention || a.group.name.localeCompare(b.group.name))
-        .slice(0, resolveCastSetting(settings, 'eventbase_cast_max_characters'));
+    const ranked = [...detected.values()].sort((a, b) => b.lastMention - a.lastMention || a.group.name.localeCompare(b.group.name));
+    // Diagnostics must see cap-excluded characters too; callers still cap injection.
+    return includeAll ? ranked : ranked.slice(0, resolveCastSetting(settings, 'eventbase_cast_max_characters'));
 }

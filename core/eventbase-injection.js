@@ -358,7 +358,7 @@ export function selectHistorySpine(events, budget, renderLine) {
 }
 
 /** Compact cast lane, allocated smallest history first, after main selection. */
-export function formatCastHistoryDetailed({ roster, cast, mainEvents = [], settings = {}, chatLength = 0, currentCollectionId = '', currentCollectionIds = [currentCollectionId] }) {
+export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast, mainEvents = [], settings = {}, chatLength = 0, currentCollectionId = '', currentCollectionIds = [currentCollectionId] }) {
     const mainIds = new Set(mainEvents.map(e => e.event_id));
     const claimed = new Set(mainIds);
     const depth = settings.deduplication_depth ?? 0;
@@ -412,7 +412,7 @@ export function formatCastHistoryDetailed({ roster, cast, mainEvents = [], setti
     const injectedIds = new Set([...mainEvents, ...included].map(e => e.event_id));
     return {
         text: blocks.join('\n\n'), events: included, includedCount: included.length,
-        zeroInjectionCharacters: cast.filter(entry => ![...entry.group.eventIds].some(id => injectedIds.has(id)))
+        zeroInjectionCharacters: diagnosticCast.filter(entry => ![...entry.group.eventIds].some(id => injectedIds.has(id)))
             .map(entry => ({ name: entry.group.name, signals: entry.signals })),
     };
 }

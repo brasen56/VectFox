@@ -41,4 +41,12 @@ describe('EventBase recall diagnostics', () => {
             cutCount: 0, cutText: 'No returned candidates were cut.', queryText: '',
         });
     });
+    it('distinguishes complete coverage from an unavailable roster', () => {
+        expect(formatRetrievalDiagnostics({ castIndexReady: true, zeroInjectionCharacters: [] }).castText)
+            .toBe('In play with zero events injected: none.');
+        const pending = formatRetrievalDiagnostics({ castIndexReady: false,
+            castPendingCollections: ['archive'], zeroInjectionCharacters: [] });
+        expect(pending.castText).toContain('roster still warming (archive)');
+        expect(pending.castText).not.toContain('none');
+    });
 });

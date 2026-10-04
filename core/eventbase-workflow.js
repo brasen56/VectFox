@@ -28,6 +28,7 @@ import { formatEventsForInjectionDetailed, formatCastHistoryDetailed } from './e
 import { eventDebugKey } from './eventbase-retrieval-debug.js';
 import { getCharacterRoster } from './character-roster.js';
 import { detectSceneCast } from './scene-cast.js';
+import { resolveCastSetting } from './scene-cast-settings.js';
 import { isCollectionEnabled, isCollectionActiveForContextAnyKey, setCollectionLock, setCollectionMeta } from './collection-metadata.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { log } from './log.js';
@@ -1244,10 +1245,11 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     // Return diagnostics even when every candidate was cut.
     const dryRunDebug = { candidateOutcomes: {}, plannerQuerySummary: [], ...debug };
     const roster = getCharacterRoster([...lockedLiveCollections, ...archiveCollections].map(c => c.collectionId), settings);
-    const cast = roster.ready ? detectSceneCast({ roster, chat: chat || liveChat,
-        plannerCharacters: debug?.plannerCharacters, chatId: `${currentChatId}:${uuid}`, settings, dryRun, testMessage }) : [];
+    const inPlay = roster.ready ? detectSceneCast({ roster, chat: chat || liveChat,
+        plannerCharacters: debug?.plannerCharacters, chatId: `${currentChatId}:${uuid}`, settings, dryRun, testMessage, includeAll: true }) : [];
+    const cast = inPlay.slice(0, resolveCastSetting(settings, 'eventbase_cast_max_characters'));
     const mainResult = events?.length ? formatEventsForInjectionDetailed(events, settings) : { text: '', includedCount: 0 };
-    const castResult = roster.ready ? formatCastHistoryDetailed({ roster, cast,
+    const castResult = roster.ready ? formatCastHistoryDetailed({ roster, cast, diagnosticCast: inPlay,
         mainEvents: mainResult.text ? events : [], settings, chatLength: effectiveChatLength,
         currentCollectionIds: lockedLiveCollections.filter(c => c.collectionId.endsWith(`_${uuid}`)).map(c => c.collectionId) }) : { text: '', includedCount: 0, zeroInjectionCharacters: [] };
     const mainInjectedEvents = mainResult.text ? events || [] : [];
@@ -1256,6 +1258,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         finalInjectedEventIds: [...new Set([...mainInjectedEvents.map(eventDebugKey), ...castInjectedEventIds])],
         castInjectedEventIds,
         sceneCast: cast.map(entry => ({ name: entry.group.name, signals: entry.signals, lastMention: entry.lastMention })),
+        inPlayCharacters: inPlay.map(entry => ({ name: entry.group.name, signals: entry.signals, lastMention: entry.lastMention })),
         castEventCount: castResult.includedCount, zeroInjectionCharacters: castResult.zeroInjectionCharacters });
     if (castResult.zeroInjectionCharacters.length) log.lifecycle(`[EventBase] In play with zero events injected: ${castResult.zeroInjectionCharacters.map(c => `${c.name} (${c.signals.join(' + ')})`).join(', ')}`);
 
