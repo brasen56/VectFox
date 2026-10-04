@@ -29,7 +29,7 @@ export function formatBudgetedEventBase({ events = [], settings = {}, globalCont
         ? formatCastHistoryDetailed({ ...castOptions, mainEvents: result.events || [],
             settings: { ...settings, eventbase_cast_token_budget: Math.min(resolveCastSetting(settings, 'eventbase_cast_token_budget'),
                 Math.max(0, available - estimateCastTokens(result.text))) } })
-        : { text: '', events: [], includedCount: 0, zeroInjectionCharacters: [], cardCharacters: [] };
+        : { text: '', events: [], includedCount: 0, zeroInjectionCharacters: [], cardCharacters: [], cardOutcomes: [] };
     let cast = makeCast(main);
     // Return unused cast capacity to the topical lane. Rebuild cast exclusions
     // against the ACTUAL final main selection, not the retrieval Top-K.

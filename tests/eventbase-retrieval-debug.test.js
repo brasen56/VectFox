@@ -74,6 +74,31 @@ describe('EventBase recall diagnostics', () => {
         expect(withoutCompacts.castText).toContain('NPC cards injected: none.');
         expect(formatRetrievalDiagnostics({})).not.toHaveProperty('castText');
     });
+    it('explains each in-play character\'s NPC card state', () => {
+        const text = formatRetrievalDiagnostics({ eventbaseTokenBudget: 4000, estimatedInjectionTokens: 900, npcCardsEnabled: true,
+            npcCardStatus: [
+                { name: 'Howard Brennan', events: 20, minEvents: 30, status: 'below_min' },
+                { name: 'Mira', events: 45, minEvents: 30, status: 'ready', intactFacts: 6, storedFacts: 6, unreadEvents: 2 },
+                { name: 'Ezra', events: 60, minEvents: 30, status: 'ready', intactFacts: 4, storedFacts: 5, unreadEvents: 0 },
+                { name: 'Kai', events: 50, minEvents: 30, status: 'ready', intactFacts: 5, storedFacts: 5, unreadEvents: 0 },
+                { name: 'Svensson', events: 40, minEvents: 30, status: 'not_built', intactFacts: 0, storedFacts: 0, unreadEvents: 0 },
+                { name: 'Braun', events: 33, minEvents: 30, status: 'retry_wait', lastError: 'Bad citations', retryAt: Date.now() + 90_000 },
+            ],
+            npcCardOutcomes: [
+                { name: 'Mira', facts: 6, eligibleFacts: 0, injectedFacts: 0, outcome: 'gated' },
+                { name: 'Ezra', facts: 4, eligibleFacts: 4, injectedFacts: 0, outcome: 'over_slice', cardTokens: 380, sliceTokens: 233 },
+                { name: 'Kai', facts: 5, eligibleFacts: 4, injectedFacts: 3, outcome: 'injected' },
+            ] }).castText;
+        expect(text).toContain('NPC card status:');
+        expect(text).toContain('  Howard Brennan: 20 event(s), below the 30-event minimum; no card is built.');
+        expect(text).toContain('  Mira: 45 event(s); card has 6 fact(s), 2 newer event(s) not yet in it; not injected: all 6 fact(s) cite events already in the main block or recent context.');
+        expect(text).toContain('  Ezra: 60 event(s); card has 4 of 5 stored fact(s) still match their sources; not injected: the card (~380 tokens) exceeds its share of the cast budget (233 tokens).');
+        expect(text).toContain('  Kai: 50 event(s); card has 5 fact(s); injected 3 of 5 fact(s); 1 cite events already in the main block or recent context; 1 cite events another character\'s history already used.');
+        expect(text).toContain('  Svensson: 40 event(s); no card yet. Cards are built in the background on real turns, never on dry-runs.');
+        expect(text).toContain('  Braun: 33 event(s); no card; the last build failed (Bad citations), next try in about 2 min.');
+        expect(formatRetrievalDiagnostics({ eventbaseTokenBudget: 4000, npcCardsEnabled: false }).castText)
+            .toContain('NPC card status: disabled in settings.');
+    });
     it('supports absent debug data', () => {
         expect(formatRetrievalDiagnostics()).toEqual({
             cutCount: 0, cutText: 'No returned candidates were cut.', queryText: '',

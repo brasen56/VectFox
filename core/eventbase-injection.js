@@ -420,15 +420,29 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
     }).sort((a, b) => a.cost - b.cost || b.lastMention - a.lastMention);
     let remaining = resolveCastSetting(settings, 'eventbase_cast_token_budget');
     const blocks = [], included = [], skipped = [], cardCharacters = [];
+    // Diagnostics only: why each cached card was or was not injected.
+    const cardOutcomes = new Map();
+    const noteCard = (history, outcome, extra = {}) => {
+        if (history.card) cardOutcomes.set(history.group.name, { name: history.group.name, facts: history.card.facts.length,
+            eligibleFacts: history.facts.length, injectedFacts: 0, outcome, ...extra });
+    };
+    histories.forEach(history => noteCard(history, history.facts.length ? 'not_allocated' : 'gated'));
     const allocate = (history, slice) => {
         const events = history.events.filter(e => !claimed.has(e.event_id));
-        if (!events.length) return true;
+        if (!events.length) {
+            noteCard(history, 'no_events');
+            return true;
+        }
         const limit = Math.min(slice, remaining);
         // Earlier histories may have claimed evidence since the initial sort.
         const facts = history.facts.filter(f => f.source_ids.every(id => !claimed.has(id)));
         const cardText = renderCardFacts(history.group.name, facts);
         const cardCost = cardText ? estimateCastTokens(cardText + '\n') : Infinity;
+        if (history.facts.length && cardCost > limit) {
+            noteCard(history, facts.length ? 'over_slice' : 'claimed', facts.length ? { cardTokens: cardCost, sliceTokens: limit } : {});
+        }
         if (cardCost <= limit) {
+            noteCard(history, 'injected', { injectedFacts: facts.length });
             // Events the card has not absorbed yet follow it as source lines,
             // under the same exclusions and within the same slice.
             const unread = new Set(history.card.pendingEventIds || []);
@@ -459,7 +473,10 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
     for (let i = 0; i < histories.length; i++) {
         const history = histories[i];
         const events = history.events.filter(e => !claimed.has(e.event_id));
-        if (!events.length) continue;
+        if (!events.length) {
+            noteCard(history, 'no_events');
+            continue;
+        }
         const whole = estimateCastTokens(history.header) + events.reduce((sum, e) => sum + costs.get(e), 0);
         const slice = whole + estimateCastTokens('\n') <= remaining ? remaining : Math.floor(remaining / histories.slice(i).filter(h => h.events.some(e => !claimed.has(e.event_id))).length);
         if (!allocate(history, slice)) skipped.push(history);
@@ -470,6 +487,7 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
     const injectedIds = new Set([...mainEvents, ...included].map(e => e.event_id));
     return {
         text: blocks.join('\n\n'), events: included, includedCount: included.length, cardCharacters,
+        cardOutcomes: [...cardOutcomes.values()],
         zeroInjectionCharacters: diagnosticCast.filter(entry => ![...entry.group.eventIds].some(id => injectedIds.has(id)))
             .map(entry => ({ name: entry.group.name, signals: entry.signals })),
     };

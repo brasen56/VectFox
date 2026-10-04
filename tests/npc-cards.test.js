@@ -172,6 +172,43 @@ describe('source-grounded NPC cards', () => {
         expect(getNpcCards(options).size).toBe(0);
         expect(complete).toHaveBeenCalledTimes(1);
     });
+    it('reports each in-play character\'s card state without changing what is served', async () => {
+        const f = fixture('Reported');
+        const minor = { group: { name: 'Minor', aliases: [], eventIds: new Set(['e0']) } };
+        const dryReport = [];
+        expect(getNpcCards({ ...f, cast: [...f.cast, minor], dryRun: true, report: dryReport }).size).toBe(0);
+        expect(dryReport).toEqual([
+            { name: 'Reported', events: 35, minEvents: 30, status: 'not_built', intactFacts: 0, storedFacts: 0, unreadEvents: 0 },
+            { name: 'Minor', events: 1, minEvents: 30, status: 'below_min' },
+        ]);
+        const complete = vi.fn(async () => [{ fact: 'Filed LLC', source_ids: ['e0'] }]);
+        const { saved, done } = nextSave();
+        const queued = [];
+        getNpcCards({ ...f, complete, save: done, report: queued });
+        expect(queued[0].status).toBe('building');
+        await saved;
+        const ready = [];
+        getNpcCards({ ...f, dryRun: true, report: ready });
+        expect(ready[0]).toMatchObject({ status: 'ready', intactFacts: 1, storedFacts: 1, unreadEvents: 0 });
+    });
+    it('reports failed builds with their error and outdated stored cards', async () => {
+        const f = fixture('Report failure');
+        const { saved: failed, done } = nextSave();
+        getNpcCards({ ...f, complete: vi.fn(async () => { throw new Error('Bad citations'); }), onError: done });
+        await failed;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const report = [];
+        getNpcCards({ ...f, dryRun: true, report });
+        expect(report[0]).toMatchObject({ status: 'retry_wait', lastError: 'Bad citations' });
+        expect(report[0].retryAt).toBeGreaterThan(Date.now());
+
+        const legacy = fixture('Report legacy');
+        const key = npcCardSnapshot(legacy.roster, legacy.group).key;
+        legacy.settings.eventbase_npc_cards = { [key]: { signature: 'old', facts: [{ fact: 'Old', source_ids: ['e0'] }] } };
+        const legacyReport = [];
+        getNpcCards({ ...legacy, dryRun: true, report: legacyReport });
+        expect(legacyReport[0]).toMatchObject({ status: 'stale', storedFacts: 1, intactFacts: 0 });
+    });
     it('backs off exponentially between failed attempts', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(0);

@@ -150,49 +150,75 @@ export async function advanceNpcCard(stored, snapshot, group, settings, complete
 }
 
 /**
+ * Diagnostic state of one in-play character's card, taken after any refresh
+ * was queued so a build started this turn reads as `building`.
+ */
+function npcCardStatus(group, key, stored, view, minEvents) {
+    const failure = failures.get(key);
+    const intactFacts = view?.facts.length || 0;
+    const status = intactFacts ? 'ready'
+        : pending.has(key) ? 'building'
+            : (failure?.until || 0) > Date.now() ? 'retry_wait'
+                : stored ? 'stale' : 'not_built';
+    return { name: group.name, events: group.eventIds.size, minEvents, status, intactFacts,
+        storedFacts: Array.isArray(stored?.facts) ? stored.facts.length : 0,
+        unreadEvents: view ? view.uncovered.length + view.planned.length : 0,
+        ...(failure ? { lastError: failure.error, retryAt: failure.until } : {}) };
+}
+
+/**
  * Nonblocking and paced: at most one queued call per NPC per retrieval, run
  * serially. An existing card is served while it updates, with its unread
- * events listed after it; dry-runs are read-only.
+ * events listed after it; dry-runs are read-only. When `report` is an array,
+ * one npcCardStatus entry per cast member is pushed onto it.
  */
-export function getNpcCards({ roster, cast, settings, dryRun = false, complete, save = () => {}, onError = () => {} }) {
+export function getNpcCards({ roster, cast, settings, dryRun = false, complete, save = () => {}, onError = () => {}, report = null }) {
     const cards = new Map();
     if (!settings.eventbase_npc_cards_enabled || !roster.ready) return cards;
     const budget = npcCardSetting(settings, 'eventbase_npc_card_tokens');
+    const minEvents = npcCardSetting(settings, 'eventbase_npc_card_min_events');
     // A card that can never be injected is not worth a call.
     const injectable = resolveEventBaseTokenBudget(settings) > 0 && resolveCastSetting(settings, 'eventbase_cast_token_budget') > 0;
     for (const { group } of cast) {
-        if (group.eventIds.size < npcCardSetting(settings, 'eventbase_npc_card_min_events')) continue;
+        if (group.eventIds.size < minEvents) {
+            report?.push({ name: group.name, events: group.eventIds.size, minEvents, status: 'below_min' });
+            continue;
+        }
         const snapshot = npcCardSnapshot(roster, group);
-        const view = readNpcCard(settings.eventbase_npc_cards?.[snapshot.key], snapshot, budget);
+        const storedCard = settings.eventbase_npc_cards?.[snapshot.key];
+        const view = readNpcCard(storedCard, snapshot, budget);
         // Injection gates and renders individual facts, so no text is prebuilt.
         if (view?.facts.length) cards.set(group.name, { facts: view.facts, pendingEventIds: [...view.uncovered, ...view.planned].map(e => e.event_id) });
         const due = !view || !view.facts.length || view.planned.length > 0 || view.uncovered.length >= NPC_CARD_REFRESH_MIN_NEW_EVENTS;
-        if (!due || dryRun || !complete || !injectable || pending.has(snapshot.key)
-            || (failures.get(snapshot.key)?.until || 0) > Date.now()) continue;
-        // Snapshot both evidence and generation settings before queueing.
-        const generationSettings = { ...settings };
-        const task = refreshQueue.then(async () => {
-            // The queue can outlive a settings change; check before spending a call.
-            if (!settings.eventbase_npc_cards_enabled) return;
-            const card = await advanceNpcCard(settings.eventbase_npc_cards?.[snapshot.key], snapshot, group, generationSettings, complete);
-            if (!card || !settings.eventbase_npc_cards_enabled) return;
-            // Copy on write: never mutate a cards object shared with defaults.
-            const stored = { ...settings.eventbase_npc_cards, [snapshot.key]: card };
-            // Bound settings storage across visited collections/characters.
-            const keys = Object.keys(stored).sort((a, b) => String(stored[a].updatedAt).localeCompare(String(stored[b].updatedAt)));
-            while (keys.length > STORED_CARD_LIMIT) delete stored[keys.shift()];
-            settings.eventbase_npc_cards = stored;
-            failures.delete(snapshot.key);
-            save();
-        }).catch(error => {
-            // Exponential backoff, 1 to 30 minutes, so a persistent failure stays cheap.
-            const count = (failures.get(snapshot.key)?.count || 0) + 1;
-            failures.set(snapshot.key, { count, until: Date.now() + Math.min(30, 2 ** (count - 1)) * 60000 });
-            if (failures.size > 100) failures.delete(failures.keys().next().value);
-            onError(error);
-        }).finally(() => pending.delete(snapshot.key));
-        refreshQueue = task;
-        pending.set(snapshot.key, task);
+        if (due && !dryRun && complete && injectable && !pending.has(snapshot.key)
+            && !((failures.get(snapshot.key)?.until || 0) > Date.now())) {
+            // Snapshot both evidence and generation settings before queueing.
+            const generationSettings = { ...settings };
+            const task = refreshQueue.then(async () => {
+                // The queue can outlive a settings change; check before spending a call.
+                if (!settings.eventbase_npc_cards_enabled) return;
+                const card = await advanceNpcCard(settings.eventbase_npc_cards?.[snapshot.key], snapshot, group, generationSettings, complete);
+                if (!card || !settings.eventbase_npc_cards_enabled) return;
+                // Copy on write: never mutate a cards object shared with defaults.
+                const stored = { ...settings.eventbase_npc_cards, [snapshot.key]: card };
+                // Bound settings storage across visited collections/characters.
+                const keys = Object.keys(stored).sort((a, b) => String(stored[a].updatedAt).localeCompare(String(stored[b].updatedAt)));
+                while (keys.length > STORED_CARD_LIMIT) delete stored[keys.shift()];
+                settings.eventbase_npc_cards = stored;
+                failures.delete(snapshot.key);
+                save();
+            }).catch(error => {
+                // Exponential backoff, 1 to 30 minutes, so a persistent failure stays cheap.
+                const count = (failures.get(snapshot.key)?.count || 0) + 1;
+                failures.set(snapshot.key, { count, until: Date.now() + Math.min(30, 2 ** (count - 1)) * 60000,
+                    error: String(error?.message || error).slice(0, 200) });
+                if (failures.size > 100) failures.delete(failures.keys().next().value);
+                onError(error);
+            }).finally(() => pending.delete(snapshot.key));
+            refreshQueue = task;
+            pending.set(snapshot.key, task);
+        }
+        report?.push(npcCardStatus(group, snapshot.key, storedCard, view, minEvents));
     }
     return cards;
 }

@@ -1254,9 +1254,11 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     const inPlay = roster.ready ? detectSceneCast({ roster, chat: chat || liveChat,
         plannerCharacters: debug?.plannerCharacters, chatId: `${currentChatId}:${uuid}`, settings, dryRun, testMessage, includeAll: true }) : [];
     const cast = inPlay.slice(0, resolveCastSetting(settings, 'eventbase_cast_max_characters'));
+    const npcCardStatus = [];
     const cards = getNpcCards({ roster, cast, settings, dryRun, complete: completeNpcCard,
         save: () => { extension_settings.vectfox.eventbase_npc_cards = settings.eventbase_npc_cards; saveSettingsDebounced(); },
-        onError: error => log.warn('[NPC card] Refresh failed; using history spine:', error.message) });
+        onError: error => log.warn('[NPC card] Refresh failed; using history spine:', error.message),
+        report: npcCardStatus });
     const budgeted = formatBudgetedEventBase({ events: events || [], roster, cast, diagnosticCast: inPlay, cards,
         settings, chatLength: effectiveChatLength,
         globalContext: settings.rag_context ? substituteParams(settings.rag_context) : '', xmlTag: settings.rag_xml_tag || '',
@@ -1271,7 +1273,8 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         sceneCast: cast.map(entry => ({ name: entry.group.name, signals: entry.signals, lastMention: entry.lastMention })),
         inPlayCharacters: inPlay.map(entry => ({ name: entry.group.name, signals: entry.signals, lastMention: entry.lastMention })),
         castEventCount: castResult.includedCount, zeroInjectionCharacters: castResult.zeroInjectionCharacters,
-        npcCardCharacters: castResult.cardCharacters, eventbaseTokenBudget: budgeted.budget,
+        npcCardCharacters: castResult.cardCharacters, npcCardsEnabled: !!settings.eventbase_npc_cards_enabled,
+        npcCardStatus, npcCardOutcomes: castResult.cardOutcomes || [], eventbaseTokenBudget: budgeted.budget,
         estimatedInjectionTokens: budgeted.estimatedTokens, compactMainEventIds: mainResult.compactEventIds,
         budgetCutEventIds: (events || []).filter(e => !mainInjectedEvents.includes(e)).map(eventDebugKey) });
     if (castResult.zeroInjectionCharacters.length) log.lifecycle(`[EventBase] In play with zero events injected: ${castResult.zeroInjectionCharacters.map(c => `${c.name} (${c.signals.join(' + ')})`).join(', ')}`);

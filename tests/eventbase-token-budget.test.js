@@ -121,6 +121,27 @@ describe('shared EventBase token envelope', () => {
         expect(result.text).toContain('Fact 1');
         expect(result.events.some(e => e.event_id === 'e0')).toBe(false);
     });
+    it('records why each cached card was or was not injected', () => {
+        const outcomes = (cards, options = {}) => formatCastHistoryDetailed({ roster, cast, cards, ...options }).cardOutcomes;
+        expect(outcomes(new Map([['Brennan', { facts: [
+            { fact: 'Attended the shared meeting.', source_ids: ['e0'] },
+            { fact: 'Filed the LLC.', source_ids: ['e1'] },
+        ] }]]), { mainEvents: [events[0]] }))
+            .toEqual([{ name: 'Brennan', facts: 2, eligibleFacts: 1, injectedFacts: 1, outcome: 'injected' }]);
+        expect(outcomes(new Map([['Brennan', card('Combined claim.', ['e0', 'e1'])]]), { mainEvents: [events[0]] }))
+            .toEqual([{ name: 'Brennan', facts: 1, eligibleFacts: 0, injectedFacts: 0, outcome: 'gated' }]);
+        expect(outcomes(new Map([['Brennan', card('x'.repeat(5000), ['e0'])]]), { settings: { eventbase_cast_token_budget: 300 } }))
+            .toEqual([expect.objectContaining({ outcome: 'over_slice', sliceTokens: 300 })]);
+        expect(outcomes(new Map([['Brennan', card('Filed the LLC.', ['e1'])]]), { mainEvents: events }))
+            .toEqual([expect.objectContaining({ outcome: 'no_events' })]);
+        const ada = { name: 'Ada', eventIds: new Set(['e0']) };
+        expect(formatCastHistoryDetailed({ roster, cast: [{ group: ada, lastMention: 30 }, cast[0]],
+            cards: new Map([['Ada', card('Meeting.', ['e0'])], ['Brennan', card('Shared meeting.', ['e0'])]]) }).cardOutcomes)
+            .toEqual([
+                { name: 'Ada', facts: 1, eligibleFacts: 1, injectedFacts: 1, outcome: 'injected' },
+                { name: 'Brennan', facts: 1, eligibleFacts: 1, injectedFacts: 0, outcome: 'claimed' },
+            ]);
+    });
     it('budgets only surviving facts across the shared-envelope main reallocation', () => {
         const cards = new Map([['Brennan', { facts: [
             { fact: 'excluded '.repeat(1000), source_ids: ['e0'] },
