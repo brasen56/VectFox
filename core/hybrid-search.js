@@ -17,6 +17,7 @@ import { parseRegistryKey, COLLECTION_PREFIXES } from './collection-ids.js';
 import { createBM25Scorer, porterStemmer } from './bm25-scorer.js';
 import { extractQueryKeywords, RETRIEVAL_KEYWORD_LEVELS, isCJKToken } from './query-keyword-extractor.js';
 import { log } from './log.js';
+import { filtersReachBackend, warnUnsupportedFilters } from './search-filter-support.js';
 
 const KNOWN_BACKENDS = ['standard', 'vectra', 'qdrant'];
 
@@ -86,8 +87,7 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
     } = options;
 
     // Check if backend supports native hybrid search and user prefers it
-    const preferNative = settings.hybrid_native_prefer !== false;
-    if (preferNative && backend.supportsHybridSearch && backend.supportsHybridSearch()) {
+    if (filtersReachBackend(settings, backend?.supportsHybridSearch?.() === true)) {
         log.verbose(`[HybridSearch] Using native hybrid search (${backend.constructor.name})`);
         try {
             return await backend.hybridQuery(collectionId, searchText, topK, settings, {
@@ -97,12 +97,11 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
                 rrfK,
             }, filters);
         } catch (error) {
-            // THE single fallback for the hybrid path. Backends must not degrade
-            // internally — QdrantBackend.hybridQuery used to retry vector-only on
-            // its own before this catch ran, so one failure cost three HTTP calls
-            // and the final result was an empty set indistinguishable from "no
-            // match". Keep degradation here, once, and let it stay observable.
+            // General hybrid failures degrade here once. Qdrant handles known
+            // missing sparse indexes internally with a cached dense-only path
+            // and warns there when planner filters are discarded.
             log.warn(`[HybridSearch] Native hybrid failed, falling back to client-side:`, error.message);
+            if (Object.keys(filters).length) warnUnsupportedFilters();
             // Fall through to client-side fusion
         }
     }

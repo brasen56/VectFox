@@ -36,6 +36,7 @@ import { isWebLlmSupported } from '../../../shared.js';
 import { getWebLlmProvider } from '../providers/webllm.js';
 import { getBackend, getBackendForCollection, invalidateBackendHealth, recordQuery, recordInsert, recordDelete, recordError } from '../backends/backend-manager.js';
 import { parseRegistryKey, resolveBackendForCollection } from './collection-ids.js';
+import { filtersReachBackend, warnUnsupportedFilters } from './search-filter-support.js';
 import {
     getProviderConfig,
     getModelField,
@@ -1069,6 +1070,14 @@ export async function deleteVectorItems(collectionId, hashes, settings) {
  * @param {object} settings VectFox settings object
  * @returns {Promise<{ hashes: number[], metadata: object[]}>} - Hashes and metadata of the results
  */
+export async function supportsCollectionFilters(collectionId, settings) {
+    const resolved = resolveBackendForCollection(collectionId);
+    const backend = resolved.backend
+        ? await getBackendForCollection(resolved.backend, settings)
+        : await getBackend(settings);
+    return filtersReachBackend(settings, backend?.supportsHybridSearch?.() === true);
+}
+
 export async function queryCollection(collectionId, searchText, topK, settings, filters = {}) {
     // Canonical routing (Doc/collection_helper.md): resolveBackendForCollection accepts either form
     //   (registry-key "backend:id" or bare ID) and returns the backend label
@@ -1080,6 +1089,11 @@ export async function queryCollection(collectionId, searchText, topK, settings, 
     const backend = resolved.backend
         ? await getBackendForCollection(resolved.backend, settings)
         : await getBackend(settings);
+
+    if (Object.keys(filters).length && !filtersReachBackend(settings, backend?.supportsHybridSearch?.() === true)) {
+        warnUnsupportedFilters();
+        filters = {};
+    }
 
     // Sources that require client-side embedding generation
     const clientSideEmbeddingSources = ['webllm', 'koboldcpp'];

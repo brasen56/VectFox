@@ -303,6 +303,7 @@ const defaultSettings = {
     eventbase_min_importance_store: 3,            // Drop events below this importance before storing
     eventbase_max_events_per_window: 3,           // Hard cap on events returned per LLM call
     eventbase_retrieval_top_k: 10,                // Events to retrieve per generation
+    eventbase_retrieval_overfetch: 40,            // Candidate count per collection/query before rerank
     eventbase_retrieval_min_importance: 1,        // Minimum importance for retrieval
     eventbase_injection_format: 'densetext',      // Injection format: 'densetext' or 'jsonarray'
     eventbase_retrieval_filters_enabled: true,
@@ -421,6 +422,7 @@ const defaultSettings = {
     // falls back to pre-search. Was a hardcoded 2000. UI: AgentMode tab.
     agentic_retrieval_max_tokens: AGENTIC_MAX_TOKENS_DEFAULT,
     agentic_filters_enabled: true,                     // Apply planner-emitted *_any / importance_gte filters (Phase 1.5)
+    agentic_importance_hard_filter: false,              // Opt in to legacy planner importance cutoff
 
     // ─── Auto-Reformat (Document/URL/Wiki) ──────────────────────────────
     // Optional, per-session LLM pass offered in Vectorize Content for

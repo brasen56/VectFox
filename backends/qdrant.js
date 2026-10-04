@@ -36,6 +36,7 @@ import { VECTOR_LIST_LIMIT } from '../core/constants.js';
 import { getQdrantApiKey } from '../core/api-keys.js';
 import { log } from '../core/log.js';
 import { warnIfEmbeddingSlow } from '../core/embedding-latency-warning.js';
+import { warnUnsupportedFilters } from '../core/search-filter-support.js';
 
 const BACKEND_TYPE = 'qdrant';
 
@@ -908,6 +909,7 @@ export class QdrantBackend extends VectorBackend {
         // native sparse this session (dense-only / broken sparse index). Avoids
         // re-triggering the server-side panic on every query — go straight to dense.
         if (_noSparseHybridCollections.has(actualCollectionId)) {
+            if (Object.keys(filters).length) warnUnsupportedFilters();
             return this.queryCollection(collectionId, searchText, topK, settings);
         }
 
@@ -1025,8 +1027,8 @@ export class QdrantBackend extends VectorBackend {
 
         const tNetStart = performance.now();
 
-        // Single fallback owner: this method no longer degrades to vector-only on
-        // its own. core/hybrid-search.js::hybridSearch catches whatever we throw and
+        // Except for known missing sparse indexes (handled and warned below),
+        // core/hybrid-search.js::hybridSearch catches whatever we throw and
         // runs the client-side fusion path, which issues ONE vector query and adds
         // BM25 re-ranking on top — strictly better than the raw vector-only retry
         // this used to do, and one HTTP round-trip cheaper. Two independent fallback
@@ -1094,6 +1096,7 @@ export class QdrantBackend extends VectorBackend {
         if (_looksLikeSparseUnsupported(errorBody)) {
             _noSparseHybridCollections.add(actualCollectionId);
             log.warn(`[Qdrant] Collection "${actualCollectionId}" has no usable sparse-vector index (server said: ${errorBody.slice(0, 200)}). Using dense-only search for it this session. Re-create/re-import the collection with native sparse to restore hybrid + keyword scoring.`);
+            if (Object.keys(filters).length) warnUnsupportedFilters();
             return this.queryCollection(collectionId, searchText, topK, settings);
         }
         log.warn(`[Qdrant timing] hybridQuery FAILED after ${failMs}ms (HTTP ${response.status}). ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 500)}`);
@@ -1131,6 +1134,7 @@ export class QdrantBackend extends VectorBackend {
         // Skip both the rerank and hybrid attempts for collections already known
         // to lack a usable sparse index this session — go straight to dense.
         if (_noSparseHybridCollections.has(actualCollectionId)) {
+            if (Object.keys(filters).length) warnUnsupportedFilters();
             return this.queryCollection(collectionId, searchText, topK, settings);
         }
 
@@ -1167,6 +1171,7 @@ export class QdrantBackend extends VectorBackend {
             sparseQueryVector = encodeSparseQuery(searchText);
         } catch (error) {
             log.warn('[Qdrant] sparse query setup failed (rerank path):', error?.message);
+            if (Object.keys(filters).length) warnUnsupportedFilters();
             return this.queryCollection(collectionId, searchText, topK, settings);
         }
 
@@ -1240,6 +1245,7 @@ export class QdrantBackend extends VectorBackend {
             if (_looksLikeSparseUnsupported(errorBody)) {
                 _noSparseHybridCollections.add(actualCollectionId);
                 log.warn(`[Qdrant] Collection "${actualCollectionId}" has no usable sparse-vector index (server said: ${errorBody.slice(0, 200)}). Using dense-only search for it this session. Re-create/re-import the collection with native sparse to restore hybrid + keyword scoring.`);
+                if (Object.keys(filters).length) warnUnsupportedFilters();
                 return this.queryCollection(collectionId, searchText, topK, settings);
             }
             log.warn(`[Qdrant timing] hybrid+rerank FAILED after ${failMs}ms (HTTP ${response.status}), falling back to hybridQuery. ${_embedTimeoutHint(settings)} Server said: ${errorBody.slice(0, 500)}`);

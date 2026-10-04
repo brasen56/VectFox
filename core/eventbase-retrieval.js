@@ -21,6 +21,7 @@ import { checkPluginAvailable } from './collection-loader.js';
 import { buildStoryRecencyCtx, storyRecencyBonus } from './story-time.js';
 import { log } from './log.js';
 import { createCandidateOutcomes, recordCandidateOutcome } from './eventbase-retrieval-debug.js';
+import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
 
 // ---------------------------------------------------------------------------
 // Default re-rank weights (tuned for long-form SillyTavern RP)
@@ -350,7 +351,8 @@ function _logRerankComparison(colId, queryText, native, js, nativeMs, jsMs, sett
  * @param {string[]} [params.recentMessageTexts] - Newest-first raw texts of the last few chat
  *        messages. Story-time recency (eventbase_recency_source = 'story_time') parses the
  *        first in-story timestamp found in them to anchor "now"; unused in index mode.
- * @returns {Promise<{ events: object[], debug: object }>}
+ * @returns {Promise<{ events: object[], candidates: object[], debug: object }>}
+ *        candidates is the post-dedup, pre-trim pool for the agent merge.
  */
 /**
  * Stamp each event with its source conversation frame (collection id) so the
@@ -368,7 +370,7 @@ function _tagFrame(events, frame) {
 }
 
 export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false, recentMessageTexts }) {
-    const topK = (settings.eventbase_retrieval_top_k || 8) * 2; // overfetch for re-rank
+    const topK = resolveEventBaseOverfetch(settings);
     const minImportance = settings.eventbase_retrieval_min_importance || 1;
 
     // EventBase always uses its own keyword scoring key so that ChunkBase's
@@ -754,6 +756,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
 
     return {
         events: finalEvents,
+        candidates: contextDedupedEvents,
         debug: {
             candidateOutcomes,
             dualQuery,

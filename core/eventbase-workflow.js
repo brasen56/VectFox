@@ -23,6 +23,7 @@ import { generationRateLimiter, generationRateLimitSettings } from './generation
 import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtractionCachesForChat, buildEventBaseCollectionId, isLastWindowExtracted, setVectorizationTip, getVectorizationTip, ensureVectorizationTip, shouldUseTipFallback, resolveActiveEventBaseCollection, repairAutoSyncCoordinatesAfterShrink } from './eventbase-store.js';
 import { getSavedHashes } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
+import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
 import { formatEventsForInjectionDetailed, formatCastHistoryDetailed } from './eventbase-injection.js';
 import { eventDebugKey } from './eventbase-retrieval-debug.js';
@@ -1168,7 +1169,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     // --- Query archive event collections in parallel ---
     // Archive events are stored with the same schema as live EventBase events so we
     // query them via queryCollection directly and attach _hash (same as queryEvents does).
-    const topK = (settings.eventbase_retrieval_top_k || 8) * 2;
+    const topK = resolveEventBaseOverfetch(settings);
     const ebSettings = { ...settings, keyword_scoring_method: settings.eventbase_keyword_scoring_method || 'bm25' };
     const archiveEventPromises = archiveCollections.map(async ({ registryKey: archKey, collectionId: archColId }) => {
         try {

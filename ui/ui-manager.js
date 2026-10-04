@@ -1208,6 +1208,12 @@ export function renderSettings(containerId, settings, callbacks) {
                             </div>
 
                             <div class="vectfox-form-group">
+                                <label class="vectfox-label">Retrieval Candidate Pool <span id="VectFox_eventbase_retrieval_overfetch_val">40</span></label>
+                                <input type="range" id="VectFox_eventbase_retrieval_overfetch" min="1" max="200" step="1" class="vectfox-slider" />
+                                <small class="VectFox_hint">Candidates per collection/query before reranking. Default 40; never smaller than Top-K. Applies to live, archive, and AgentMode searches.</small>
+                            </div>
+
+                            <div class="vectfox-form-group">
                                 <label class="vectfox-label">Min Importance for Retrieval <span id="VectFox_eventbase_retrieval_min_importance_val">1</span></label>
                                 <input type="range" id="VectFox_eventbase_retrieval_min_importance" min="1" max="10" step="1" class="vectfox-slider" />
                             </div>
@@ -1395,6 +1401,14 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <small class="VectFox_hint">Hard timeout for each parallel fanout query. Default <b>${AGENTIC_QUERY_TIMEOUT_DEFAULT_MS} ms (${AGENTIC_QUERY_TIMEOUT_DEFAULT_MS / 1000}s)</b>. Queries run in parallel, so the turn waits on the slowest one — this drops a straggling query (e.g. an embedding-provider latency spike) so a single slow call can't stall retrieval. The remaining queries still count. Like the planner timeout above, this is <b>added to</b> "Retrieval Timeout" on the Core tab rather than capped by it.</small>
                             </div>
 
+                            <div class="vectfox-form-group">
+                                <label class="checkbox_label" for="VectFox_agentic_importance_hard_filter">
+                                    <input id="VectFox_agentic_importance_hard_filter" type="checkbox" />
+                                    <span><b>Apply planner importance cutoff (legacy)</b></span>
+                                </label>
+                                <small class="VectFox_hint">Off by default: importance affects reranking instead of excluding routine events. Enable to restore the planner's hard importance_gte filter. The EventBase minimum importance setting still applies.</small>
+                            </div>
+
                             <!-- Apply planner filters (Phase 1.5) -->
                             <div class="vectfox-form-group">
                                 <label class="checkbox_label" for="VectFox_agentic_filters_enabled">
@@ -1402,7 +1416,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <span><b>Apply planner filters</b></span>
                                 </label>
                                 <small class="VectFox_hint" style="display:block; margin-top:6px;">
-                                    When on, the planner's character / location / concept / importance filters narrow each Qdrant query. Turn off to run all queries without filters (useful for A/B comparison). Has no effect on the pre-search. Qdrant only.
+                                    When on, the planner's entity filters narrow each native-hybrid Qdrant query. Lead character groups are removed and NPC aliases expanded. Unsupported paths run unfiltered with a warning. Has no effect on the pre-search.
                                 </small>
                             </div>
 
@@ -3182,6 +3196,14 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
+    $('#VectFox_agentic_importance_hard_filter')
+        .prop('checked', settings.agentic_importance_hard_filter === true)
+        .on('change', function() {
+            settings.agentic_importance_hard_filter = $(this).prop('checked');
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+
     // ─── Auto-Reformat (Document/URL/Wiki LLM restructuring) ───────────────
     // Mirrors the AgentMode inherit-from-summarizer pattern above. No dedicated
     // API-key fields — reuses the same shared OpenRouter/vLLM key slots.
@@ -4683,6 +4705,8 @@ function bindSettingsEvents(settings, callbacks) {
     _bindEventBaseRange('min_importance_store', 'eventbase_min_importance_store', 'min_importance_store');
     _bindEventBaseRange('max_events_per_window', 'eventbase_max_events_per_window', 'max_events_per_window');
     _bindEventBaseRange('retrieval_top_k', 'eventbase_retrieval_top_k', 'retrieval_top_k');
+    settings.eventbase_retrieval_overfetch ??= 40;
+    _bindEventBaseRange('retrieval_overfetch', 'eventbase_retrieval_overfetch', 'retrieval_overfetch');
     _bindEventBaseRange('retrieval_min_importance', 'eventbase_retrieval_min_importance', 'retrieval_min_importance');
 
     $('#VectFox_eventbase_injection_format')

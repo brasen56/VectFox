@@ -1,6 +1,6 @@
 # EventBase recall plan
 
-Status: Phases 0a, 0b, 1, and 2 implemented; Phases 3 and 4 remain proposals. Revision 2, 2026-10-02 (incorporates co-author review; changes listed at the end).
+Status: Phases 0a, 0b, 1, 2, and 3A implemented; Phases 3B and 4 remain proposals. Revision 2, 2026-10-02 (incorporates co-author review; changes listed at the end).
 
 ## Problem
 
@@ -145,6 +145,14 @@ In rough order of effort:
 3. **Soft importance floor.** Stop sending `importance_gte` as a hard filter; importance already lowers the score in the re-rank. Keep a setting to restore the old behavior.
 4. **Overfetch setting.** Replace the three `top_k * 2` sites with one helper and a setting (proposed `eventbase_retrieval_overfetch`, default 40).
 5. **Full pool into the merge.** `retrieveEvents` also returns its post-dedup, pre-trim candidates; stage 5 merges those. The planner still sees only the top slice.
+
+**Phase 3A implementation notes (2026-10-03):**
+- A shared native-hybrid capability check guards both planner fanout and `queryCollection`, resolving each collection's actual backend. BM25 and client-side hybrid paths receive no planner filters and show one session warning. Native-hybrid failure followed by unfiltered client fallback also warns.
+- Character filters use the current locked live-collection roster: lead alias groups are removed, NPC names expand to all stored aliases, and unknown names are retained. Pending indexes use the currently available groups without adding a per-turn database fetch.
+- `agentic_importance_hard_filter` defaults to false and is editable in AgentMode. Enabling it restores the planner's hard `importance_gte` cutoff. The independent EventBase minimum-importance setting is unchanged.
+- `eventbase_retrieval_overfetch` defaults to 40 candidates per collection/query, is editable in EventBase (1–200), and never reduces the pool below final Top-K. One resolver serves live, archive, and planner queries; lower-level search expansion is unchanged.
+- `retrieveEvents` returns `candidates` after importance filtering, pairwise dedup, and context dedup, before final trim. Agent stage 5 merges this whole pool with planner hits without reintroducing rejected archive candidates. The planner prompt still sees only the top event slice.
+- Unit regressions cover filter hygiene, soft/legacy importance, unsupported routing, once-only notification, overfetch validation, and pre-trim pool preservation. Live plugin name matching remains a manual verification step.
 
 ## Phase 3B:
 6. **Per-query coverage.** Tag agentic hits with their query index. At the trim, take the best surviving hit from each planner query first, then fill by score.

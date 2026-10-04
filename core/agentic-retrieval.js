@@ -21,7 +21,10 @@
 
 import { getContext } from '../../../../extensions.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
-import { queryCollection } from './core-vector-api.js';
+import { queryCollection, supportsCollectionFilters } from './core-vector-api.js';
+import { getCharacterRoster, normalizeCharacterName } from './character-roster.js';
+import { warnUnsupportedFilters } from './search-filter-support.js';
+import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
 import { buildPlannerUserMessage, getAgenticPlannerPrompt } from './prompts-i18n.js';
 import { stripReasoningBlocks, stripGameSystemBlocks } from './text-cleaning.js';
 import { getOpenRouterApiKey, getCustomApiKey } from './api-keys.js';
@@ -46,7 +49,7 @@ import { summarizePlannerQueries } from './eventbase-retrieval-debug.js';
  *
  * @param {object} params - Same shape as retrieveEvents params; this function
  *        runs the pre-search itself before the planner sees the candidates.
- * @returns {Promise<{events: object[], debug: object}>}
+ * @returns {Promise<{events: object[], candidates: object[], debug: object}>}
  */
 export async function retrieveEventsWithAgent(params) {
     const { settings } = params;
@@ -200,14 +203,16 @@ export async function retrieveEventsWithAgent(params) {
         ...settings,
         keyword_scoring_method: settings.eventbase_keyword_scoring_method || 'bm25',
     };
-    const topK = (settings.eventbase_retrieval_top_k || 8) * 2;
+    const topK = resolveEventBaseOverfetch(settings);
 
-    const plannerFilters = _validatePlannerFilters(plan?.filters, settings);
+    const roster = getCharacterRoster(liveCollectionIds, settings);
+    const plannerFilters = _validatePlannerFilters(plan?.filters, settings, roster);
+    const hasPlannerFilters = Object.keys(plannerFilters).length > 0;
     if (agenticDebug) {
         if (Object.keys(plannerFilters).length === 0) {
             log.domain('agent', 'verbose', '[VectFox-Agentic] Planner filters: (none — running unfiltered)');
         } else {
-            log.domain('agent', 'verbose', `[VectFox-Agentic] Planner filters applied: ${JSON.stringify(plannerFilters)}`);
+            log.domain('agent', 'verbose', `[VectFox-Agentic] Planner filters requested: ${JSON.stringify(plannerFilters)}`);
         }
     }
 
@@ -221,9 +226,34 @@ export async function retrieveEventsWithAgent(params) {
     const tFanoutStart = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const fanoutPromises = [];
     for (const colId of liveCollectionIds) {
+        // Share one capability lookup per collection, but never gate other
+        // collections on it. Each task's deadline includes this lookup.
+        let capabilityResolved = !hasPlannerFilters;
+        const filterSupport = (async () => {
+            if (!hasPlannerFilters) return true;
+            try {
+                const supported = await supportsCollectionFilters(colId, ebSettings);
+                if (!supported) warnUnsupportedFilters();
+                return supported;
+            } catch (err) {
+                log.warn(`[VectFox-Agentic] Could not check filter support (${colId}): ${err?.message || err}`);
+                warnUnsupportedFilters();
+                return false;
+            } finally {
+                capabilityResolved = true;
+            }
+        })();
         for (const queryText of validatedQueries) {
+            let expired = false;
+            const queryTask = (async () => {
+                const supported = await filterSupport;
+                // A timeout cannot cancel the lookup. Do not dispatch a late
+                // query if it eventually resolves after this task was dropped.
+                if (expired) return { hashes: [], metadata: [] };
+                return queryCollection(colId, queryText, topK, ebSettings, supported ? plannerFilters : {});
+            })();
             fanoutPromises.push(
-                _raceWithTimeout(queryCollection(colId, queryText, topK, ebSettings, plannerFilters), queryTimeoutMs)
+                _raceWithTimeout(queryTask, queryTimeoutMs)
                     .then(({ hashes, metadata }) => {
                         if (!hashes?.length) return { queryText, hits: [] };
                         // _sortFrame tags these live-collection hits with their source
@@ -234,6 +264,8 @@ export async function retrieveEventsWithAgent(params) {
                     })
                     .catch(err => {
                         if (err?.__timeout) {
+                            expired = true;
+                            if (!capabilityResolved) warnUnsupportedFilters();
                             log.warn(`[VectFox-Agentic] Query timed out after ${queryTimeoutMs}ms (${colId}, "${queryText}") — dropped; other queries still count. Raise "Per-query Timeout" in the AgentMode tab if needed.`);
                         } else {
                             log.warn(`[VectFox-Agentic] Query failed (${colId}, "${queryText}"): ${err?.message || err}`);
@@ -262,12 +294,11 @@ export async function retrieveEventsWithAgent(params) {
     }
 
     // STAGE 5 — re-feed merged candidates through retrieveEvents for canonical rerank.
-    // Pre-search events are passed as their original meta shape; retrieveEvents will
-    // re-score using its 4-weight formula. We also pass through the original
-    // additionalCandidates so archive events still factor in.
+    // Keep the post-dedup, pre-trim pool, including surviving archive events.
+    // Do not reintroduce archive candidates already rejected by the pre-search.
+    // Fall back to the old result shape for callers supplying legacy results.
     const mergedAdditional = [
-        ...(additionalCandidates || []),
-        ...(preSearch.events || []),
+        ...(preSearch.candidates ?? [...(additionalCandidates || []), ...(preSearch.events || [])]),
         ...agenticHits,
     ];
 
@@ -280,13 +311,14 @@ export async function retrieveEventsWithAgent(params) {
 
     const tTotalMs = Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tAgentStart));
     if (agenticDebug) {
-        log.domain('agent', 'lifecycle', `[VectFox-Agentic] Final merged candidates: ${(preSearch.events || []).length} pre-search + ${agenticHits.length} agentic = ${mergedAdditional.length} total → ${final.events?.length || 0} after rerank/dedup/trim`);
+        log.domain('agent', 'lifecycle', `[VectFox-Agentic] Final merged candidates: ${(preSearch.candidates || preSearch.events || []).length} pre-search + ${agenticHits.length} agentic = ${mergedAdditional.length} total → ${final.events?.length || 0} after rerank/dedup/trim`);
         log.domain('agent', 'lifecycle', `[VectFox-Agentic] Total wall-clock for agent overhead: ${tTotalMs}ms (LLM=${tLlmMs}ms, fanout=${tFanoutMs}ms)`);
     }
 
     // Annotate debug so callers can detect agentic mode in diagnostics.
     return {
         events: final.events,
+        candidates: final.candidates,
         debug: {
             ...(final.debug || {}),
             // Keep pre-search cuts visible; the final pass is authoritative for
@@ -488,10 +520,12 @@ function _firstNWords(text, n) {
 
 /**
  * Sanitize planner-emitted filters. Drops unknown keys, trims arrays to a
- * reasonable max, clamps importance_gte to 1-10. Returns {} on empty / invalid
+ * reasonable max, strips lead groups and expands NPC aliases. importance_gte
+ * is omitted unless the legacy hard cutoff is enabled, then clamped to 1-10.
+ * Returns {} on empty / invalid
  * input so callers can check `Object.keys(out).length === 0`.
  */
-export function _validatePlannerFilters(raw, settings) {
+export function _validatePlannerFilters(raw, settings, roster = { groups: [] }) {
     if (!raw || typeof raw !== 'object') return {};
     if (settings?.agentic_filters_enabled === false) return {};
 
@@ -510,7 +544,18 @@ export function _validatePlannerFilters(raw, settings) {
             if (cleaned.length > 0) out[key] = cleaned;
         }
     }
-    if (typeof raw.importance_gte === 'number' && Number.isFinite(raw.importance_gte)) {
+    if (out.characters_any) {
+        const expanded = out.characters_any.flatMap(name => {
+            const key = normalizeCharacterName(name);
+            const groups = roster.groups.filter(group => [group.name, ...group.aliases]
+                .some(alias => normalizeCharacterName(alias) === key));
+            if (groups.some(group => group.isLead)) return [];
+            return groups.length ? groups.flatMap(group => group.aliases) : [name];
+        });
+        if (expanded.length) out.characters_any = [...new Set(expanded)];
+        else delete out.characters_any;
+    }
+    if (settings?.agentic_importance_hard_filter === true && typeof raw.importance_gte === 'number' && Number.isFinite(raw.importance_gte)) {
         out.importance_gte = Math.max(1, Math.min(10, Math.round(raw.importance_gte)));
     }
     return out;
