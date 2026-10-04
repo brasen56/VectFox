@@ -23,12 +23,15 @@ export function recordCandidateOutcome(outcomes, event, outcome) {
  */
 export function summarizePlannerQueries(queries, results, finalEvents) {
     const finalIds = new Set(finalEvents.map(eventDebugKey));
-    return queries.map(queryText => {
-        const calls = results.filter(result => result.queryText === queryText);
+    return queries.map((query, queryIndex) => {
+        const queryText = typeof query === 'string' ? query : query.query;
+        const calls = results.filter(result => result.queryIndex != null
+            ? result.queryIndex === queryIndex : result.queryText === queryText);
         const hits = calls.flatMap(result => result.hits);
         const eventIds = [...new Set(hits.map(eventDebugKey))];
         return {
             queryText,
+            ...(typeof query === 'object' ? { queryIndex, characters_any: query.characters_any } : {}),
             hitsReturned: hits.length,
             uniqueHits: eventIds.length,
             survivedCount: eventIds.filter(id => finalIds.has(id)).length,
@@ -50,7 +53,9 @@ export function formatRetrievalDiagnostics(debug = {}) {
     const cutText = cuts.map(([id, entry]) =>
         `${id} — ${entry.outcome.replace(/_/g, ' ')}\n  ${entry.summary}`).join('\n\n');
     const queryText = (debug.plannerQuerySummary || []).map(query =>
-        `${query.queryText}\n  ${query.hitsReturned} hit(s) returned (${query.uniqueHits} unique); ${query.survivedCount} injected in main lane`
+        `${query.queryText}`
+        + (query.queryIndex != null ? ` [Q${query.queryIndex + 1}; characters: ${(query.characters_any || []).join(', ') || 'unscoped'}]` : '')
+        + `\n  ${query.hitsReturned} hit(s) returned (${query.uniqueHits} unique); ${query.survivedCount} injected in main lane`
         + (query.failedCalls ? `; ${query.failedCalls} failed call(s)` : '')
         + (query.timedOutCalls ? `; ${query.timedOutCalls} timed-out call(s)` : '')).join('\n\n');
     let castText = debug.castIndexReady === false

@@ -67,7 +67,7 @@ Filterable event fields: event_type, importance (1–10), characters, locations,
 
 Output STRICT JSON with exactly three fields:
 
-  queries    1–6 short search strings (5–15 words). Prefer one query per distinct
+  queries    1–6 query objects with short search text (5–15 words). Prefer one per distinct
              backstory reference in the user message; add more only while each
              stays distinct on an axis below. LANGUAGE: match the recent
              chat — CHECK the chat's language before writing (English chat →
@@ -86,8 +86,16 @@ Output STRICT JSON with exactly three fields:
              Genre note: in slice-of-life / dating / workplace stories, prefer pattern +
              key-moment pairs over causal chains. Causal chains fit RPG/mystery/thriller.
 
-  filters    Optional:
-               characters_any, locations_any, factions_any, items_any, concepts_any,
+  Each queries entry is an object:
+               { "query": "search text", "characters_any": ["actual participant"] }
+             Keep the same query-writing rules above for the query text.
+             characters_any belongs to THAT query only, not the whole plan.
+             Use only its actual participants; use [] for a broad/unscoped query.
+             Never add the leads or addressee to unrelated queries.
+             Legacy string entries are accepted, but emit objects in new plans.
+
+  filters    Optional shared non-character filters:
+               locations_any, factions_any, items_any, concepts_any,
                event_type_any  — arrays of strings
                importance_gte  — number 1–10
 
@@ -103,8 +111,10 @@ concepts_any = THEME words in the story language.
 characters_any / locations_any / items_any / factions_any = proper nouns in whatever
 form they appear in the chat (keep original script/spelling).
 
-importance_gte: set 6–7 to skip filler events for "remember when…" questions.
-Over-filtering on characters_any is fine; avoid over-constraining locations/factions.
+importance_gte: normally omit it; importance is a soft ranking signal. A hard
+cutoff applies only when the user enables the legacy importance-filter setting.
+Character lists match ANY listed name, not all names. Scope each query narrowly;
+avoid over-constraining shared locations/factions.
 
 ══ QUESTION TYPE GUIDE ═══════════════════════════════════════════════
 
@@ -135,9 +145,9 @@ Example 1 — Causal "why" chain (plot-driven, RPG/mystery/thriller):
 User: "Do you remember why we had to pay the ransom?"
 {
   "queries": [
-    "kidnapping ransom payment negotiation",
-    "hostage capture arrest imprisonment",
-    "rescue aftermath emotional reaction"
+    { "query": "kidnapping ransom payment negotiation", "characters_any": [] },
+    { "query": "hostage capture arrest imprisonment", "characters_any": [] },
+    { "query": "rescue aftermath emotional reaction", "characters_any": [] }
   ],
   "filters": {
     "concepts_any": ["ransom", "kidnapping", "rescue"]
@@ -149,14 +159,11 @@ Example 2 — Slice-of-life / character state pattern (mixed-axis decomposition)
 User: "How has Yuki been adjusting to the dorm?"
 {
   "queries": [
-    "Yuki dorm move-in first impression",
-    "Yuki mealtime conversations roommates",
-    "Yuki study routine late night habits",
-    "Yuki mood shifts recent weeks"
+    { "query": "Yuki dorm move-in first impression", "characters_any": ["Yuki"] },
+    { "query": "Yuki mealtime conversations roommates", "characters_any": ["Yuki"] },
+    { "query": "Yuki study routine late night habits", "characters_any": ["Yuki"] },
+    { "query": "Yuki mood shifts recent weeks", "characters_any": ["Yuki"] }
   ],
-  "filters": {
-    "characters_any": ["Yuki"]
-  },
   "rationale": "Mixed axes — arrival event (TIME), social pattern (FACET), daily habit (GRANULARITY), emotional trajectory (FACET)."
 }
 
@@ -165,12 +172,11 @@ User: To Kai — "Your father is finally cleared, your sister never got on with 
 (relative to Kai: your father = Marcus, your sister = Lena)
 {
   "queries": [
-    "Marcus cleared of the charge — how",
-    "Lena and Marcus long-standing rift",
-    "Kai and Lena reunion"
+    { "query": "Marcus cleared of the charge — how", "characters_any": ["Marcus"] },
+    { "query": "Lena and Marcus long-standing rift", "characters_any": ["Lena", "Marcus"] },
+    { "query": "Kai and Lena reunion", "characters_any": ["Kai", "Lena"] }
   ],
   "filters": {
-    "characters_any": ["Marcus", "Lena", "Kai"],
     "concepts_any": ["exoneration", "father-daughter rift", "reunion"]
   },
   "rationale": "Resolve participants: 'cleared' is about Marcus; 'rift' is Lena↔Marcus (Kai not a party); only 'reunion' is Kai↔Lena. Don't pin every query on Kai."
@@ -194,13 +200,12 @@ Example 1 — 因果「為何」鏈 (劇情驅動 / RPG / 推理 / 懸疑)：
 User: 我對 Mayla 説 "你記得我當時為甚麼為你贖身嗎?"
 {
   "queries": [
-    "Mayla 贖身 2萬金幣付款",
-    "Mayla 綁架 被擄走 監禁",
-    "贖金談判 老闆 中介",
-    "Mayla 獲救 後續 情感反應"
+    { "query": "Mayla 贖身 2萬金幣付款", "characters_any": ["Mayla"] },
+    { "query": "Mayla 綁架 被擄走 監禁", "characters_any": ["Mayla"] },
+    { "query": "贖金談判 老闆 中介", "characters_any": [] },
+    { "query": "Mayla 獲救 後續 情感反應", "characters_any": ["Mayla"] }
   ],
   "filters": {
-    "characters_any": ["Mayla"],
     "concepts_any": ["贖身", "綁架", "獲救"]
   },
   "rationale": "因果鏈，TIME 軸分段：綁架→談判→付款→救出反應。"
@@ -210,14 +215,11 @@ Example 2 — 日常狀態 / 角色適應 (混合軸分解)：
 User: "Fern 最近過得怎麼樣？"
 {
   "queries": [
-    "Fern 加入眷屬 初次反應",
-    "Fern 與其他眷屬 日常互動",
-    "Fern 訓練 學習 進步",
-    "Fern 情緒變化 最近幾日"
+    { "query": "Fern 加入眷屬 初次反應", "characters_any": ["Fern"] },
+    { "query": "Fern 與其他眷屬 日常互動", "characters_any": ["Fern"] },
+    { "query": "Fern 訓練 學習 進步", "characters_any": ["Fern"] },
+    { "query": "Fern 情緒變化 最近幾日", "characters_any": ["Fern"] }
   ],
-  "filters": {
-    "characters_any": ["Fern"]
-  },
   "rationale": "混合軸：加入事件 (TIME)、社交模式 (FACET)、能力成長 (GRANULARITY)、情感軌跡 (FACET)。"
 }
 
@@ -226,12 +228,11 @@ User: 我對 阿傑 説 "你爸終於洗脱罪名了, 你姊雖然跟你爸一�
 （對 阿傑 而言：你爸 = 周漢、你姊 = 周敏）
 {
   "queries": [
-    "周漢 洗脱罪名 經過 原因",
-    "周敏 與 周漢 心結 不和",
-    "阿傑 與 周敏 重逢 經過"
+    { "query": "周漢 洗脱罪名 經過 原因", "characters_any": ["周漢"] },
+    { "query": "周敏 與 周漢 心結 不和", "characters_any": ["周敏", "周漢"] },
+    { "query": "阿傑 與 周敏 重逢 經過", "characters_any": ["阿傑", "周敏"] }
   ],
   "filters": {
-    "characters_any": ["周漢", "周敏", "阿傑"],
     "concepts_any": ["洗脱罪名", "父女心結", "重逢"]
   },
   "rationale": "解析參與者：「洗脱罪名」主角是周漢、「心結」是周敏↔周漢(父女，阿傑非當事人)、「重逢」才是阿傑↔周敏。不把每條都掛在阿傑身上。"
@@ -256,13 +257,12 @@ Example 1 — 因果"为何"链 (剧情驱动 / RPG / 推理 / 悬疑)：
 User: 我对 Mayla 说 "你还记得我当时为什么为你赎身吗?"
 {
   "queries": [
-    "Mayla 赎身 2万金币付款",
-    "Mayla 绑架 被掳走 监禁",
-    "赎金谈判 老板 中介",
-    "Mayla 获救 后续 情感反应"
+    { "query": "Mayla 赎身 2万金币付款", "characters_any": ["Mayla"] },
+    { "query": "Mayla 绑架 被掳走 监禁", "characters_any": ["Mayla"] },
+    { "query": "赎金谈判 老板 中介", "characters_any": [] },
+    { "query": "Mayla 获救 后续 情感反应", "characters_any": ["Mayla"] }
   ],
   "filters": {
-    "characters_any": ["Mayla"],
     "concepts_any": ["赎身", "绑架", "获救"]
   },
   "rationale": "因果链，TIME 轴分段：绑架→谈判→付款→救出反应。"
@@ -272,14 +272,11 @@ Example 2 — 日常状态 / 角色适应 (混合轴分解)：
 User: "Fern 最近过得怎么样？"
 {
   "queries": [
-    "Fern 加入眷属 初次反应",
-    "Fern 与其他眷属 日常互动",
-    "Fern 训练 学习 进步",
-    "Fern 情绪变化 最近几日"
+    { "query": "Fern 加入眷属 初次反应", "characters_any": ["Fern"] },
+    { "query": "Fern 与其他眷属 日常互动", "characters_any": ["Fern"] },
+    { "query": "Fern 训练 学习 进步", "characters_any": ["Fern"] },
+    { "query": "Fern 情绪变化 最近几日", "characters_any": ["Fern"] }
   ],
-  "filters": {
-    "characters_any": ["Fern"]
-  },
   "rationale": "混合轴：加入事件 (TIME)、社交模式 (FACET)、能力成长 (GRANULARITY)、情感轨迹 (FACET)。"
 }
 
@@ -288,12 +285,11 @@ User: 我对 阿杰 说 "你爸终于洗脱罪名了, 你姐虽然跟你爸一�
 （对 阿杰 而言：你爸 = 周汉、你姐 = 周敏）
 {
   "queries": [
-    "周汉 洗脱罪名 经过 原因",
-    "周敏 与 周汉 心结 不和",
-    "阿杰 与 周敏 重逢 经过"
+    { "query": "周汉 洗脱罪名 经过 原因", "characters_any": ["周汉"] },
+    { "query": "周敏 与 周汉 心结 不和", "characters_any": ["周敏", "周汉"] },
+    { "query": "阿杰 与 周敏 重逢 经过", "characters_any": ["阿杰", "周敏"] }
   ],
   "filters": {
-    "characters_any": ["周汉", "周敏", "阿杰"],
     "concepts_any": ["洗脱罪名", "父女心结", "重逢"]
   },
   "rationale": "解析参与者：「洗脱罪名」主角是周汉、「心结」是周敏↔周汉(父女，阿杰非当事人)、「重逢」才是阿杰↔周敏。不把每条都挂在阿杰身上。"
@@ -318,9 +314,9 @@ Example 1 — 因果「なぜ」チェーン (プロット駆動 / RPG / ミス�
 User: "なぜあのとき身代金を払わなければならなかったの覚えてる？"
 {
   "queries": [
-    "身代金 誘拐 拘束 監禁",
-    "交渉 支払い 解放 救出",
-    "救出 後の感情 反応 関係"
+    { "query": "身代金 誘拐 拘束 監禁", "characters_any": [] },
+    { "query": "交渉 支払い 解放 救出", "characters_any": [] },
+    { "query": "救出 後の感情 反応 関係", "characters_any": [] }
   ],
   "filters": {
     "concepts_any": ["身代金", "誘拐", "救出"]
@@ -332,14 +328,11 @@ Example 2 — 日常的状況・キャラクターの適応 (混合軸の分解)
 User: "ユキは寮の生活にどう馴染んでる？"
 {
   "queries": [
-    "ユキ 寮 引っ越し 最初の印象",
-    "ユキ ルームメイト 食事 会話",
-    "ユキ 勉強 夜 習慣",
-    "ユキ 気分 変化 最近"
+    { "query": "ユキ 寮 引っ越し 最初の印象", "characters_any": ["ユキ"] },
+    { "query": "ユキ ルームメイト 食事 会話", "characters_any": ["ユキ"] },
+    { "query": "ユキ 勉強 夜 習慣", "characters_any": ["ユキ"] },
+    { "query": "ユキ 気分 変化 最近", "characters_any": ["ユキ"] }
   ],
-  "filters": {
-    "characters_any": ["ユキ"]
-  },
   "rationale": "混合軸：到着 (TIME)、社交パターン (FACET)、日常習慣 (GRANULARITY)、感情の推移 (FACET)。"
 }
 
@@ -348,12 +341,11 @@ User: ケンに — 「君の父さんはやっと無実が証明された、君
 （ケンから見て：君の父さん = タカシ、君の姉さん = ミナ）
 {
   "queries": [
-    "タカシ 無実 証明 経緯",
-    "ミナ と タカシ 不和 確執",
-    "ケン と ミナ 再会"
+    { "query": "タカシ 無実 証明 経緯", "characters_any": ["タカシ"] },
+    { "query": "ミナ と タカシ 不和 確執", "characters_any": ["ミナ", "タカシ"] },
+    { "query": "ケン と ミナ 再会", "characters_any": ["ケン", "ミナ"] }
   ],
   "filters": {
-    "characters_any": ["タカシ", "ミナ", "ケン"],
     "concepts_any": ["無実証明", "父娘の確執", "再会"]
   },
   "rationale": "当事者を特定：「無実」はタカシ、「確執」はミナ↔タカシ(ケンは当事者でない)、「再会」だけがケン↔ミナ。すべてをケンに結びつけない。"
@@ -377,9 +369,9 @@ Example 1 — 인과 「왜」 체인 (플롯 중심 / RPG / 미스터리 / 스�
 User: "우리가 왜 몸값을 내야 했는지 기억해?"
 {
   "queries": [
-    "납치 몸값 협상 지불",
-    "인질 체포 감금 구금",
-    "구출 이후 감정 반응"
+    { "query": "납치 몸값 협상 지불", "characters_any": [] },
+    { "query": "인질 체포 감금 구금", "characters_any": [] },
+    { "query": "구출 이후 감정 반응", "characters_any": [] }
   ],
   "filters": {
     "concepts_any": ["몸값", "납치", "구출"]
@@ -391,14 +383,11 @@ Example 2 — 일상생활 / 캐릭터 적응 (혼합 축 분해):
 User: "유키는 기숙사 생활에 어떻게 적응하고 있어?"
 {
   "queries": [
-    "유키 기숙사 입주 첫 인상",
-    "유키 룸메이트 식사 대화",
-    "유키 공부 밤 습관",
-    "유키 기분 변화 최근"
+    { "query": "유키 기숙사 입주 첫 인상", "characters_any": ["유키"] },
+    { "query": "유키 룸메이트 식사 대화", "characters_any": ["유키"] },
+    { "query": "유키 공부 밤 습관", "characters_any": ["유키"] },
+    { "query": "유키 기분 변화 최근", "characters_any": ["유키"] }
   ],
-  "filters": {
-    "characters_any": ["유키"]
-  },
   "rationale": "혼합 축: 도착 사건 (TIME), 사회적 패턴 (FACET), 일상 습관 (GRANULARITY), 감정 변화 (FACET)."
 }
 
@@ -407,12 +396,11 @@ User: 준호에게 — "네 아버지는 마침내 누명을 벗었어, 네 누�
 (준호 기준: 네 아버지 = 영석, 네 누나 = 미나)
 {
   "queries": [
-    "영석 누명 벗음 경위",
-    "미나 와 영석 오랜 불화",
-    "준호 와 미나 재회"
+    { "query": "영석 누명 벗음 경위", "characters_any": ["영석"] },
+    { "query": "미나 와 영석 오랜 불화", "characters_any": ["미나", "영석"] },
+    { "query": "준호 와 미나 재회", "characters_any": ["준호", "미나"] }
   ],
   "filters": {
-    "characters_any": ["영석", "미나", "준호"],
     "concepts_any": ["누명 벗음", "부녀 불화", "재회"]
   },
   "rationale": "당사자 식별: '누명'은 영석, '불화'는 미나↔영석(준호는 당사자 아님), '재회'만 준호↔미나. 모든 query를 준호에게 걸지 않는다."
@@ -437,9 +425,9 @@ Example 1 — Causal "why" chain (plot-driven, RPG/mystery/thriller):
 User: "Do you remember why we had to pay the ransom?"
 {
   "queries": [
-    "kidnapping ransom payment negotiation",
-    "hostage capture arrest imprisonment",
-    "rescue aftermath emotional reaction"
+    { "query": "kidnapping ransom payment negotiation", "characters_any": [] },
+    { "query": "hostage capture arrest imprisonment", "characters_any": [] },
+    { "query": "rescue aftermath emotional reaction", "characters_any": [] }
   ],
   "filters": {
     "concepts_any": ["ransom", "kidnapping", "rescue"]
@@ -451,14 +439,11 @@ Example 2 — Slice-of-life / character state pattern (mixed-axis decomposition)
 User: "How has Yuki been adjusting to the dorm?"
 {
   "queries": [
-    "Yuki dorm move-in first impression",
-    "Yuki mealtime conversations roommates",
-    "Yuki study routine late night habits",
-    "Yuki mood shifts recent weeks"
+    { "query": "Yuki dorm move-in first impression", "characters_any": ["Yuki"] },
+    { "query": "Yuki mealtime conversations roommates", "characters_any": ["Yuki"] },
+    { "query": "Yuki study routine late night habits", "characters_any": ["Yuki"] },
+    { "query": "Yuki mood shifts recent weeks", "characters_any": ["Yuki"] }
   ],
-  "filters": {
-    "characters_any": ["Yuki"]
-  },
   "rationale": "Mixed axes — arrival event (TIME), social pattern (FACET), daily habit (GRANULARITY), emotional trajectory (FACET)."
 }
 
@@ -467,12 +452,11 @@ User: To Kai — "Your father is finally cleared, your sister never got on with 
 (relative to Kai: your father = Marcus, your sister = Lena)
 {
   "queries": [
-    "Marcus cleared of the charge — how",
-    "Lena and Marcus long-standing rift",
-    "Kai and Lena reunion"
+    { "query": "Marcus cleared of the charge — how", "characters_any": ["Marcus"] },
+    { "query": "Lena and Marcus long-standing rift", "characters_any": ["Lena", "Marcus"] },
+    { "query": "Kai and Lena reunion", "characters_any": ["Kai", "Lena"] }
   ],
   "filters": {
-    "characters_any": ["Marcus", "Lena", "Kai"],
     "concepts_any": ["exoneration", "father-daughter rift", "reunion"]
   },
   "rationale": "Resolve participants: 'cleared' is about Marcus; 'rift' is Lena↔Marcus (Kai not a party); only 'reunion' is Kai↔Lena. Don't pin every query on Kai."

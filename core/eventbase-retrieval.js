@@ -249,9 +249,9 @@ function _dedupeByIdentity(events) {
     for (const event of events) {
         const key = event.event_id ?? event._hash ?? JSON.stringify(event);
         const existing = map.get(key);
-        if (!existing || (event.score ?? -Infinity) > (existing.score ?? -Infinity)) {
-            map.set(key, event);
-        }
+        const best = !existing || (event.score ?? -Infinity) > (existing.score ?? -Infinity) ? event : existing;
+        const queryIndices = [...new Set([...(existing?._plannerQueryIndices || []), ...(event._plannerQueryIndices || [])])];
+        map.set(key, queryIndices.length ? { ...best, _plannerQueryIndices: queryIndices } : best);
     }
     return [...map.values()];
 }
@@ -742,9 +742,25 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
 
     // 7. Trim to requested top-K
     const finalTopK = settings.eventbase_retrieval_top_k || 8;
-    const finalEvents = contextDedupedEvents.slice(0, finalTopK);
-    contextDedupedEvents.forEach((event, index) => {
-        recordCandidateOutcome(candidateOutcomes, event, index < finalTopK ? 'injected' : 'cut_at_trim');
+    // Reserve the best surviving hit for each planner query, then fill by score.
+    // Identity merging preserves all query memberships; a shared best hit uses
+    // only one slot. Query order breaks ties when Top-K cannot cover every query.
+    const queryIndices = [...new Set(contextDedupedEvents.flatMap(event => event._plannerQueryIndices || []))]
+        .sort((a, b) => a - b);
+    const selected = new Set();
+    for (const queryIndex of queryIndices) {
+        if (selected.size >= finalTopK) break;
+        const best = contextDedupedEvents.find(event => event._plannerQueryIndices?.includes(queryIndex));
+        if (best) selected.add(best);
+    }
+    for (const event of contextDedupedEvents) {
+        if (selected.size >= finalTopK) break;
+        selected.add(event);
+    }
+    // Keep the canonical score ordering; injection owns chronological ordering.
+    const finalEvents = contextDedupedEvents.filter(event => selected.has(event));
+    contextDedupedEvents.forEach(event => {
+        recordCandidateOutcome(candidateOutcomes, event, selected.has(event) ? 'injected' : 'cut_at_trim');
     });
 
     log.lifecycle(`[EventBase] Final events after dedup + trim: ${finalEvents.length}`);

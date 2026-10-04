@@ -5,6 +5,21 @@ import {
 } from '../core/eventbase-retrieval-debug.js';
 
 describe('EventBase recall diagnostics', () => {
+    it('distinguishes same-text queries by index and renders their individual scopes', () => {
+        const queries = [{ query: 'same text', characters_any: ['Brennan'] },
+            { query: 'same text', characters_any: ['Other'] }];
+        const shared = { event_id: 'shared' };
+        const summary = summarizePlannerQueries(queries, [
+            { queryIndex: 0, queryText: 'same text', hits: [shared] },
+            { queryIndex: 1, queryText: 'same text', hits: [], error: 'timeout' },
+        ], [shared]);
+        expect(summary.map(query => query.hitsReturned)).toEqual([1, 0]);
+        expect(summary[1]).toMatchObject({ timedOutCalls: 1, survivedCount: 0 });
+        const diagnostics = formatRetrievalDiagnostics({ plannerQuerySummary: summary });
+        expect(diagnostics.queryText).toContain('[Q1; characters: Brennan]');
+        expect(diagnostics.queryText).toContain('[Q2; characters: Other]');
+    });
+
     it('attributes shared survivors to every query and distinguishes empty/failed calls', () => {
         const shared = { event_id: 'shared' };
         const hashOnly = { _hash: 'hash' };

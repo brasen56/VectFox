@@ -10,9 +10,10 @@
  * Purely additive — never replaces the existing flow. Every failure path falls
  * back cleanly to the pre-search output. Qdrant (A3) only.
  *
- * Phase 1.5: planner-emitted *_any / importance_gte filters are validated and
- * threaded into each queryCollection call when agentic_filters_enabled is true
- * (the default). Disable via settings to run unfiltered for A/B comparison.
+ * Planner object queries carry their own characters_any scope; legacy strings
+ * inherit global filters. Validated filters reach supported native-hybrid calls
+ * when agentic_filters_enabled is true. Query provenance survives identity
+ * merging so the final trim can reserve each query's best surviving hit.
  *   - OpenRouter only. vLLM support is Phase 2.
  *
  * @see plans/agentic-retrieval-plan.md
@@ -178,12 +179,14 @@ export async function retrieveEventsWithAgent(params) {
     }
 
     // Expose detections independently of filter enablement and query success.
-    preSearch.debug = { ...preSearch.debug, plannerCharacters: Array.isArray(plan?.filters?.characters_any)
-        ? plan.filters.characters_any.filter(name => typeof name === 'string' && name.trim()) : [] };
+    const characterLists = [plan?.filters?.characters_any,
+        ...(Array.isArray(plan?.queries) ? plan.queries.map(query => query?.characters_any) : [])];
+    preSearch.debug = { ...preSearch.debug, plannerCharacters: [...new Set(characterLists
+        .filter(Array.isArray).flat().filter(name => typeof name === 'string' && name.trim()).map(name => name.trim()))] };
 
     // Validate planner output.
     const maxQueries = Math.max(1, Math.min(6, settings.agentic_retrieval_max_queries || 6));
-    const validatedQueries = _validateAndTrimQueries(plan?.queries, maxQueries);
+    const validatedQueries = _validateAndTrimQueries(plan?.queries, maxQueries, plan?.filters);
     if (validatedQueries.length === 0) {
         if (agenticDebug) {
             log.domain('agent', 'lifecycle', '[VectFox-Agentic] Planner returned 0 valid queries — falling back to pre-search only');
@@ -206,13 +209,15 @@ export async function retrieveEventsWithAgent(params) {
     const topK = resolveEventBaseOverfetch(settings);
 
     const roster = getCharacterRoster(liveCollectionIds, settings);
-    const plannerFilters = _validatePlannerFilters(plan?.filters, settings, roster);
-    const hasPlannerFilters = Object.keys(plannerFilters).length > 0;
+    const queryFilters = validatedQueries.map(query => _validatePlannerFilters({
+        ...plan?.filters, characters_any: query.characters_any,
+    }, settings, roster));
+    const hasPlannerFilters = queryFilters.some(filters => Object.keys(filters).length > 0);
     if (agenticDebug) {
-        if (Object.keys(plannerFilters).length === 0) {
+        if (!hasPlannerFilters) {
             log.domain('agent', 'verbose', '[VectFox-Agentic] Planner filters: (none — running unfiltered)');
         } else {
-            log.domain('agent', 'verbose', `[VectFox-Agentic] Planner filters requested: ${JSON.stringify(plannerFilters)}`);
+            log.domain('agent', 'verbose', `[VectFox-Agentic] Per-query filters requested: ${JSON.stringify(queryFilters)}`);
         }
     }
 
@@ -243,10 +248,12 @@ export async function retrieveEventsWithAgent(params) {
                 capabilityResolved = true;
             }
         })();
-        for (const queryText of validatedQueries) {
+        for (const [queryIndex, query] of validatedQueries.entries()) {
+            const queryText = query.query;
+            const plannerFilters = queryFilters[queryIndex];
             let expired = false;
             const queryTask = (async () => {
-                const supported = await filterSupport;
+                const supported = Object.keys(plannerFilters).length ? await filterSupport : true;
                 // A timeout cannot cancel the lookup. Do not dispatch a late
                 // query if it eventually resolves after this task was dropped.
                 if (expired) return { hashes: [], metadata: [] };
@@ -255,12 +262,13 @@ export async function retrieveEventsWithAgent(params) {
             fanoutPromises.push(
                 _raceWithTimeout(queryTask, queryTimeoutMs)
                     .then(({ hashes, metadata }) => {
-                        if (!hashes?.length) return { queryText, hits: [] };
+                        if (!hashes?.length) return { queryIndex, queryText, hits: [] };
                         // _sortFrame tags these live-collection hits with their source
                         // collection so the injector groups them into the same frame as
                         // the pre-search live events before the chronological sort.
-                        const hits = metadata.map((meta, i) => ({ ...meta, _hash: hashes[i], _sortFrame: colId }));
-                        return { queryText, hits };
+                        const hits = metadata.map((meta, i) => ({ ...meta, _hash: hashes[i], _sortFrame: colId,
+                            _plannerQueryIndices: [queryIndex] }));
+                        return { queryIndex, queryText, hits };
                     })
                     .catch(err => {
                         if (err?.__timeout) {
@@ -270,7 +278,7 @@ export async function retrieveEventsWithAgent(params) {
                         } else {
                             log.warn(`[VectFox-Agentic] Query failed (${colId}, "${queryText}"): ${err?.message || err}`);
                         }
-                        return { queryText, hits: [], error: err?.__timeout ? 'timeout' : 'failed' };
+                        return { queryIndex, queryText, hits: [], error: err?.__timeout ? 'timeout' : 'failed' };
                     })
             );
         }
@@ -331,7 +339,8 @@ export async function retrieveEventsWithAgent(params) {
             plannerQuerySummary: summarizePlannerQueries(validatedQueries, fanoutResults, final.events || []),
             agenticMode: true,
             plannerCharacters: preSearch.debug.plannerCharacters,
-            agenticQueries: validatedQueries,
+            agenticQueries: validatedQueries.map(query => query.query),
+            agenticQueryFilters: queryFilters,
             agenticRationale: typeof plan?.rationale === 'string' ? plan.rationale : null,
             agenticLLMMs: tLlmMs,
             agenticFanoutMs: tFanoutMs,
@@ -562,21 +571,26 @@ export function _validatePlannerFilters(raw, settings, roster = { groups: [] }) 
 }
 
 /**
- * Validate, dedupe, and trim planner-emitted queries. Drops empties, strings
- * outside 3..300 chars, exact duplicates, and clamps array length to maxQueries.
+ * Normalize object queries and legacy strings. Objects own their character
+ * scope (missing/empty means unscoped); strings inherit the legacy global list.
+ * Deduplicate by text AND character scope so distinct subjects remain separate.
  */
-function _validateAndTrimQueries(queries, maxQueries) {
+export function _validateAndTrimQueries(queries, maxQueries, legacyFilters) {
     if (!Array.isArray(queries)) return [];
     const seen = new Set();
     const out = [];
     for (const q of queries) {
-        if (typeof q !== 'string') continue;
-        const trimmed = q.trim();
+        const text = typeof q === 'string' ? q : q?.query;
+        if (typeof text !== 'string') continue;
+        const trimmed = text.trim();
         if (trimmed.length < 3 || trimmed.length > 300) continue;
-        const key = trimmed.toLowerCase();
+        const rawCharacters = typeof q === 'string' ? legacyFilters?.characters_any : q?.characters_any;
+        const characters = Array.isArray(rawCharacters) ? [...new Set(rawCharacters
+            .filter(name => typeof name === 'string').map(name => name.trim()).filter(Boolean))].slice(0, 8) : [];
+        const key = JSON.stringify([trimmed.toLowerCase(), [...new Set(characters.map(normalizeCharacterName))].sort()]);
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push(trimmed);
+        out.push({ query: trimmed, characters_any: characters });
         if (out.length >= maxQueries) break;
     }
     return out;

@@ -1,6 +1,6 @@
 # EventBase recall plan
 
-Status: Phases 0a, 0b, 1, 2, and 3A implemented; Phases 3B and 4 remain proposals. Revision 2, 2026-10-02 (incorporates co-author review; changes listed at the end).
+Status: Phases 0a, 0b, 1, 2, 3A, and 3B implemented; Phase 4 remains a proposal. Revision 2, 2026-10-02 (incorporates co-author review; changes listed at the end).
 
 ## Problem
 
@@ -157,6 +157,14 @@ In rough order of effort:
 ## Phase 3B:
 6. **Per-query coverage.** Tag agentic hits with their query index. At the trim, take the best surviving hit from each planner query first, then fill by score.
 7. **Per-query filters.** Change the planner schema so each query carries its own character list, accepting the old string form too. Last because it touches the planner prompt in all six language variants.
+
+**Phase 3B implementation notes (2026-10-03):**
+- New planner entries use `{ "query": "search text", "characters_any": ["subject"] }`. Object entries own their character scope: an empty, missing, or invalid list means no character filter and never inherits the global list. Legacy string entries still inherit `filters.characters_any`. Non-character filters remain shared across queries.
+- Validation accepts mixed forms, enforces the existing 3–300 character text bounds and maximum query count, and deduplicates by normalized query text plus character scope. Identical text with different subjects remains separate. Each scope passes through Phase 3A's lead removal, alias expansion, filter toggle, soft importance behavior, and collection capability guard.
+- Fanout hits carry internal query indices. Identity merging unions their provenance while retaining the highest-scoring copy. After importance filtering, pairwise dedup, and context dedup, the trim reserves each query's best surviving hit, then fills by score. Shared best hits use only one slot; if Top-K cannot fit all representatives, planner order wins. The selected output remains score-ordered for the existing injector's chronological assembly.
+- Coverage never restores a rejected candidate. Queries with empty, failed, timed-out, or entirely filtered results reserve no slot. Candidate outcomes reflect the actual coverage-aware trim.
+- All six prompt variants and their JSON examples use per-query character lists. Cast detection unions global and per-query names independently of backend filter enablement. Query diagnostics distinguish same-text queries by index; `agenticQueries` remains a string list for compatibility, with validated scopes in `agenticQueryFilters`.
+- Unit regressions cover mixed/legacy forms, scope isolation, provenance union, shared slots, best-survivor selection, insufficient Top-K, accurate cut diagnostics, and valid examples in every language. Live planner/Qdrant verification remains manual.
 
 ### Phase 4: Later
 

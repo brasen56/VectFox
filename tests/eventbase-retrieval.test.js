@@ -97,6 +97,57 @@ beforeEach(() => {
 });
 
 describe('retrieveEvents', () => {
+    it('reserves per-query best survivors before score fill and traces the actual trim', async () => {
+        const result = await retrieveEvents({ searchText: 'scene', chatLength: 100,
+            skipLiveQuery: true, settings: { ...baseSettings, eventbase_retrieval_top_k: 3 },
+            additionalCandidates: [makeEvent(1, { score: 0.99 }), makeEvent(2, { score: 0.95 }),
+                makeEvent(3, { score: 0.8, _plannerQueryIndices: [0] }),
+                makeEvent(4, { score: 0.1, _plannerQueryIndices: [1] })],
+        });
+        expect(result.events.map(event => event.event_id)).toEqual(['evt_1', 'evt_3', 'evt_4']);
+        expect(result.candidates).toHaveLength(4);
+        expect(result.debug.candidateOutcomes.evt_2.outcome).toBe('cut_at_trim');
+        expect(result.debug.candidateOutcomes.evt_4.outcome).toBe('injected');
+    });
+
+    it('unions shared provenance without mutating inputs and reserves only one slot', async () => {
+        const shared = makeEvent(3, { score: 0.3, _plannerQueryIndices: [0] });
+        const otherCopy = makeEvent(3, { score: 0.1, _plannerQueryIndices: [1] });
+        const result = await retrieveEvents({ searchText: 'scene', chatLength: 100, skipLiveQuery: true,
+            settings: { ...baseSettings, eventbase_retrieval_top_k: 2 },
+            additionalCandidates: [makeEvent(1), makeEvent(2), shared, otherCopy],
+        });
+        expect(result.events.map(event => event.event_id)).toEqual(['evt_1', 'evt_3']);
+        expect(result.events[1]).toMatchObject({ score: 0.3, _plannerQueryIndices: [0, 1] });
+        expect(shared._plannerQueryIndices).toEqual([0]);
+        expect(otherCopy._plannerQueryIndices).toEqual([1]);
+    });
+
+    it('never rescues rejected hits and reserves the next surviving hit', async () => {
+        const result = await retrieveEvents({ searchText: 'scene', chatLength: 100, skipLiveQuery: true,
+            settings: { ...baseSettings, eventbase_retrieval_top_k: 2,
+                eventbase_retrieval_min_importance: 3, deduplication_depth: 5 },
+            additionalCandidates: [makeEvent(1, { score: 0.7, characters: ['Hero'], event_type: 'combat' }),
+                makeEvent(2, { score: 0.6, characters: ['Hero'], event_type: 'combat', _plannerQueryIndices: [0] }),
+                makeEvent(3, { importance: 1, _plannerQueryIndices: [1] }),
+                makeEvent(4, { source_window_end: 99, _plannerQueryIndices: [2] }),
+                makeEvent(5, { score: 0.1, _plannerQueryIndices: [0] })],
+        });
+        expect(result.events.map(event => event.event_id)).toEqual(['evt_1', 'evt_5']);
+        expect(result.debug.candidateOutcomes.evt_2.outcome).toBe('suppressed_by_dedup');
+        expect(result.debug.candidateOutcomes.evt_3.outcome).toBe('failed_importance_filter');
+        expect(result.debug.candidateOutcomes.evt_4.outcome).toBe('removed_by_context_dedup');
+    });
+
+    it('uses planner order when Top-K cannot fit all query representatives', async () => {
+        const result = await retrieveEvents({ searchText: 'scene', chatLength: 100, skipLiveQuery: true,
+            settings: { ...baseSettings, eventbase_retrieval_top_k: 1 },
+            additionalCandidates: [makeEvent(1, { _plannerQueryIndices: [1] }),
+                makeEvent(2, { score: 0.1, _plannerQueryIndices: [0] })],
+        });
+        expect(result.events.map(event => event.event_id)).toEqual(['evt_2']);
+    });
+
     it('traces each cut stage and injection without changing selected events', async () => {
         const candidates = [
             makeEvent(1, { score: 0.7, characters: ['Hero'], event_type: 'combat', source_window_end: 10 }),

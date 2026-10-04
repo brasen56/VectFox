@@ -18,7 +18,7 @@ vi.mock('../core/generation-rate-limiter.js', () => ({
 vi.mock('../core/log.js', () => ({ log: { domainEnabled: () => false, warn: vi.fn() } }));
 vi.mock('../core/search-filter-support.js', () => ({ warnUnsupportedFilters: vi.fn() }));
 
-import { retrieveEventsWithAgent, _validatePlannerFilters } from '../core/agentic-retrieval.js';
+import { retrieveEventsWithAgent, _validatePlannerFilters, _validateAndTrimQueries } from '../core/agentic-retrieval.js';
 import { retrieveEvents } from '../core/eventbase-retrieval.js';
 import { queryCollection, supportsCollectionFilters } from '../core/core-vector-api.js';
 import { postChatCompletion } from '../core/llm-provider-call.js';
@@ -28,6 +28,69 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.useRealTimers());
 
 describe('Agent Mode recall diagnostics', () => {
+    it('normalizes mixed forms and deduplicates by text and scope', () => {
+        expect(_validateAndTrimQueries([null, 42, 'x', 'a'.repeat(301), {},
+            ' history query ', { query: 'HISTORY QUERY', characters_any: ['Brennan'] },
+            { query: 'history query', characters_any: ['Other'] },
+            { query: 'broad query', characters_any: [42, ' ', 'Other', 'Other'] },
+            { query: 'unscoped query' }], 4, { characters_any: ['Brennan'] })).toEqual([
+            { query: 'history query', characters_any: ['Brennan'] },
+            { query: 'history query', characters_any: ['Other'] },
+            { query: 'broad query', characters_any: ['Other'] },
+            { query: 'unscoped query', characters_any: [] },
+        ]);
+    });
+
+    it('scopes objects independently, preserves legacy filters, and tags hits', async () => {
+        retrieveEvents.mockResolvedValue({ events: [], candidates: [], debug: {} });
+        postChatCompletion.mockResolvedValue({ content: JSON.stringify({ queries: [
+            { query: 'same query', characters_any: ['Brennan'] },
+            { query: 'same query', characters_any: ['Other'] },
+            { query: 'broad query', characters_any: [] }, 'legacy query',
+        ], filters: { characters_any: ['Legacy'], locations_any: ['office'] } }) });
+        queryCollection.mockResolvedValue({ hashes: ['hit'], metadata: [{ event_id: 'hit' }] });
+        const result = await retrieveEventsWithAgent({ liveCollectionIds: ['qdrant:one'], settings: {
+            agentic_retrieval_enabled: true, vector_backend: 'qdrant', agent_model: 'model' } });
+        expect(queryCollection.mock.calls.map(call => call[4])).toEqual([
+            { characters_any: ['Brennan'], locations_any: ['office'] },
+            { characters_any: ['Other'], locations_any: ['office'] },
+            { locations_any: ['office'] },
+            { characters_any: ['Legacy'], locations_any: ['office'] },
+        ]);
+        expect(retrieveEvents.mock.calls[1][0].additionalCandidates.map(hit => hit._plannerQueryIndices))
+            .toEqual([[0], [1], [2], [3]]);
+        expect(result.debug.plannerCharacters).toEqual(['Legacy', 'Brennan', 'Other']);
+        expect(result.debug.plannerQuerySummary.map(query => query.hitsReturned)).toEqual([1, 1, 1, 1]);
+        expect(result.debug.agenticQueries).toEqual(['same query', 'same query', 'broad query', 'legacy query']);
+    });
+
+    it('keeps object cast signals with disabled filters and invalid queries', async () => {
+        retrieveEvents.mockResolvedValue({ events: [], debug: {} });
+        postChatCompletion.mockResolvedValue({ content: JSON.stringify({ queries: [
+            { query: 'x', characters_any: [' Brennan ', 42] },
+        ] }) });
+        const result = await retrieveEventsWithAgent({ settings: { agentic_retrieval_enabled: true,
+            vector_backend: 'qdrant', agent_model: 'model', agentic_filters_enabled: false } });
+        expect(result.debug.plannerCharacters).toEqual(['Brennan']);
+        expect(queryCollection).not.toHaveBeenCalled();
+    });
+
+    it.each(['disabled', 'unsupported'])('does not send object scopes when filters are %s', async mode => {
+        retrieveEvents.mockResolvedValue({ events: [], candidates: [], debug: {} });
+        supportsCollectionFilters.mockResolvedValue(mode !== 'unsupported');
+        postChatCompletion.mockResolvedValue({ content: JSON.stringify({ queries: [
+            { query: 'Brennan history', characters_any: ['Brennan'] },
+        ] }) });
+        queryCollection.mockResolvedValue({ hashes: [], metadata: [] });
+        const result = await retrieveEventsWithAgent({ liveCollectionIds: ['qdrant:one'], settings: {
+            agentic_retrieval_enabled: true, vector_backend: 'qdrant', agent_model: 'model',
+            agentic_filters_enabled: mode !== 'disabled' } });
+        expect(queryCollection.mock.calls[0][4]).toEqual({});
+        expect(result.debug.plannerCharacters).toEqual(['Brennan']);
+        if (mode === 'unsupported') expect(warnUnsupportedFilters).toHaveBeenCalled();
+        supportsCollectionFilters.mockResolvedValue(true);
+    });
+
     it.each(['never', 'late'])('bounds a %s capability lookup without blocking healthy collections', async mode => {
         vi.useFakeTimers();
         const preEvent = { event_id: 'pre' };
@@ -52,8 +115,8 @@ describe('Agent Mode recall diagnostics', () => {
         const result = await pending;
         expect(result.events).toEqual([preEvent, healthyEvent]);
         expect(retrieveEvents.mock.calls[1][0].additionalCandidates).toEqual([
-            preEvent, { ...healthyEvent, _hash: 42, _sortFrame: 'qdrant:healthy' },
-            { ...healthyEvent, _hash: 42, _sortFrame: 'qdrant:healthy' },
+            preEvent, { ...healthyEvent, _hash: 42, _sortFrame: 'qdrant:healthy', _plannerQueryIndices: [0] },
+            { ...healthyEvent, _hash: 42, _sortFrame: 'qdrant:healthy', _plannerQueryIndices: [1] },
         ]);
         expect(warnUnsupportedFilters).toHaveBeenCalled();
         if (mode === 'late') {
