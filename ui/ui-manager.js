@@ -955,6 +955,16 @@ export function renderSettings(containerId, settings, callbacks) {
                             <div id="VectFox_autosync_status" style="margin-top: 6px; font-size: 0.82em;"></div>
                             <small class="VectFox_hint" style="display:block; margin-top:6px;">InlineSummary messages are expanded to their stored originals automatically. Turning auto-sync off pauses new extraction without changing that message mapping or disabling retrieval from existing events.</small>
 
+                            <div class="vectfox-form-group" id="VectFox_autosync_start_group" style="margin-top:12px; display:none;">
+                                <label for="VectFox_autosync_start_point" class="vectfox-label">Auto-sync start point (message index)</label>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <input id="VectFox_autosync_start_point" type="number" class="vectfox-input" min="0" step="1" style="width:120px;" />
+                                    <button id="VectFox_autosync_set_start" type="button" class="vectfox-btn vectfox-btn-secondary">Set start point</button>
+                                </div>
+                                <small id="VectFox_autosync_start_hint" class="VectFox_hint"></small>
+                                <small class="VectFox_hint">Use this to repair drift after InlineSummary flattening or message deletion. Indices are zero-based in the expanded history (stored originals count, not just visible messages). The containing auto-sync window is included. Existing events and duplicate checks are preserved; this does not force re-extraction. Sync resumes on the next normal trigger if enabled. Re-enabling auto-sync or changing its window size recalculates this position.</small>
+                            </div>
+
                             <div class="vectfox-form-group" style="margin-top: 12px;">
                                 <label class="vectfox-label">
                                     Auto-sync window: <span id="VectFox_eventbase_autosync_window_turns_val">1</span> turn(s)
@@ -2078,6 +2088,19 @@ export async function refreshAutoSyncCheckbox(settings) {
     const status = await getChatAutoSyncStatus(settings);
     const chatId = getCurrentChatId();
 
+    const canSetStart = status.state !== 'no-chat' && status.state !== 'no-collection';
+    $('#VectFox_autosync_start_group').toggle(canSetStart);
+    $('#VectFox_autosync_set_start').prop('disabled', !canSetStart);
+    if (canSetStart) {
+        const $start = $('#VectFox_autosync_start_point');
+        $start.attr('max', status.chatMessageCount);
+        // Do not overwrite an index while the user is typing during a refresh.
+        if (!$start.is(':focus')) $start.val(status.markerValue ?? status.chatMessageCount);
+        $('#VectFox_autosync_start_hint').text(
+            `Saved start: ${status.markerValue ?? 'not set'} · effective chat length: ${status.chatMessageCount}. Enter 0 to check from the beginning, or ${status.chatMessageCount} for new messages only.`
+        );
+    }
+
     const LED = {
         white:  '<i class="fa-solid fa-circle" style="color: var(--muted-color, #8a8a8a);"></i>',
         yellow: '<i class="fa-solid fa-circle-exclamation" style="color: var(--warning-color, #f39c12);"></i>',
@@ -2465,6 +2488,29 @@ async function clearSharedApiKey({ slots, changedEvent, label, getCurrent, share
  * @param {object} callbacks - Callback functions
  */
 function bindSettingsEvents(settings, callbacks) {
+    $('#VectFox_autosync_set_start').on('click', async function() {
+        const $button = $(this);
+        $button.prop('disabled', true);
+        try {
+            const { getChatUUID } = await import('../core/collection-ids.js');
+            const { setAutoSyncStartPoint } = await import('../core/eventbase-store.js');
+            const { getChatAutoSyncStatus } = await import('../core/eventbase-workflow.js');
+            const uuid = getChatUUID();
+            const status = await getChatAutoSyncStatus(extension_settings.vectfox);
+            if (status.state === 'no-chat' || status.state === 'no-collection') {
+                throw new Error('Load a chat with an EventBase collection first.');
+            }
+            const marker = setAutoSyncStartPoint(uuid, $('#VectFox_autosync_start_point').val(), extension_settings.vectfox);
+            $('#VectFox_autosync_start_point').val(marker);
+            toastr.success(`Auto-sync start point set to ${marker}. Existing events are unchanged.`, 'VectFox');
+        } catch (err) {
+            toastr.error(err?.message || String(err), 'VectFox');
+        } finally {
+            $button.prop('disabled', false);
+            await refreshAutoSyncCheckbox(extension_settings.vectfox);
+        }
+    });
+
     // Forward-declared so the vector-backend change handler can call it; the
     // real implementation is assigned later when the EventBase weight inputs
     // are wired up. The optional-call `?.()` at the call site guards against

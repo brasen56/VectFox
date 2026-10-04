@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getShrinkRecoveryMarker } from '../core/autosync-coordinates.js';
+import { getShrinkRecoveryMarker, getManualAutoSyncMarker } from '../core/autosync-coordinates.js';
 
 describe('getShrinkRecoveryMarker', () => {
     it('backs up over the last two committed one-turn windows', () => {
@@ -26,5 +26,23 @@ describe('getShrinkRecoveryMarker', () => {
         expect(getShrinkRecoveryMarker(-10, {
             eventbase_autosync_window_turns: 999,
         })).toBe(0);
+    });
+});
+
+describe('getManualAutoSyncMarker', () => {
+    it('includes the window containing the selected index', () => {
+        expect(getManualAutoSyncMarker('15', 30, { eventbase_autosync_window_turns: 3 })).toBe(12);
+        expect(getManualAutoSyncMarker(15, 30)).toBe(14);
+    });
+
+    it('preserves zero, exact window boundaries, and the tail', () => {
+        expect(getManualAutoSyncMarker(0, 30)).toBe(0);
+        expect(getManualAutoSyncMarker(12, 30, { eventbase_autosync_window_turns: 3 })).toBe(12);
+        expect(getManualAutoSyncMarker(31, 31, { eventbase_autosync_window_turns: 3 })).toBe(31);
+        expect(getManualAutoSyncMarker(0, 0)).toBe(0);
+    });
+
+    it.each(['', ' ', null, undefined, -1, 31, 1.5, 'no', Infinity, NaN])('rejects invalid input %s', (value) => {
+        expect(() => getManualAutoSyncMarker(value, 30)).toThrow(RangeError);
     });
 });

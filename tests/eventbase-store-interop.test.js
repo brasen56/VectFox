@@ -101,10 +101,67 @@ vi.mock('../backends/backend-manager.js', () => ({
     getBackend: vi.fn(async () => ({ listChunks: (...a) => listChunksMock(...a) })),
 }));
 
-import { getEventsSince } from '../core/eventbase-store.js';
+import { getEventsSince, setAutoSyncStartPoint, getAutoSyncMarker, getVectorizationTip, clearVectorizationTip } from '../core/eventbase-store.js';
+import { extension_settings, getContext } from '../../../../extensions.js';
+import { getChatUUID } from '../core/collection-ids.js';
+import { getCurrentChatId, saveSettingsDebounced } from '../../../../../script.js';
+import { prepareMessagesForEventBase } from '../core/ils-expander.js';
 
 const CHAT_UUID = 'test-uuid-1234';
 const COLLECTION_ID = `vf_eventbase_qdrant_${CHAT_UUID}`;
+
+describe('setAutoSyncStartPoint', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        clearVectorizationTip(CHAT_UUID);
+        extension_settings.vectfox = {
+            eventbase_autosync_start_marker: { [CHAT_UUID]: 100, other: 8 },
+            eventbase_vectorization_tip: { [CHAT_UUID]: 100 },
+            eventbase_window_cache: { [CHAT_UUID]: ['preserved-fingerprint'] },
+        };
+        getChatUUID.mockReturnValue(CHAT_UUID);
+        getCurrentChatId.mockReturnValue('chat');
+        getContext.mockReturnValue({ chat: Array.from({ length: 30 }, () => ({ mes: 'message' })) });
+        prepareMessagesForEventBase.mockImplementation(messages => ({ messages: messages || [] }));
+    });
+
+    it('persists a window-aligned restart and replaces a stale cached tip', () => {
+        expect(getVectorizationTip(CHAT_UUID)).toBe(100);
+        expect(setAutoSyncStartPoint(CHAT_UUID, '15', { eventbase_autosync_window_turns: 3 })).toBe(12);
+        expect(getAutoSyncMarker(CHAT_UUID)).toBe(12);
+        expect(getVectorizationTip(CHAT_UUID)).toBe(12);
+        expect(extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID]).toBe(12);
+        expect(extension_settings.vectfox.eventbase_autosync_start_marker.other).toBe(8);
+        expect(extension_settings.vectfox.eventbase_window_cache[CHAT_UUID]).toEqual(['preserved-fingerprint']);
+        expect(saveSettingsDebounced).toHaveBeenCalled();
+        expect(listChunksMock).not.toHaveBeenCalled();
+    });
+
+    it('validates against expanded originals, not visible message count', () => {
+        getContext.mockReturnValue({ chat: [{ mes: 'summary' }] });
+        prepareMessagesForEventBase.mockReturnValueOnce({ messages: Array(30).fill({ mes: 'original' }) });
+        expect(setAutoSyncStartPoint(CHAT_UUID, 30, {})).toBe(30);
+    });
+
+    it('rejects invalid positions without mutating the saved marker', () => {
+        expect(() => setAutoSyncStartPoint(CHAT_UUID, 31, {})).toThrow(RangeError);
+        expect(getAutoSyncMarker(CHAT_UUID)).toBe(100);
+    });
+
+    it('rejects a chat switch without changing either chat', () => {
+        getChatUUID.mockReturnValue('other');
+        expect(() => setAutoSyncStartPoint(CHAT_UUID, 10, {})).toThrow('Load the chat');
+        expect(getAutoSyncMarker(CHAT_UUID)).toBe(100);
+        expect(getAutoSyncMarker('other')).toBe(8);
+    });
+
+    it('keeps an earlier coverage tip rather than inventing extracted history', () => {
+        clearVectorizationTip(CHAT_UUID);
+        extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID] = 4;
+        expect(setAutoSyncStartPoint(CHAT_UUID, 20, {})).toBe(20);
+        expect(getVectorizationTip(CHAT_UUID)).toBe(4);
+    });
+});
 
 function makeItem(sourceWindowEnd, overrides = {}) {
     return {

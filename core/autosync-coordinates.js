@@ -22,3 +22,21 @@ export function getShrinkRecoveryMarker(chatLength, settings = {}) {
     const lastCompleteWindowStart = Math.floor((commitBoundary - windowSize) / windowSize) * windowSize;
     return Math.max(0, lastCompleteWindowStart - windowSize);
 }
+
+/**
+ * Validate a user-selected effective message index and include its whole window.
+ * The exact chat tail is kept unchanged to support "from now on" placement.
+ */
+export function getManualAutoSyncMarker(startIndex, chatLength, settings = {}) {
+    const index = typeof startIndex === 'string' && startIndex.trim() !== ''
+        ? Number(startIndex)
+        : startIndex;
+    if (!Number.isSafeInteger(chatLength) || chatLength < 0
+        || !Number.isSafeInteger(index) || index < 0 || index > chatLength) {
+        throw new RangeError('Start point must be a whole message index between 0 and the effective chat length.');
+    }
+    if (index === chatLength) return index;
+    const turns = Math.max(1, Math.min(20, Number(settings.eventbase_autosync_window_turns) || 1));
+    const windowSize = turns * 2;
+    return Math.floor(index / windowSize) * windowSize;
+}

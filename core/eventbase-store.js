@@ -23,7 +23,7 @@ import { getChatLockedCollections, isCollectionActiveForContextAnyKey } from './
 import { buildEmbedText, parseEmbedText, EVENTBASE_SCHEMA_VERSION } from './eventbase-schema.js';
 import { log } from './log.js';
 import { prepareMessagesForEventBase } from './ils-expander.js';
-import { getShrinkRecoveryMarker } from './autosync-coordinates.js';
+import { getShrinkRecoveryMarker, getManualAutoSyncMarker } from './autosync-coordinates.js';
 import { upsertCharacterEvents, pruneCharacterEvents, invalidateCharacterIndex } from './character-roster.js';
 
 // Re-export so callers can import from here if needed
@@ -500,6 +500,33 @@ export async function deleteEventByHash(hash, settings, chatUUID) {
 export function getAutoSyncMarker(chatUUID) {
     if (!chatUUID) return undefined;
     return extension_settings?.vectfox?.eventbase_autosync_start_marker?.[chatUUID];
+}
+
+/**
+ * Manually reposition auto-sync in the current effective (ILS-expanded) chat.
+ * Keep stored events and content fingerprints intact. Lower the positional tip
+ * when needed so tip-based fast-forward cannot undo the user's restart point.
+ * No backend writes or extraction are performed here.
+ */
+export function setAutoSyncStartPoint(chatUUID, startIndex, settings) {
+    const store = extension_settings?.vectfox;
+    if (!store || !chatUUID || chatUUID !== getChatUUID() || !getCurrentChatId()) {
+        throw new Error('Load the chat you want to adjust before setting its auto-sync start point.');
+    }
+    const chatLength = prepareMessagesForEventBase(getContext()?.chat, chat_metadata).messages.length;
+    const marker = getManualAutoSyncMarker(startIndex, chatLength, settings);
+    if (!store.eventbase_autosync_start_marker) store.eventbase_autosync_start_marker = {};
+    store.eventbase_autosync_start_marker[chatUUID] = marker;
+
+    const tip = getVectorizationTip(chatUUID);
+    if (typeof tip !== 'number' || tip > marker) {
+        _vectorizationTipByUuid.set(chatUUID, marker);
+        if (!store.eventbase_vectorization_tip) store.eventbase_vectorization_tip = {};
+        store.eventbase_vectorization_tip[chatUUID] = marker;
+    }
+    saveSettingsDebounced();
+    log.lifecycle(`[EventBase] Manual auto-sync start point: uuid=${chatUUID}, marker=${marker}, chatLength=${chatLength}`);
+    return marker;
 }
 
 /**
