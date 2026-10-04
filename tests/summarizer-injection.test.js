@@ -16,9 +16,10 @@ const mocks = vi.hoisted(() => ({
     listChunks: vi.fn(),
     getChatUUID: vi.fn(() => 'uuid-1'),
     resolveActive: vi.fn(() => ({ collectionId: 'c', registryKey: 'k' })),
+    getVectorizationTip: vi.fn(),
 }));
 
-vi.mock('../../../../../script.js', () => ({ setExtensionPrompt: mocks.setExtensionPrompt }));
+vi.mock('../../../../../script.js', () => ({ setExtensionPrompt: mocks.setExtensionPrompt, chat_metadata: {} }));
 // Host modules that summarizer-injection.js imports but the tests don't drive.
 // They don't exist in the repo (ST provides them at runtime), so without these
 // mocks the import only resolves when a sibling test file's extensions.js mock
@@ -28,11 +29,12 @@ vi.mock('../../../../extensions.js', () => ({ getContext: vi.fn(() => ({ chat: [
 vi.mock('../../../../world-info.js', () => ({ getWorldInfoSettings: vi.fn(() => ({})), getSortedEntries: vi.fn(async () => []) }));
 vi.mock('../backends/backend-manager.js', () => ({ getBackend: vi.fn(async () => ({ listChunks: mocks.listChunks })) }));
 vi.mock('../core/collection-ids.js', () => ({ getChatUUID: mocks.getChatUUID }));
-vi.mock('../core/eventbase-store.js', () => ({ resolveActiveEventBaseCollection: mocks.resolveActive }));
+vi.mock('../core/eventbase-store.js', () => ({ resolveActiveEventBaseCollection: mocks.resolveActive, getVectorizationTip: mocks.getVectorizationTip }));
 vi.mock('../core/constants.js', () => ({ EXTENSION_PROMPT_TAG: '3_vectfox' }));
 vi.mock('../core/log.js', () => ({ log: { warn() {}, error() {}, domain() {}, trace() {}, verbose() {}, lifecycle() {}, enabled: () => false } }));
 
-import { runSummarizerInjection, buildSummarizerInjection } from '../core/summarizer-injection.js';
+import { runSummarizerInjection, buildSummarizerInjection, applyGhosting } from '../core/summarizer-injection.js';
+import { getContext } from '../../../../extensions.js';
 
 const SETTINGS = (over = {}) => ({
     summarizer_injection_enabled: true,
@@ -231,5 +233,30 @@ describe('buildSummarizerInjection (Debug Summarizer preview path)', () => {
             '  Message index: 4',
             '</VectFoxSummarizer>',
         ].join('\n'));
+    });
+});
+
+describe('applyGhosting — tip coordinates', () => {
+    const GHOST = { eventbase_ghost_enabled: true, summarizer_injection_enabled: true, eventbase_ghost_keep_recent: 2 };
+    const makeChat = () => Array.from({ length: 10 }, (_, i) => ({ mes: `message ${i}` }));
+
+    beforeEach(() => {
+        vi.stubGlobal('window', {});
+        mocks.getChatUUID.mockReturnValue('uuid-1');
+    });
+
+    it('ghosts messages below an in-range tip', () => {
+        const chat = makeChat();
+        getContext.mockReturnValue({ chat: makeChat(), symbols: { ignore: null } });
+        mocks.getVectorizationTip.mockReturnValue(6);
+        expect(applyGhosting(chat, GHOST).wiped).toBe(6);
+    });
+
+    it('ghosts nothing on a tip recorded beyond the end of the chat', () => {
+        const chat = makeChat();
+        getContext.mockReturnValue({ chat: makeChat(), symbols: { ignore: null } });
+        mocks.getVectorizationTip.mockReturnValue(9330);
+        expect(applyGhosting(chat, GHOST).wiped).toBe(0);
+        expect(chat.every(m => m.mes.startsWith('message'))).toBe(true);
     });
 });

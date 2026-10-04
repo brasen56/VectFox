@@ -1485,7 +1485,9 @@ export async function getChatAutoSyncStatus(settings) {
     let vectorizationTip = await ensureVectorizationTip(uuid, match.collectionId, settings);
     if (typeof vectorizationTip === 'number' && vectorizationTip > chatMessageCount) {
         markerValue = repairAutoSyncCoordinatesAfterShrink(uuid, chatMessageCount, settings);
-        vectorizationTip = markerValue;
+        // Report the rebased coverage, not the restart point — they differ when a
+        // manual start point survives the repair.
+        vectorizationTip = getVectorizationTip(uuid);
     }
 
     return {

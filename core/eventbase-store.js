@@ -43,13 +43,21 @@ const _windowCacheSet = new Map(); // chatUUID → Set<fingerprint>
 //
 // Lifecycle:
 //   - written by the ingestion loop after each successful markWindowExtracted
-//   - persisted to extension_settings.vectfox.eventbase_vectorization_tip so the
-//     value survives reload WITHOUT a backend probe (benefits standard+plugin and
-//     qdrant+plugin users; standard-no-plugin can't probe anyway). See getter.
-//   - probed via ensureVectorizationTip only when neither the in-memory cache nor
-//     the persisted map has a value (i.e. the very first read on a chat)
+//   - persisted to extension_settings.vectfox.eventbase_vectorization_tip as the
+//     RECORDED coverage high-water mark. Only coverage facts are written there
+//     (ingestion, backend probe, import restore, clear) — never a restart point.
+//   - re-verified against the backend by ensureVectorizationTip whenever the open
+//     chat FILE differs from the one last verified for this UUID. The persisted
+//     value is the fallback when the backend can't report positions (standard
+//     without the plugin) or the probe fails. Branches, checkpoints and imports
+//     share one chat UUID (chat_metadata.integrity) and so share this entry, but
+//     not one length — hence per-file verification.
+//   - rebased in memory only (rebaseVectorizationTipAfterShrink) when the recorded
+//     tip lies beyond the open chat, so this session can track progress in the
+//     chat's current coordinates without overwriting the recorded value
 //   - cleared by clearVectorizationTip (parity with clearAutoSyncMarker)
 const _vectorizationTipByUuid = new Map(); // chatUUID → number (tip)
+const _tipVerifiedForChat = new Map(); // chatUUID → chatId the session tip was verified (and rebased) for
 
 /**
  * Sync getter. On in-memory miss, warms the cache from the persisted
@@ -85,28 +93,25 @@ export function setVectorizationTip(chatUUID, tip) {
 }
 
 /**
- * Replace a stale positional tip after the effective chat coordinate space
- * demonstrably shrank. Normal writes remain monotonic through
- * setVectorizationTip(); this deliberately non-monotonic path is only used
- * when the old tip is beyond the current end of the chat.
+ * Rebase a tip that lies beyond the open chat into the chat's current
+ * coordinates, after the effective coordinate space demonstrably shrank.
+ * In memory only: the persisted value stays the recorded coverage, so a rebase
+ * computed against one chat file (e.g. a short branch sharing this UUID) can
+ * never become another file's coverage, and the next per-file verification
+ * re-derives it from the backend.
  */
-function repairVectorizationTipAfterShrink(chatUUID, chatLength, repairedTip) {
+function rebaseVectorizationTipAfterShrink(chatUUID, chatLength, rebasedTip) {
     if (!chatUUID) return;
     const current = getVectorizationTip(chatUUID);
     if (typeof current === 'number' && current <= chatLength) return;
-
-    _vectorizationTipByUuid.set(chatUUID, repairedTip);
-    const store = extension_settings?.vectfox;
-    if (store) {
-        if (!store.eventbase_vectorization_tip) store.eventbase_vectorization_tip = {};
-        store.eventbase_vectorization_tip[chatUUID] = repairedTip;
-    }
+    _vectorizationTipByUuid.set(chatUUID, rebasedTip);
 }
 
 /** Clear the cached + persisted tip (e.g. when the user clears EventBase for this chat). */
 export function clearVectorizationTip(chatUUID) {
     if (!chatUUID) return;
     _vectorizationTipByUuid.delete(chatUUID);
+    _tipVerifiedForChat.delete(chatUUID);
     const store = extension_settings?.vectfox?.eventbase_vectorization_tip;
     if (store && Object.prototype.hasOwnProperty.call(store, chatUUID)) {
         delete store[chatUUID];
@@ -119,6 +124,7 @@ export function clearVectorizationTip(chatUUID) {
 // sweep they accumulate one stale entry per chat deleted OUTSIDE the EventBase flow.
 const _ORPHANABLE_CHAT_MAPS = [
     'eventbase_autosync_start_marker',
+    'eventbase_autosync_recheck_from',
     'eventbase_last_used_window_size',
     'eventbase_vectorization_tip',
 ];
@@ -152,7 +158,10 @@ export function pruneOrphanedChatMaps(liveUuids) {
     }
     // Drop in-memory tip entries for the same orphans (their persisted copy is gone).
     for (const uuid of [..._vectorizationTipByUuid.keys()]) {
-        if (!liveUuids.has(uuid)) _vectorizationTipByUuid.delete(uuid);
+        if (!liveUuids.has(uuid)) {
+            _vectorizationTipByUuid.delete(uuid);
+            _tipVerifiedForChat.delete(uuid);
+        }
     }
     if (removed > 0) {
         saveSettingsDebounced();
@@ -162,22 +171,28 @@ export function pruneOrphanedChatMaps(liveUuids) {
 }
 
 /**
- * Async cache-miss reader. On hit (in-memory OR persisted, via getVectorizationTip),
- * returns the tip immediately with no backend round-trip. Only when nothing is
- * known yet does it probe the backend via listChunks ONCE, populate the cache, and
- * return the value. Same shape as stampAutoSyncMarker's existing scan, so cost on a
- * genuinely-cold chat is the same as the existing marker-stamp flow.
+ * Async verified reader. The first read after the open chat FILE changes probes
+ * the backend via listChunks and replaces the cached + persisted tip with
+ * max(source_window_end)+1 — the backend is the truth, so a stale recorded value
+ * (too low or too high) is corrected rather than trusted. Later reads while the
+ * same file stays open return the session cache with no round-trip. Same scan
+ * shape as stampAutoSyncMarker, so the cost is one listChunks per chat switch.
+ *
+ * When the backend can't report positions (no items carry source_window_end —
+ * e.g. standard without the plugin) or the probe throws, the recorded value is
+ * returned instead.
  *
  * @param {string} chatUUID
  * @param {string} collectionId  - Bare or registry-key form; passed straight to listChunks.
  * @param {object} settings
- * @returns {Promise<number|null>}  Tip, or null if the collection has no events yet.
+ * @returns {Promise<number|null>}  Tip, or null if nothing is known.
  */
 export async function ensureVectorizationTip(chatUUID, collectionId, settings) {
     if (!chatUUID) return null;
     const cached = getVectorizationTip(chatUUID); // in-memory, else warms from persisted
-    if (typeof cached === 'number') return cached;
-    if (!collectionId) return null;
+    const recorded = typeof cached === 'number' ? cached : null;
+    const chatId = getCurrentChatId() ?? '';
+    if (!collectionId || _tipVerifiedForChat.get(chatUUID) === chatId) return recorded;
     try {
         const { getBackend } = await import('../backends/backend-manager.js');
         const backendInstance = await getBackend(settings);
@@ -188,13 +203,24 @@ export async function ensureVectorizationTip(chatUUID, collectionId, settings) {
             const end = it?.metadata?.source_window_end;
             if (typeof end === 'number' && end > maxEnd) maxEnd = end;
         }
-        if (maxEnd < 0) return null;
+        _tipVerifiedForChat.set(chatUUID, chatId);
+        if (maxEnd < 0) return recorded;
+
         const tip = maxEnd + 1;
         _vectorizationTipByUuid.set(chatUUID, tip);
+        const store = extension_settings?.vectfox;
+        if (store && store.eventbase_vectorization_tip?.[chatUUID] !== tip) {
+            if (!store.eventbase_vectorization_tip) store.eventbase_vectorization_tip = {};
+            if (recorded !== null && recorded !== tip) {
+                log.lifecycle(`[EventBase VectorizationTip] corrected recorded tip from backend: uuid=${chatUUID}, recorded=${recorded}, backend=${tip}`);
+            }
+            store.eventbase_vectorization_tip[chatUUID] = tip;
+            saveSettingsDebounced();
+        }
         return tip;
     } catch (err) {
-        log.warn(`[EventBase VectorizationTip] probe failed for ${collectionId} — falling back to marker:`, err?.message || err);
-        return null;
+        log.warn(`[EventBase VectorizationTip] probe failed for ${collectionId} — using recorded tip:`, err?.message || err);
+        return recorded;
     }
 }
 
@@ -504,8 +530,11 @@ export function getAutoSyncMarker(chatUUID) {
 
 /**
  * Manually reposition auto-sync in the current effective (ILS-expanded) chat.
- * Keep stored events and content fingerprints intact. Lower the positional tip
- * when needed so tip-based fast-forward cannot undo the user's restart point.
+ * Keep stored events, content fingerprints AND the coverage tip intact — moving
+ * the restart point does not change what is vectorized. Instead the start point
+ * is recorded as a pending re-check (see hasPendingAutoSyncRecheck), which makes
+ * auto-sync bypass the positional tip fast-forward so windows from here are
+ * checked by content fingerprint rather than skipped by position.
  * No backend writes or extraction are performed here.
  */
 export function setAutoSyncStartPoint(chatUUID, startIndex, settings) {
@@ -517,16 +546,39 @@ export function setAutoSyncStartPoint(chatUUID, startIndex, settings) {
     const marker = getManualAutoSyncMarker(startIndex, chatLength, settings);
     if (!store.eventbase_autosync_start_marker) store.eventbase_autosync_start_marker = {};
     store.eventbase_autosync_start_marker[chatUUID] = marker;
-
-    const tip = getVectorizationTip(chatUUID);
-    if (typeof tip !== 'number' || tip > marker) {
-        _vectorizationTipByUuid.set(chatUUID, marker);
-        if (!store.eventbase_vectorization_tip) store.eventbase_vectorization_tip = {};
-        store.eventbase_vectorization_tip[chatUUID] = marker;
-    }
+    if (!store.eventbase_autosync_recheck_from) store.eventbase_autosync_recheck_from = {};
+    store.eventbase_autosync_recheck_from[chatUUID] = marker;
     saveSettingsDebounced();
     log.lifecycle(`[EventBase] Manual auto-sync start point: uuid=${chatUUID}, marker=${marker}, chatLength=${chatLength}`);
     return marker;
+}
+
+/**
+ * True while a manual start point is waiting for auto-sync to re-check from it.
+ * The pending entry is only honored while it still equals the live marker, so
+ * any other marker write (stamp, shrink repair, clear) retires it implicitly.
+ * @param {string} chatUUID
+ * @returns {boolean}
+ */
+export function hasPendingAutoSyncRecheck(chatUUID) {
+    if (!chatUUID) return false;
+    const recheckFrom = extension_settings?.vectfox?.eventbase_autosync_recheck_from?.[chatUUID];
+    return typeof recheckFrom === 'number' && recheckFrom === getAutoSyncMarker(chatUUID);
+}
+
+/**
+ * Retire a pending manual re-check — called after an auto-sync run has walked
+ * every window from the start point, leaving them fingerprinted at the auto-sync
+ * window size so the normal fast-forward covers them from now on.
+ * @param {string} chatUUID
+ */
+export function clearAutoSyncRecheck(chatUUID) {
+    const store = extension_settings?.vectfox?.eventbase_autosync_recheck_from;
+    if (!store || !chatUUID) return;
+    if (Object.prototype.hasOwnProperty.call(store, chatUUID)) {
+        delete store[chatUUID];
+        saveSettingsDebounced();
+    }
 }
 
 /**
@@ -535,6 +587,7 @@ export function setAutoSyncStartPoint(chatUUID, startIndex, settings) {
  * @param {string} chatUUID
  */
 export function clearAutoSyncMarker(chatUUID) {
+    clearAutoSyncRecheck(chatUUID);
     const store = extension_settings?.vectfox?.eventbase_autosync_start_marker;
     if (!store || !chatUUID) return;
     if (Object.prototype.hasOwnProperty.call(store, chatUUID)) {
@@ -548,7 +601,8 @@ export function clearAutoSyncMarker(chatUUID) {
  * expected after destructive InlineSummary flattening or message deletion.
  * The restart point backs up over the two most recent committed auto-sync
  * windows; normal fingerprint dedup prevents needless extraction when their
- * contents did not actually change.
+ * contents did not actually change. The tip is rebased for this session only —
+ * the recorded coverage is left alone (see rebaseVectorizationTipAfterShrink).
  */
 export function repairAutoSyncCoordinatesAfterShrink(chatUUID, chatLength, settings) {
     if (!chatUUID) return 0;
@@ -556,9 +610,16 @@ export function repairAutoSyncCoordinatesAfterShrink(chatUUID, chatLength, setti
     if (!store) return 0;
 
     const repairedMarker = getShrinkRecoveryMarker(chatLength, settings);
+    // A pending manual start point was validated against this chat's current
+    // coordinates, so it stands; only the session tip needs rebasing.
+    const manualMarker = getAutoSyncMarker(chatUUID);
+    if (hasPendingAutoSyncRecheck(chatUUID) && manualMarker <= chatLength) {
+        rebaseVectorizationTipAfterShrink(chatUUID, chatLength, repairedMarker);
+        return manualMarker;
+    }
     if (!store.eventbase_autosync_start_marker) store.eventbase_autosync_start_marker = {};
     store.eventbase_autosync_start_marker[chatUUID] = repairedMarker;
-    repairVectorizationTipAfterShrink(chatUUID, chatLength, repairedMarker);
+    rebaseVectorizationTipAfterShrink(chatUUID, chatLength, repairedMarker);
     saveSettingsDebounced();
     log.lifecycle(`[EventBase] Repaired stale auto-sync coordinates after chat shrink: uuid=${chatUUID}, chatLength=${chatLength}, marker=${repairedMarker}`);
     return repairedMarker;
@@ -603,6 +664,22 @@ export async function stampAutoSyncMarker(chatUUID, settings, options = {}) {
         saveSettingsDebounced();
         log.lifecycle(`[EventBase] AutoSyncMarker stamped (floor=chatLength): uuid=${chatUUID}, marker=${chatLength}`);
         return chatLength;
+    }
+
+    // A pending manual start point is the user's explicit restart — keep it rather
+    // than replacing it with smart placement. Re-align it in case the auto-sync
+    // window size changed since it was set (this is also the turns-change re-stamp).
+    if (hasPendingAutoSyncRecheck(chatUUID)) {
+        try {
+            const manual = getManualAutoSyncMarker(getAutoSyncMarker(chatUUID), chatLength, settings);
+            store.eventbase_autosync_start_marker[chatUUID] = manual;
+            store.eventbase_autosync_recheck_from[chatUUID] = manual;
+            saveSettingsDebounced();
+            log.lifecycle(`[EventBase] AutoSyncMarker kept manual start point: uuid=${chatUUID}, marker=${manual}, chatLength=${chatLength}`);
+            return manual;
+        } catch {
+            // Start point no longer fits this chat — fall through to smart placement.
+        }
     }
 
     // Resolve THE active EventBase collection for this chat (lock-aware), so the

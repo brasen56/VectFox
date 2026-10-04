@@ -290,15 +290,20 @@ const defaultSettings = {
     // when the user changes window_size before enabling auto-sync.
     // Keyed by chat UUID.
     eventbase_autosync_start_marker: {},
+    // Per-chat manual start point awaiting an auto-sync re-check (set by the
+    // "Auto-sync start point" control). Honored only while it equals the marker.
+    // Keyed by chat UUID.
+    eventbase_autosync_recheck_from: {},
     // Per-chat record of the window_size that was last used for a successful extraction
     // run. Used by the Vectorize Content → Continue path to detect window-size changes
     // and warn the user before triggering a full re-extraction.
     // Keyed by chat UUID.
     eventbase_last_used_window_size: {},
-    // Per-chat persisted vectorization tip (= max(source_window_end)+1, the first
-    // uncovered message). Persisted so the "N msgs vectorized" display is correct
-    // immediately after a reload WITHOUT a backend probe — benefits standard+plugin
-    // and qdrant+plugin users. Keyed by chat UUID. See core/eventbase-store.js.
+    // Per-chat recorded vectorization tip (= max(source_window_end)+1, the first
+    // uncovered message). Re-verified against the backend whenever the open chat
+    // file changes; this persisted copy is the fallback when the backend can't report
+    // positions. Coverage facts only — never a restart point. Keyed by chat UUID.
+    // See core/eventbase-store.js.
     eventbase_vectorization_tip: {},
     eventbase_min_importance_store: 3,            // Drop events below this importance before storing
     eventbase_max_events_per_window: 3,           // Hard cap on events returned per LLM call

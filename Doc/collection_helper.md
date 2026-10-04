@@ -466,14 +466,18 @@ Because un-kept swipes only ever live on the active turn (which is past the boun
 
 ### Vectorization tip cache — honest "vectorization: N msgs" display
 
-The auto-sync start marker is stamped *once* at enable time and never advances as new windows extract. Using it for the UI count produces a frozen, misleading number. The vectorization tip is the live truth source. Not persisted — `setVectorizationTip` keeps it current during the session (backend-agnostic). On a cold cache after page reload, `ensureVectorizationTip` probes the backend via `listChunks` to backfill it; this works for Qdrant and Standard+plugin. For Standard without the similharity plugin the probe returns `null` (native fallback only returns hashes, no metadata), so the UI falls back to `markerValue` until the next ingestion run refreshes the in-memory cache.
+The auto-sync start marker is stamped *once* at enable time and never advances as new windows extract. Using it for the UI count produces a frozen, misleading number. The vectorization tip is the live truth source. `setVectorizationTip` keeps it current during the session (backend-agnostic) and records it in `eventbase_vectorization_tip`.
+
+**Coverage vs. restart point.** The recorded tip holds coverage facts only — ingestion, a backend probe, import restore, or a clear. Restart points live in the marker: the shrink repair and the manual start point move the marker and never write the recorded tip. (Both used to overwrite it, and the lowered value was then reported as coverage and fed the enable-time backlog prompt.) A manual start point is recorded in `eventbase_autosync_recheck_from` so auto-sync bypasses the positional tip fast-forward until it has re-checked from there; the entry only counts while it equals the live marker.
+
+**Verification.** `ensureVectorizationTip` probes the backend via `listChunks` on the first read after the open chat *file* changes and replaces the recorded tip with the backend's value. Branches, checkpoints and imports share one chat UUID (`chat_metadata.integrity`), so they share the recorded tip — but not one length. When the probed tip lies beyond the open chat, `repairAutoSyncCoordinatesAfterShrink` rebases the tip **in memory only**, so a rebase computed against one file can't become another file's coverage. A pending manual start point that fits the chat survives the shrink repair; only the session tip is rebased. For Standard without the similharity plugin the probe finds no `source_window_end` (native fallback only returns hashes), so the recorded value is used as-is.
 
 | Function | File | Notes |
 |---|---|---|
-| `getVectorizationTip(chatUUID)` | [eventbase-store.js](../core/eventbase-store.js) | Sync; returns cached tip or `undefined`. UI falls back to `markerValue` when undefined. |
+| `getVectorizationTip(chatUUID)` | [eventbase-store.js](../core/eventbase-store.js) | Sync; returns the session tip (warming from the recorded value) or `undefined`. Unverified until `ensureVectorizationTip` has run for the open chat file. UI falls back to `markerValue` when undefined. |
 | `setVectorizationTip(chatUUID, tip)` | [eventbase-store.js](../core/eventbase-store.js) | Sync, monotonic max — out-of-order calls won't regress. Called by `runEventBaseIngestion` after every successful window via `setVectorizationTip(uuid, win.end + 1)`. |
 | `clearVectorizationTip(chatUUID)` | [eventbase-store.js](../core/eventbase-store.js) | Call when deleting or clearing EventBase for a chat (parity with `clearAutoSyncMarker`). |
-| `ensureVectorizationTip(chatUUID, collectionId, settings)` | [eventbase-store.js](../core/eventbase-store.js) | Async. Returns cached tip immediately on hit; probes backend once on session-cold miss, populates cache, returns value. Returns `null` when collection has no events. Called by `getChatAutoSyncStatus`. |
+| `ensureVectorizationTip(chatUUID, collectionId, settings)` | [eventbase-store.js](../core/eventbase-store.js) | Async. Probes the backend whenever the open chat file changes and corrects the recorded tip; later reads return the session cache. Falls back to the recorded value when the probe finds no positions or fails. Called by `getChatAutoSyncStatus` and the ingestion tip fallback. |
 
 ### Last-used window size — window-size-change detection for Continue
 

@@ -190,9 +190,15 @@ export function applyGhosting(chat, settings) {
         const fullChat = getContext()?.chat;
         if (Array.isArray(fullChat)) {
             vectorizedInCore = 0;
-            const { topLevelExclusive } = mapEffectiveTipToTopLevel(fullChat, tip, chat_metadata);
-            for (let k = 0; k < topLevelExclusive; k++) {
-                if (fullChat[k] && !fullChat[k].is_system) vectorizedInCore++;
+            const { topLevelExclusive, effectiveLength } = mapEffectiveTipToTopLevel(fullChat, tip, chat_metadata);
+            // A tip past the end of the chat was recorded in an older, longer
+            // coordinate space (flattening / a longer sibling sharing this UUID)
+            // and hasn't been rebased for this chat yet — it proves nothing about
+            // which current messages are covered, so ghost nothing on it.
+            if (tip <= effectiveLength) {
+                for (let k = 0; k < topLevelExclusive; k++) {
+                    if (fullChat[k] && !fullChat[k].is_system) vectorizedInCore++;
+                }
             }
         }
 

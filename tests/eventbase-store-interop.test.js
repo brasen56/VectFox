@@ -101,7 +101,11 @@ vi.mock('../backends/backend-manager.js', () => ({
     getBackend: vi.fn(async () => ({ listChunks: (...a) => listChunksMock(...a) })),
 }));
 
-import { getEventsSince, setAutoSyncStartPoint, getAutoSyncMarker, getVectorizationTip, clearVectorizationTip } from '../core/eventbase-store.js';
+import {
+    getEventsSince, setAutoSyncStartPoint, getAutoSyncMarker, getVectorizationTip, clearVectorizationTip,
+    ensureVectorizationTip, repairAutoSyncCoordinatesAfterShrink, stampAutoSyncMarker,
+    hasPendingAutoSyncRecheck, clearAutoSyncRecheck, clearAutoSyncMarker,
+} from '../core/eventbase-store.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID } from '../core/collection-ids.js';
 import { getCurrentChatId, saveSettingsDebounced } from '../../../../../script.js';
@@ -125,16 +129,37 @@ describe('setAutoSyncStartPoint', () => {
         prepareMessagesForEventBase.mockImplementation(messages => ({ messages: messages || [] }));
     });
 
-    it('persists a window-aligned restart and replaces a stale cached tip', () => {
+    it('persists a window-aligned restart without touching recorded coverage', () => {
         expect(getVectorizationTip(CHAT_UUID)).toBe(100);
         expect(setAutoSyncStartPoint(CHAT_UUID, '15', { eventbase_autosync_window_turns: 3 })).toBe(12);
         expect(getAutoSyncMarker(CHAT_UUID)).toBe(12);
-        expect(getVectorizationTip(CHAT_UUID)).toBe(12);
-        expect(extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID]).toBe(12);
+        // Moving the restart point does not change what is vectorized.
+        expect(getVectorizationTip(CHAT_UUID)).toBe(100);
+        expect(extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID]).toBe(100);
+        expect(hasPendingAutoSyncRecheck(CHAT_UUID)).toBe(true);
         expect(extension_settings.vectfox.eventbase_autosync_start_marker.other).toBe(8);
         expect(extension_settings.vectfox.eventbase_window_cache[CHAT_UUID]).toEqual(['preserved-fingerprint']);
         expect(saveSettingsDebounced).toHaveBeenCalled();
         expect(listChunksMock).not.toHaveBeenCalled();
+    });
+
+    it('retires the pending re-check once the marker moves elsewhere', () => {
+        setAutoSyncStartPoint(CHAT_UUID, 10, {});
+        expect(hasPendingAutoSyncRecheck(CHAT_UUID)).toBe(true);
+        extension_settings.vectfox.eventbase_autosync_start_marker[CHAT_UUID] = 24;
+        expect(hasPendingAutoSyncRecheck(CHAT_UUID)).toBe(false);
+    });
+
+    it('clears the pending re-check with the marker and on completion', () => {
+        setAutoSyncStartPoint(CHAT_UUID, 10, {});
+        clearAutoSyncRecheck(CHAT_UUID);
+        expect(hasPendingAutoSyncRecheck(CHAT_UUID)).toBe(false);
+        expect(getAutoSyncMarker(CHAT_UUID)).toBe(10);
+
+        setAutoSyncStartPoint(CHAT_UUID, 10, {});
+        clearAutoSyncMarker(CHAT_UUID);
+        expect(hasPendingAutoSyncRecheck(CHAT_UUID)).toBe(false);
+        expect(extension_settings.vectfox.eventbase_autosync_recheck_from[CHAT_UUID]).toBeUndefined();
     });
 
     it('validates against expanded originals, not visible message count', () => {
@@ -160,6 +185,129 @@ describe('setAutoSyncStartPoint', () => {
         extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID] = 4;
         expect(setAutoSyncStartPoint(CHAT_UUID, 20, {})).toBe(20);
         expect(getVectorizationTip(CHAT_UUID)).toBe(4);
+    });
+});
+
+describe('ensureVectorizationTip — recorded tip is verified, not trusted', () => {
+    const TURNS_20 = { eventbase_autosync_window_turns: 20 };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        clearVectorizationTip(CHAT_UUID);
+        // The reported state: a stale recorded tip far below the backend's.
+        extension_settings.vectfox = {
+            eventbase_autosync_start_marker: { [CHAT_UUID]: 3480 },
+            eventbase_vectorization_tip: { [CHAT_UUID]: 658 },
+        };
+        getCurrentChatId.mockReturnValue('Newish (1)');
+        listChunksMock.mockResolvedValue({ items: [makeItem(12), makeItem(9329), makeItem(400)] });
+    });
+
+    it('replaces a stale recorded tip with the backend high-water mark', async () => {
+        expect(getVectorizationTip(CHAT_UUID)).toBe(658);
+        expect(await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {})).toBe(9330);
+        expect(getVectorizationTip(CHAT_UUID)).toBe(9330);
+        expect(extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID]).toBe(9330);
+        expect(listChunksMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('probes again only when the open chat file changes', async () => {
+        await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {});
+        await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {});
+        expect(listChunksMock).toHaveBeenCalledTimes(1);
+
+        // A branch / checkpoint sharing the UUID is a different file → re-verify.
+        getCurrentChatId.mockReturnValue('Newish (1) - Branch #2');
+        await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {});
+        expect(listChunksMock).toHaveBeenCalledTimes(2);
+
+        getCurrentChatId.mockReturnValue('Newish (1)');
+        await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {});
+        expect(listChunksMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('falls back to the recorded tip when the backend reports no positions', async () => {
+        listChunksMock.mockResolvedValue({ items: [{ text: 'no metadata', metadata: {} }] });
+        expect(await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {})).toBe(658);
+        expect(extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID]).toBe(658);
+    });
+
+    it('falls back to the recorded tip and retries later when the probe fails', async () => {
+        listChunksMock.mockRejectedValueOnce(new Error('Qdrant unreachable'));
+        expect(await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {})).toBe(658);
+        expect(await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {})).toBe(9330);
+        expect(listChunksMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('rebases a beyond-chat tip for this session only, keeping recorded coverage', async () => {
+        await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {});
+        expect(repairAutoSyncCoordinatesAfterShrink(CHAT_UUID, 3615, TURNS_20)).toBe(3480);
+        expect(getAutoSyncMarker(CHAT_UUID)).toBe(3480);
+        expect(getVectorizationTip(CHAT_UUID)).toBe(3480);
+        expect(extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID]).toBe(9330);
+        // Same file, same session: the rebase sticks without another probe.
+        expect(await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {})).toBe(3480);
+        expect(listChunksMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("a short sibling's rebase cannot become the long chat's coverage", async () => {
+        await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {});
+        repairAutoSyncCoordinatesAfterShrink(CHAT_UUID, 3615, TURNS_20);
+
+        getCurrentChatId.mockReturnValue('Newish (1) - Branch #2');
+        await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {});
+        repairAutoSyncCoordinatesAfterShrink(CHAT_UUID, 276, TURNS_20);
+        expect(getVectorizationTip(CHAT_UUID)).toBe(120);
+        expect(extension_settings.vectfox.eventbase_vectorization_tip[CHAT_UUID]).toBe(9330);
+
+        // Back on the long chat: re-derived from the backend, not the branch's 120.
+        getCurrentChatId.mockReturnValue('Newish (1)');
+        expect(await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {})).toBe(9330);
+        expect(repairAutoSyncCoordinatesAfterShrink(CHAT_UUID, 3615, TURNS_20)).toBe(3480);
+        expect(getVectorizationTip(CHAT_UUID)).toBe(3480);
+    });
+
+    it('a pending manual start point survives the shrink repair', async () => {
+        getChatUUID.mockReturnValue(CHAT_UUID);
+        getContext.mockReturnValue({ chat: Array.from({ length: 3615 }, () => ({ mes: 'message' })) });
+        prepareMessagesForEventBase.mockImplementation(messages => ({ messages: messages || [] }));
+
+        expect(setAutoSyncStartPoint(CHAT_UUID, 0, TURNS_20)).toBe(0);
+        await ensureVectorizationTip(CHAT_UUID, COLLECTION_ID, {});
+        expect(repairAutoSyncCoordinatesAfterShrink(CHAT_UUID, 3615, TURNS_20)).toBe(0);
+        expect(getAutoSyncMarker(CHAT_UUID)).toBe(0);
+        expect(hasPendingAutoSyncRecheck(CHAT_UUID)).toBe(true);
+        // Coverage is still reported separately from the restart point.
+        expect(getVectorizationTip(CHAT_UUID)).toBe(3480);
+    });
+});
+
+describe('stampAutoSyncMarker — manual start point', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        clearVectorizationTip(CHAT_UUID);
+        extension_settings.vectfox = {
+            eventbase_autosync_start_marker: { [CHAT_UUID]: 100 },
+            eventbase_vectorization_tip: { [CHAT_UUID]: 100 },
+        };
+        getChatUUID.mockReturnValue(CHAT_UUID);
+        getCurrentChatId.mockReturnValue('chat');
+        getContext.mockReturnValue({ chat: Array.from({ length: 30 }, () => ({ mes: 'message' })) });
+        prepareMessagesForEventBase.mockImplementation(messages => ({ messages: messages || [] }));
+    });
+
+    it('keeps a pending start point, re-aligned to the current window size', async () => {
+        setAutoSyncStartPoint(CHAT_UUID, 14, {}); // 1 turn → marker 14
+        expect(await stampAutoSyncMarker(CHAT_UUID, { eventbase_autosync_window_turns: 3 })).toBe(12);
+        expect(getAutoSyncMarker(CHAT_UUID)).toBe(12);
+        expect(hasPendingAutoSyncRecheck(CHAT_UUID)).toBe(true);
+        expect(listChunksMock).not.toHaveBeenCalled();
+    });
+
+    it('"Just keep up from here" overrides the start point and retires the re-check', async () => {
+        setAutoSyncStartPoint(CHAT_UUID, 14, {});
+        expect(await stampAutoSyncMarker(CHAT_UUID, {}, { floor: 'chatLength' })).toBe(30);
+        expect(hasPendingAutoSyncRecheck(CHAT_UUID)).toBe(false);
     });
 });
 
