@@ -35,6 +35,7 @@
  * ============================================================================
  */
 
+import { resolveCrossEncoderTimeoutMs } from './cross-encoder-settings.js';
 import {
     RETRIEVAL_TIMEOUT_DEFAULT_MS,
     RETRIEVAL_TIMEOUT_MIN_MS,
@@ -169,5 +170,6 @@ export function agenticRetrievalExtraBudgetMs(settings) {
  * @returns {number} milliseconds
  */
 export function resolveEventBaseRetrievalTimeoutMs(settings) {
-    return resolveRetrievalTimeoutMs(settings) + agenticRetrievalExtraBudgetMs(settings);
+    return resolveRetrievalTimeoutMs(settings) + agenticRetrievalExtraBudgetMs(settings)
+        + (settings?.eventbase_cross_encoder_enabled === true ? resolveCrossEncoderTimeoutMs(settings) : 0);
 }

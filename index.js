@@ -98,23 +98,15 @@ const defaultSettings = {
     openai_model: 'text-embedding-ada-002',
     electronhub_model: 'text-embedding-3-small',
     embedding_openrouter_model: 'openai/text-embedding-3-large',
-    // OpenRouter key: stored in SECRET_KEYS.OPENROUTER (ST's shared slot, not in
-    // defaults). Reader: core/api-keys.js::getOpenRouterApiKey. The legacy
-    // plaintext slot used to live here as `openrouter_api_key: ''` but kept
-    // re-appearing in settings.json — every UI handler does
-    // Object.assign(extension_settings.vectfox, settings) which would re-add
-    // any default-declared empty field after migrateLegacyApiKeys() deleted it.
+    // LLM keys live in the VectFox-owned vectfox_openrouter_keys array.
+    // Embedding requests still use ST's server-side OpenRouter secret.
+    // Legacy key fields stay out of defaults so UI writebacks cannot revive them.
     cohere_model: 'embed-english-v3.0',
     embedding_ollama_model: 'mxbai-embed-large',
     ollama_keep: false,
     embedding_vllm_model: '',
-    // vLLM key: stored in ST's SECRET_KEYS.CUSTOM (chat-side, via
-    // chat_completion_source: 'custom' proxy) AND SECRET_KEYS.VLLM
-    // (embedding-side, via ST's vector handler). Dual-write from VectFox UI
-    // preserves the "one shared key" UX. NO plaintext field in settings.json
-    // post-2026-05-26. Migration drains any legacy `vllm_api_key` plaintext
-    // into both slots on first load. Reader: core/api-keys.js::getCustomApiKey
-    // (presence/masked-value indicator only; real key lives server-side).
+    // Custom/vLLM LLM keys live in VectFox's vectfox_custom_keys array.
+    // Embeddings still use ST's VLLM secret. No shared-slot writes from VectFox.
     webllm_model: '',
     google_model: 'text-embedding-005',
 
@@ -176,9 +168,8 @@ const defaultSettings = {
     chat_provider: 'openrouter', // 'openrouter', 'vllm'
     // summarize_openrouter_api_key and summarize_vllm_api_key are NOT in
     // defaults — they're legacy plaintext fields drained by
-    // migrateLegacyApiKeys() into SECRET_KEYS.OPENROUTER and
-    // SECRET_KEYS.CUSTOM (chat-side) + SECRET_KEYS.VLLM (embedding-side)
-    // respectively. Keeping them here would cause the same Object.assign
+    // migrateLegacyApiKeys() into the isolated VectFox key arrays.
+    // Keeping them here would cause the same Object.assign
     // re-introduction loop documented above on the embedding-side keys.
     // Readers: core/api-keys.js helpers.
     chat_model: '',              // Model ID for summarization (e.g. 'google/gemini-flash-1.5-8b')
@@ -309,6 +300,12 @@ const defaultSettings = {
     eventbase_max_events_per_window: 3,           // Hard cap on events returned per LLM call
     eventbase_retrieval_top_k: 10,                // Events to retrieve per generation
     eventbase_retrieval_overfetch: 40,            // Candidate count per collection/query before rerank
+    eventbase_cross_encoder_enabled: false,
+    eventbase_cross_encoder_api_url: '',
+    eventbase_cross_encoder_api_key: '',
+    eventbase_cross_encoder_model: '',
+    eventbase_cross_encoder_max_documents: 50,
+    eventbase_cross_encoder_timeout_ms: 10000,
     eventbase_retrieval_min_importance: 1,        // Minimum importance for retrieval
     eventbase_injection_format: 'densetext',      // Injection format: 'densetext' or 'jsonarray'
     eventbase_retrieval_filters_enabled: true,
@@ -415,9 +412,8 @@ const defaultSettings = {
     agent_model: '',                       // '' → inherit chat_model
     // agentic_retrieval_openrouter_api_key and agentic_retrieval_vllm_api_key
     // are NOT in defaults — same Object.assign re-introduction reason as the
-    // other legacy *_api_key slots above. Migration drains them into
-    // SECRET_KEYS.OPENROUTER and SECRET_KEYS.CUSTOM + SECRET_KEYS.VLLM
-    // (dual-write for vLLM, see embedding/chat split in api-keys.js header).
+    // other legacy *_api_key slots above. Migration preserves them in the
+    // VectFox-owned key arrays, separate from ST's main-chat credentials.
     agent_vllm_url: '',                    // '' → inherit chat_vllm_url
     agentic_retrieval_chat_depth: 3,                   // # of past chat turns sent to planner (slider 1-10)
     agentic_retrieval_candidates_to_show: 12,          // Pre-search slice shown to planner (slider 5-20)
@@ -712,11 +708,11 @@ jQuery(async () => {
         await saveSettings();
     }
 
-    // H-1 one-shot migration (2026-05-24): move plaintext *_api_key values
-    // from settings.json to ST secret_state. Runs AFTER the eventbase →
+    // Move legacy LLM keys into VectFox's isolated multi-key store.
+    // Runs AFTER the eventbase →
     // summarize copy above so any user who only had eventbase_* set gets
     // the value migrated correctly. Idempotent: empty fields = no-op.
-    // See plans/review-fix.md §H-1 and core/api-keys.js for the full design.
+    // Qdrant keeps its dedicated server secret; see core/api-keys.js.
     try {
         await migrateLegacyApiKeys();
     } catch (err) {

@@ -5,7 +5,7 @@
  * Single home for the OpenAI-compatible chat-completions plumbing that four
  * VectFox features previously each re-implemented (summarizer.js,
  * eventbase-extractor.js, agentic-retrieval.js, and reformat-extractor.js):
- * build request body → POST through ST's proxy → classify the response
+ * build request body → POST with an isolated key or ST's proxy → classify the response
  * (auth / model-config / connection / generic) → extract the reply → classify
  * an empty reply. Plus the LLM-output JSON-array parser both extraction
  * features shared verbatim, and the string-array coercion the two schemas
@@ -28,6 +28,7 @@
  */
 
 import { getRequestHeaders } from '../../../../../script.js';
+import { getVectFoxOpenRouterApiKey, getVectFoxCustomApiKey } from './api-keys.js';
 import { getModelConfigErrorMessage } from './model-http-errors.js';
 import { isConnectionError, notifyConnectionError, notifyUpstreamRejection } from './model-config-notifier.js';
 import { log } from './log.js';
@@ -66,6 +67,14 @@ export class LlmCallError extends Error {
 /** Human label for error messages. */
 function _providerLabel(provider) {
     return (provider === 'vllm' || provider === 'custom') ? 'vLLM' : 'OpenRouter';
+}
+
+/** Preserve explicit endpoints and version segments used by custom providers. */
+export function buildCustomChatCompletionsUrl(baseUrl) {
+    const url = String(baseUrl || '').trim().replace(/\/+$/, '');
+    if (/\/chat\/completions$/i.test(url)) return url;
+    if (/\/v\d+$/i.test(url)) return `${url}/chat/completions`;
+    return `${url}/v1/chat/completions`;
 }
 
 /**
@@ -190,10 +199,10 @@ export function resolveModelParameterStyle(settings = {}) {
 }
 
 /**
- * POST a chat-completion through SillyTavern's proxy and return the assistant
- * content. Handles both providers (OpenRouter and vLLM/custom route through the
- * same `/api/backends/chat-completions/generate` proxy — the real key is read
- * server-side; the client only holds a masked presence indicator).
+ * POST a chat-completion using the active VectFox key and return the assistant
+ * content. Isolated keys call the provider directly; when no isolated key is
+ * saved, use SillyTavern's proxy for compatibility with shared server secrets.
+ * All LLM features keep the same request shaping and error classification.
  *
  * Presence checks for api-key / url / model are the CALLER's job (they own the
  * feature-specific "where to set it" message) and must run before this.
@@ -251,13 +260,30 @@ export async function postChatCompletion({
     // accepted it without error), so it needs no per-model gate.
     if (reasoningEffort) body.reasoning_effort = reasoningEffort;
 
-    const requestBody = (provider === 'vllm' || provider === 'custom')
+    const isCustom = provider === 'vllm' || provider === 'custom';
+    const isolatedKey = isCustom ? getVectFoxCustomApiKey() : getVectFoxOpenRouterApiKey();
+    let url = '/api/backends/chat-completions/generate';
+    let headers = getRequestHeaders();
+    let requestBody = isCustom
         ? { chat_completion_source: 'custom', custom_url: vllmUrl, ...body }
         : { chat_completion_source: 'openrouter', ...body };
 
-    const response = await fetch('/api/backends/chat-completions/generate', {
+    if (isolatedKey) {
+        if (isCustom && !String(vllmUrl || '').trim()) {
+            throw new LlmCallError(`${contextLabel}: vLLM URL not configured.`, { kind: 'model_config', provider });
+        }
+        url = isCustom ? buildCustomChatCompletionsUrl(vllmUrl) : 'https://openrouter.ai/api/v1/chat/completions';
+        headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${isolatedKey}` };
+        if (!isCustom) {
+            headers['HTTP-Referer'] = 'https://github.com/brasen56/VectFox';
+            headers['X-Title'] = 'VectFox';
+        }
+        requestBody = body;
+    }
+
+    const response = await fetch(url, {
         method: 'POST',
-        headers: getRequestHeaders(),
+        headers,
         body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(timeoutMs),
     });

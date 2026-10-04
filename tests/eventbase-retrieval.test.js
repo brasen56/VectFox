@@ -68,7 +68,7 @@ vi.mock('../core/log.js', () => ({
     LOG_DOMAINS: [],
 }));
 
-import { retrieveEvents } from '../core/eventbase-retrieval.js';
+import { retrieveEvents, finalizeDeferredCrossEncoder } from '../core/eventbase-retrieval.js';
 
 const baseSettings = {
     vector_backend: 'standard',
@@ -97,6 +97,34 @@ beforeEach(() => {
 });
 
 describe('retrieveEvents', () => {
+    it('reranks only surviving candidates before coverage trim and supports deferred fallback', async () => {
+        const config = { ...baseSettings, eventbase_retrieval_top_k: 2, eventbase_retrieval_min_importance: 3,
+            eventbase_cross_encoder_enabled: true, eventbase_cross_encoder_api_url: 'http://localhost:8000/rerank', deduplication_depth: 5 };
+        const params = { searchText: 'scene', keywordQuery: 'current query', chatLength: 100,
+            skipLiveQuery: true, settings: config, additionalCandidates: [makeEvent(1),
+                makeEvent(2, { score: 0.1, _plannerQueryIndices: [0] }), makeEvent(3),
+                makeEvent(4, { importance: 1 }), makeEvent(5, { source_window_end: 99 })] };
+        const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ results: [
+            { index: 1, relevance_score: 0.99 }, { index: 0, relevance_score: 0.5 }, { index: 2, relevance_score: 0.1 },
+        ] }) }));
+        vi.stubGlobal('fetch', fetchMock);
+        try {
+            const deferred = await retrieveEvents({ ...params, skipCrossEncoder: true });
+            expect(fetchMock).not.toHaveBeenCalled();
+            const result = await finalizeDeferredCrossEncoder(deferred, params);
+            expect(result.events.map(e => e.event_id)).toEqual(['evt_3', 'evt_2']);
+            expect(result.debug.candidateOutcomes.evt_1.outcome).toBe('cut_at_trim');
+            expect(result.debug.candidateOutcomes.evt_3.outcome).toBe('injected');
+            expect(result.debug.candidateOutcomes.evt_4.outcome).toBe('failed_importance_filter');
+            expect(result.debug.candidateOutcomes.evt_5.outcome).toBe('removed_by_context_dedup');
+            expect(deferred.debug.candidateOutcomes.evt_1.outcome).toBe('injected');
+            expect(JSON.parse(fetchMock.mock.calls[0][1].body).documents).toHaveLength(3);
+            expect(result.debug.crossEncoder.used).toBe(true);
+            const direct = await retrieveEvents(params);
+            expect(direct.events.map(e => e.event_id)).toEqual(result.events.map(e => e.event_id));
+        } finally { vi.unstubAllGlobals(); }
+    });
+
     it('reserves per-query best survivors before score fill and traces the actual trim', async () => {
         const result = await retrieveEvents({ searchText: 'scene', chatLength: 100,
             skipLiveQuery: true, settings: { ...baseSettings, eventbase_retrieval_top_k: 3 },

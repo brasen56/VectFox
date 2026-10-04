@@ -12,13 +12,14 @@
 
 import { saveSettingsDebounced, getCurrentChatId, eventSource, event_types, getRequestHeaders } from '../../../../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu, getContext } from '../../../../extensions.js';
-import { writeSecret, deleteSecret, SECRET_KEYS, secret_state, readSecretState } from '../../../../secrets.js';
+import { writeSecret } from '../../../../secrets.js';
 import {
-    getOpenRouterApiKey,
-    getCustomApiKey,
+    getVectFoxCustomApiKey,
     getQdrantApiKey,
     fetchQdrantApiKeyPresence,
 } from '../core/api-keys.js';
+import { bindVectFoxKeySettings } from './key-settings.js';
+import { buildCustomChatCompletionsUrl } from '../core/llm-provider-call.js';
 import { getWebLlmProvider as getSharedWebLlmProvider } from '../providers/webllm.js';
 import StringUtils from '../utils/string-utils.js';
 import { openVisualizer } from './chunk-visualizer.js';
@@ -56,6 +57,7 @@ import {
     resolveAgenticMaxTokens,
 } from '../core/retrieval-budget.js';
 import { log } from '../core/log.js';
+import { CROSS_ENCODER_DEFAULTS, resolveCrossEncoderMaxDocuments, resolveCrossEncoderTimeoutMs } from '../core/cross-encoder-settings.js';
 
 /**
  * Renders the VectFox settings UI
@@ -754,7 +756,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <label for="VectFox_reformat_vllm_url"><small>vLLM Base URL</small></label>
                                 <input type="text" id="VectFox_reformat_vllm_url" class="vectfox-input"
                                     placeholder="(empty → inherit summarize URL)" />
-                                <small class="VectFox_hint">API key is shared with Embedding/Summarize/AgentMode — set it in Core → LLM Summarization.</small>
+                                <small class="VectFox_hint">Uses the active VectFox LLM key for this provider — manage it in Core → LLM Summarization.</small>
                             </div>
 
                             <label for="VectFox_reformat_batch_chars">
@@ -1221,6 +1223,37 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <label class="vectfox-label">Retrieval Candidate Pool <span id="VectFox_eventbase_retrieval_overfetch_val">40</span></label>
                                 <input type="range" id="VectFox_eventbase_retrieval_overfetch" min="1" max="200" step="1" class="vectfox-slider" />
                                 <small class="VectFox_hint">Candidates per collection/query before reranking. Default 40; never smaller than Top-K. Applies to live, archive, and AgentMode searches.</small>
+                            </div>
+
+                            <div class="vectfox-form-group">
+                                <label class="checkbox_label" for="VectFox_eventbase_cross_encoder_enabled">
+                                    <input id="VectFox_eventbase_cross_encoder_enabled" type="checkbox" />
+                                    Enable cross-encoder reranker (external API)
+                                </label>
+                                <small class="VectFox_hint">Optional second pass before Top-K, including AgentMode results. Requires a compatible /rerank API with browser CORS access. Sends the current query and event summaries/text to this endpoint. API key is stored in extension settings (not the server secret store); settings exports may include it.</small>
+                            </div>
+                            <div id="VectFox_eventbase_cross_encoder_options">
+                                <div class="vectfox-form-group">
+                                    <label class="vectfox-label" for="VectFox_eventbase_cross_encoder_api_url">Reranker API URL (base or full /rerank endpoint)</label>
+                                    <input id="VectFox_eventbase_cross_encoder_api_url" type="text" class="text_pole" autocomplete="off" />
+                                </div>
+                                <div class="vectfox-form-group">
+                                    <label class="vectfox-label" for="VectFox_eventbase_cross_encoder_api_key">Reranker API Key (optional for local servers)</label>
+                                    <input id="VectFox_eventbase_cross_encoder_api_key" type="password" class="text_pole" autocomplete="off" />
+                                </div>
+                                <div class="vectfox-form-group">
+                                    <label class="vectfox-label" for="VectFox_eventbase_cross_encoder_model">Reranker Model (provider default if blank)</label>
+                                    <input id="VectFox_eventbase_cross_encoder_model" type="text" class="text_pole" />
+                                </div>
+                                <div class="vectfox-form-group">
+                                    <label class="vectfox-label" for="VectFox_eventbase_cross_encoder_max_documents">Maximum Reranked Candidates (2–200)</label>
+                                    <input id="VectFox_eventbase_cross_encoder_max_documents" type="number" min="2" max="200" step="1" class="text_pole" />
+                                </div>
+                                <div class="vectfox-form-group">
+                                    <label class="vectfox-label" for="VectFox_eventbase_cross_encoder_timeout_ms">Reranker Timeout (ms, 1000–60000)</label>
+                                    <input id="VectFox_eventbase_cross_encoder_timeout_ms" type="number" min="1000" max="60000" step="1000" class="text_pole" />
+                                    <small class="VectFox_hint">Default 10 seconds; added to the EventBase retrieval budget. Failures preserve the original relevance order.</small>
+                                </div>
                             </div>
 
                             <div class="vectfox-form-group">
@@ -2442,47 +2475,6 @@ async function showAutoSyncConfirmModal(allMatches, settings) {
 }
 
 /**
- * Delete a shared VectFox API key from ST's secret store and refresh every input that
- * displays it. ONE implementation reused by all "Clear saved key" buttons (Embedding /
- * Summarization / AgentMode, OpenRouter + vLLM) so the delete + refresh logic never drifts.
- *
- * Deletes the ACTIVE entry in each slot (the masked key the UI shows); vLLM/Custom keys live
- * in two slots (CUSTOM for chat-side, VLLM for embedding-side) so both are cleared. The
- * placeholder refresh rides the existing `vectfox:*-key-changed` document events that every
- * placeholder updater already listens to — so all three places re-render from one trigger.
- *
- * @param {{ slots: string[], changedEvent: string, label: string, getCurrent: () => string, sharedWithST?: boolean }} opts
- */
-async function clearSharedApiKey({ slots, changedEvent, label, getCurrent, sharedWithST = false }) {
-    if (typeof getCurrent === 'function' && !getCurrent()) {
-        toastr.info(`No ${label} API key is saved.`);
-        return;
-    }
-    const warn = sharedWithST
-        ? `\n\nThis is the same secret slot SillyTavern itself uses, so deleting it also affects your main chat if that's set to ${label}.`
-        : '';
-    if (!confirm(`Delete the saved ${label} API key?\n\nIt is shared across Embedding, Summarization, and AgentMode.${warn}\n\nThis cannot be undone.`)) {
-        return;
-    }
-    const failed = [];
-    for (const slot of slots) {
-        try {
-            await deleteSecret(slot); // no id → removes the active entry; clears the slot if it was the last
-        } catch (err) {
-            log.error(`[VectFox] deleteSecret(${slot}) failed:`, err);
-            failed.push(slot);
-        }
-    }
-    try { await readSecretState(); } catch { /* deleteSecret already refreshes secret_state */ }
-    $(document).trigger(changedEvent); // every placeholder updater re-renders from this
-    if (failed.length) {
-        toastr.error(`Failed to delete ${label} key — see console.`);
-    } else {
-        toastr.info(`${label} API key deleted.`);
-    }
-}
-
-/**
  * Binds event handlers to UI elements
  * @param {object} settings - VectFox settings object
  * @param {object} callbacks - Callback functions
@@ -2847,12 +2839,13 @@ function bindSettingsEvents(settings, callbacks) {
                     toastr.error('Set the vLLM Base URL first.', 'vLLM not configured');
                     return;
                 }
-                // Route through ST's chat-completions /status endpoint, which
-                // fetches ${apiUrl}/models server-side using SECRET_KEYS.CUSTOM.
-                // Direct browser fetch with Bearer would 401 here because the
-                // key now lives in a masked secret slot (post-2026-05-26
-                // migration). Same proxy pattern as _callVLLM.
-                const resp = await fetch('/api/backends/chat-completions/status', {
+                // Use the active VectFox key for the picker too. A masked ST
+                // presence indicator is never sent to the custom endpoint.
+                const isolatedKey = getVectFoxCustomApiKey();
+                const resp = isolatedKey ? await fetch(buildCustomChatCompletionsUrl(baseUrl).replace(/\/chat\/completions$/i, '/models'), {
+                    method: 'GET',
+                    headers: { Authorization: `Bearer ${isolatedKey}` },
+                }) : await fetch('/api/backends/chat-completions/status', {
                     method: 'POST',
                     headers: getRequestHeaders(),
                     body: JSON.stringify({
@@ -2935,112 +2928,7 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // vLLM API key (summarize input) — writes to SECRET_KEYS.CUSTOM
-    // 2026-05-26 architecture pivot: ONE vLLM key shared across
-    // summarize/agentic chat paths, stored in ST's well-known
-    // SECRET_KEYS.CUSTOM slot (same slot ST's own Chat Completion →
-    // Custom (OpenAI-compatible) source uses). Real key lives server-side;
-    // client only sees a masked placeholder. Chat-side calls route through
-    // ST's /api/backends/chat-completions/generate proxy with
-    // `chat_completion_source: 'custom'` — see core/api-keys.js for the
-    // full rationale and the migration history.
-    //
-    // Embedding side reads SECRET_KEYS.VLLM (separate ST slot) — user
-    // configures that key in ST's Text Completion → vLLM UI directly,
-    // not through VectFox. The two slots are intentionally separate so
-    // chat and embedding endpoints can use different credentials if the
-    // user wants.
-    //
-    // Cross-input refresh: each display function also listens for the
-    // `vectfox:vllm-key-changed` custom event, so saving the key in any
-    // of the three inputs updates all three placeholders.
-    const updateSummarizeVllmKeyDisplay = () => {
-        const savedKey = getCustomApiKey(settings);
-        if (savedKey) {
-            const masked = savedKey.length > 4
-                ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
-                : '*'.repeat(savedKey.length);
-            $('#VectFox_summarize_vllm_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + AgentMode)`);
-        } else {
-            $('#VectFox_summarize_vllm_apikey').attr('placeholder', 'Paste vLLM / Custom OpenAI-compatible key (shared with Embedding + AgentMode)');
-        }
-    };
-    updateSummarizeVllmKeyDisplay();
-    $(document).on('vectfox:vllm-key-changed', updateSummarizeVllmKeyDisplay);
-    $('#VectFox_summarize_vllm_apikey').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            // Dual-write: CUSTOM (chat-side proxy) + VLLM (embedding-side
-            // proxy). One key, both slots. Either failure is non-fatal — toast
-            // the user which side didn't land so they can manually re-enter
-            // via ST's UI if needed.
-            const errors = [];
-            try {
-                await writeSecret(SECRET_KEYS.CUSTOM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
-                errors.push('chat-side (CUSTOM)');
-            }
-            try {
-                await writeSecret(SECRET_KEYS.VLLM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
-                errors.push('embedding-side (VLLM)');
-            }
-            await readSecretState();
-            if (errors.length === 0) {
-                toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
-            } else if (errors.length === 2) {
-                toastr.error('Failed to save vLLM key to either slot — see console');
-                return;
-            } else {
-                toastr.warning(`vLLM key partially saved — ${errors.join(', ')} write failed. See console.`);
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:vllm-key-changed');
-        }
-    });
-
-    // OpenRouter API key (summarize input) — writes to SECRET_KEYS.OPENROUTER
-    // 2026-05-25: ONE OpenRouter key shared across embedding/summarize/agentic,
-    // stored in ST's well-known SECRET_KEYS.OPENROUTER slot (same slot ST's own
-    // Connection Profile uses). The real key value lives server-side; the client
-    // only ever sees a masked placeholder. Chat-completion calls are routed
-    // through ST's /api/backends/chat-completions/generate proxy so the server
-    // can read the real key — see core/api-keys.js for the full rationale.
-    //
-    // Cross-input refresh: each display function also listens for the
-    // `vectfox:openrouter-key-changed` custom event, so saving the key in any
-    // of the three inputs updates all three placeholders immediately.
-    const updateSummarizeORKeyDisplay = () => {
-        const savedKey = getOpenRouterApiKey(settings);
-        if (savedKey) {
-            const masked = savedKey.length > 4
-                ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
-                : '*'.repeat(savedKey.length);
-            $('#VectFox_summarize_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + AgentMode)`);
-        } else {
-            $('#VectFox_summarize_openrouter_apikey').attr('placeholder', 'Paste OpenRouter key (shared with Embedding + AgentMode)');
-        }
-    };
-    updateSummarizeORKeyDisplay();
-    $(document).on('vectfox:openrouter-key-changed', updateSummarizeORKeyDisplay);
-    $('#VectFox_summarize_openrouter_apikey').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            try {
-                await writeSecret(SECRET_KEYS.OPENROUTER, value);
-                await readSecretState();
-                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
-                toastr.error('Failed to save OpenRouter key — see console');
-                return;
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:openrouter-key-changed');
-        }
-    });
+    bindVectFoxKeySettings(settings);
 
     // ─── AgentMode (Agentic Retrieval) ─────────────────────────────────────
     // Toggle provider-specific rows in the AgentMode tab. Treats empty provider
@@ -3078,40 +2966,6 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // AgentMode OpenRouter input — writes to SECRET_KEYS.OPENROUTER
-    // (same shared slot as Embedding + Summarize inputs). Per the 2026-05-25
-    // architecture pivot, the "override" semantics are gone — there's now
-    // ONE OpenRouter key everywhere.
-    const updateAgenticORKeyDisplay = () => {
-        const savedKey = getOpenRouterApiKey(settings);
-        if (savedKey) {
-            const masked = savedKey.length > 4
-                ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
-                : '*'.repeat(savedKey.length);
-            $('#VectFox_agentic_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + Summarize)`);
-        } else {
-            $('#VectFox_agentic_openrouter_apikey').attr('placeholder', 'Paste OpenRouter key (shared with Embedding + Summarize)');
-        }
-    };
-    updateAgenticORKeyDisplay();
-    $(document).on('vectfox:openrouter-key-changed', updateAgenticORKeyDisplay);
-    $('#VectFox_agentic_openrouter_apikey').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            try {
-                await writeSecret(SECRET_KEYS.OPENROUTER, value);
-                await readSecretState();
-                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
-                toastr.error('Failed to save OpenRouter key — see console');
-                return;
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:openrouter-key-changed');
-        }
-    });
-
     $('#VectFox_agentic_vllm_url')
         .val(settings.agent_vllm_url || '')
         .on('change', function() {
@@ -3119,77 +2973,6 @@ function bindSettingsEvents(settings, callbacks) {
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
-
-    // AgentMode vLLM input — writes to SECRET_KEYS.CUSTOM (shared with
-    // Summarize input). Same architecture as the Summarize input above:
-    // chat-side routes through ST's chat-completions proxy with
-    // `chat_completion_source: 'custom'`; embedding-side reads
-    // SECRET_KEYS.VLLM (ST's Text Completion vLLM slot) separately.
-    const updateAgenticVllmKeyDisplay = () => {
-        const savedKey = getCustomApiKey(settings);
-        if (savedKey) {
-            const masked = savedKey.length > 4
-                ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
-                : '*'.repeat(savedKey.length);
-            $('#VectFox_agentic_vllm_apikey').attr('placeholder', `Key saved: ${masked} (shared with Embedding + Summarize)`);
-        } else {
-            $('#VectFox_agentic_vllm_apikey').attr('placeholder', 'Paste vLLM / Custom OpenAI-compatible key (shared with Embedding + Summarize)');
-        }
-    };
-    updateAgenticVllmKeyDisplay();
-    $(document).on('vectfox:vllm-key-changed', updateAgenticVllmKeyDisplay);
-    $('#VectFox_agentic_vllm_apikey').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            // Dual-write: same pattern as the summarize input above.
-            const errors = [];
-            try {
-                await writeSecret(SECRET_KEYS.CUSTOM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
-                errors.push('chat-side (CUSTOM)');
-            }
-            try {
-                await writeSecret(SECRET_KEYS.VLLM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
-                errors.push('embedding-side (VLLM)');
-            }
-            await readSecretState();
-            if (errors.length === 0) {
-                toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
-            } else if (errors.length === 2) {
-                toastr.error('Failed to save vLLM key to either slot — see console');
-                return;
-            } else {
-                toastr.warning(`vLLM key partially saved — ${errors.join(', ')} write failed. See console.`);
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:vllm-key-changed');
-        }
-    });
-
-    // "Clear saved key" buttons — all 6 (Embedding / Summarize / AgentMode × OpenRouter / vLLM)
-    // funnel through the single clearSharedApiKey() helper so the delete + refresh never drifts.
-    // OpenRouter keys share one slot; vLLM/Custom keys live in CUSTOM + VLLM (both cleared).
-    const _openRouterClearOpts = {
-        slots: [SECRET_KEYS.OPENROUTER],
-        changedEvent: 'vectfox:openrouter-key-changed',
-        label: 'OpenRouter',
-        getCurrent: () => getOpenRouterApiKey(settings),
-        sharedWithST: true,
-    };
-    const _vllmClearOpts = {
-        slots: [SECRET_KEYS.CUSTOM, SECRET_KEYS.VLLM],
-        changedEvent: 'vectfox:vllm-key-changed',
-        label: 'vLLM',
-        getCurrent: () => getCustomApiKey(settings),
-        sharedWithST: true,
-    };
-    ['#VectFox_openrouter_apikey_clear', '#VectFox_summarize_openrouter_apikey_clear', '#VectFox_agentic_openrouter_apikey_clear']
-        .forEach(sel => $(sel).on('click', () => clearSharedApiKey(_openRouterClearOpts)));
-    ['#VectFox_vllm_api_key_clear', '#VectFox_summarize_vllm_apikey_clear', '#VectFox_agentic_vllm_apikey_clear']
-        .forEach(sel => $(sel).on('click', () => clearSharedApiKey(_vllmClearOpts)));
 
     // Sliders — chat depth, candidates, max queries
     const bindAgenticSlider = (inputId, valSpanId, settingKey, defaultVal) => {
@@ -3261,7 +3044,7 @@ function bindSettingsEvents(settings, callbacks) {
 
     // ─── Auto-Reformat (Document/URL/Wiki LLM restructuring) ───────────────
     // Mirrors the AgentMode inherit-from-summarizer pattern above. No dedicated
-    // API-key fields — reuses the same shared OpenRouter/vLLM key slots.
+    // API-key fields reuse the active VectFox-owned OpenRouter/Custom keys.
     const updateReformatProviderUI = (provider) => {
         const resolved = String(provider || '').trim();
         $('#VectFox_reformat_vllm_row').toggle(resolved === 'vllm');
@@ -4764,6 +4547,32 @@ function bindSettingsEvents(settings, callbacks) {
     _bindEventBaseRange('retrieval_overfetch', 'eventbase_retrieval_overfetch', 'retrieval_overfetch');
     _bindEventBaseRange('retrieval_min_importance', 'eventbase_retrieval_min_importance', 'retrieval_min_importance');
 
+    for (const [name, fallback] of Object.entries(CROSS_ENCODER_DEFAULTS)) {
+        const key = `eventbase_cross_encoder_${name}`;
+        settings[key] ??= fallback;
+        const element = $(`#VectFox_${key}`);
+        if (name === 'enabled') {
+            element.prop('checked', settings[key] === true).off('change.crossEncoder').on('change.crossEncoder', function() {
+                settings[key] = $(this).prop('checked');
+                $('#VectFox_eventbase_cross_encoder_options').toggle(settings[key]);
+                Object.assign(extension_settings.vectfox, settings);
+                saveSettingsDebounced();
+            });
+        } else {
+            if (name === 'max_documents') settings[key] = resolveCrossEncoderMaxDocuments(settings);
+            if (name === 'timeout_ms') settings[key] = resolveCrossEncoderTimeoutMs(settings);
+            element.val(settings[key]).off('change.crossEncoder').on('change.crossEncoder', function() {
+                settings[key] = String($(this).val() || '').trim();
+                if (name === 'max_documents') settings[key] = resolveCrossEncoderMaxDocuments(settings);
+                if (name === 'timeout_ms') settings[key] = resolveCrossEncoderTimeoutMs(settings);
+                $(this).val(settings[key]);
+                Object.assign(extension_settings.vectfox, settings);
+                saveSettingsDebounced();
+            });
+        }
+    }
+    $('#VectFox_eventbase_cross_encoder_options').toggle(settings.eventbase_cross_encoder_enabled === true);
+
     $('#VectFox_eventbase_injection_format')
         .val(settings.eventbase_injection_format || 'densetext')
         .on('change', function() {
@@ -4974,53 +4783,6 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
-    // vLLM API key (embedding input) — dual-write to SECRET_KEYS.CUSTOM
-    // (chat-side proxy) + SECRET_KEYS.VLLM (embedding-side proxy). Same
-    // pattern as the Summarize and AgentMode inputs above. One shared key,
-    // both ST slots. See core/api-keys.js header for the full rationale.
-    const updateVllmKeyDisplay = () => {
-        const savedKey = getCustomApiKey(settings);
-        if (savedKey) {
-            const masked = savedKey.length > 4
-                ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
-                : '*'.repeat(savedKey.length);
-            $('#VectFox_vllm_api_key').attr('placeholder', `Key saved: ${masked} (shared with Summarize + AgentMode)`);
-        } else {
-            $('#VectFox_vllm_api_key').attr('placeholder', 'Leave blank for local / no-auth (shared with Summarize + AgentMode)');
-        }
-    };
-    updateVllmKeyDisplay();
-    $(document).on('vectfox:vllm-key-changed', updateVllmKeyDisplay);
-    $('#VectFox_vllm_api_key').on('change', async function() {
-        const value = String($(this).val()).trim();
-        if (value) {
-            const errors = [];
-            try {
-                await writeSecret(SECRET_KEYS.CUSTOM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.CUSTOM) failed:', err);
-                errors.push('chat-side (CUSTOM)');
-            }
-            try {
-                await writeSecret(SECRET_KEYS.VLLM, value);
-            } catch (err) {
-                log.error('[VectFox] writeSecret(SECRET_KEYS.VLLM) failed:', err);
-                errors.push('embedding-side (VLLM)');
-            }
-            await readSecretState();
-            if (errors.length === 0) {
-                toastr.success('vLLM API key saved (shared across embedding/summarize/agentic)');
-            } else if (errors.length === 2) {
-                toastr.error('Failed to save vLLM key to either slot — see console');
-                return;
-            } else {
-                toastr.warning(`vLLM key partially saved — ${errors.join(', ')} write failed. See console.`);
-            }
-            $(this).val('');
-            $(document).trigger('vectfox:vllm-key-changed');
-        }
-    });
-
     // Google model
     $('#VectFox_google_model')
         .val(settings.google_model)
@@ -5134,45 +4896,8 @@ function bindSettingsEvents(settings, callbacks) {
         $list.hide();
     });
 
-    // OpenRouter API key (embedding input) — writes to SECRET_KEYS.OPENROUTER,
-    // the shared slot used by ST's own Connection Profile and by VectFox's
-    // Summarize + AgentMode inputs. See core/api-keys.js for the rationale.
-    const updateOpenRouterKeyDisplay = () => {
-        const savedKey = getOpenRouterApiKey(settings);
-        if (savedKey) {
-            const masked = savedKey.length > 4
-                ? '*'.repeat(Math.min(savedKey.length - 4, 8)) + savedKey.slice(-4)
-                : '*'.repeat(savedKey.length);
-            $('#VectFox_openrouter_apikey').attr('placeholder', `Key saved: ${masked} (shared with Summarize + AgentMode)`);
-        } else {
-            $('#VectFox_openrouter_apikey').attr('placeholder', 'Paste OpenRouter key (shared with Summarize + AgentMode)');
-        }
-    };
-    updateOpenRouterKeyDisplay();
-    $(document).on('vectfox:openrouter-key-changed', () => {
-        updateOpenRouterKeyDisplay();
-        _openrouterModelCache = null; // sibling-input save also invalidates the model picker cache
-    });
-
-    $('#VectFox_openrouter_apikey')
-        .on('change', async function() {
-            const value = String($(this).val()).trim();
-            if (value) {
-                try {
-                    await writeSecret(SECRET_KEYS.OPENROUTER, value);
-                    await readSecretState(); // refresh masked state for display
-                } catch (err) {
-                    log.error('[VectFox] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err);
-                    toastr.error('Failed to save OpenRouter key — see console');
-                    return;
-                }
-                _openrouterModelCache = null;
-                toastr.success('OpenRouter API key saved (shared across embedding/summarize/agentic)');
-                $(this).val('');
-                $(document).trigger('vectfox:openrouter-key-changed');
-            }
-        });
-
+    $(document).off('vectfox:openrouter-key-changed.vectfoxModels')
+        .on('vectfox:openrouter-key-changed.vectfoxModels', () => { _openrouterModelCache = null; });
     // Rate Limiting
     $('#VectFox_rate_limit_calls')
         .val(settings.rate_limit_calls || 0)

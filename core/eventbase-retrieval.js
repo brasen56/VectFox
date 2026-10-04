@@ -22,6 +22,7 @@ import { buildStoryRecencyCtx, storyRecencyBonus } from './story-time.js';
 import { log } from './log.js';
 import { createCandidateOutcomes, recordCandidateOutcome } from './eventbase-retrieval-debug.js';
 import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
+import { rerankEventCandidates } from './cross-encoder-reranker.js';
 
 // ---------------------------------------------------------------------------
 // Default re-rank weights (tuned for long-form SillyTavern RP)
@@ -369,7 +370,7 @@ function _tagFrame(events, frame) {
     return events.map(e => (e && typeof e === 'object') ? { ...e, _sortFrame: frame } : e);
 }
 
-export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false, recentMessageTexts }) {
+export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false, skipCrossEncoder = false, recentMessageTexts }) {
     const topK = resolveEventBaseOverfetch(settings);
     const minImportance = settings.eventbase_retrieval_min_importance || 1;
 
@@ -720,7 +721,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     const dedupDepth = settings.deduplication_depth ?? 0;
     const visibleThreshold = dedupDepth > 0 ? chatLength - dedupDepth : -1;
 
-    const contextDedupedEvents = (skipContextDedup || dedupDepth <= 0)
+    let contextDedupedEvents = (skipContextDedup || dedupDepth <= 0)
         ? dedupedEvents
         : dedupedEvents.filter(e => {
             // _rerankApplied events were already filtered server-side by the
@@ -740,25 +741,18 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         log.verbose(`[EventBase] Dedup depth (${dedupDepth}) removed ${dedupedEvents.length - contextDedupedEvents.length} event(s) already visible in context`);
     }
 
+    const crossEncoder = skipCrossEncoder
+        ? { events: contextDedupedEvents, meta: { enabled: settings.eventbase_cross_encoder_enabled === true, used: false, deferred: true } }
+        : await rerankEventCandidates(contextDedupedEvents, keywordQuery || searchText, settings);
+    contextDedupedEvents = crossEncoder.events;
+
     // 7. Trim to requested top-K
     const finalTopK = settings.eventbase_retrieval_top_k || 8;
     // Reserve the best surviving hit for each planner query, then fill by score.
     // Identity merging preserves all query memberships; a shared best hit uses
     // only one slot. Query order breaks ties when Top-K cannot cover every query.
-    const queryIndices = [...new Set(contextDedupedEvents.flatMap(event => event._plannerQueryIndices || []))]
-        .sort((a, b) => a - b);
-    const selected = new Set();
-    for (const queryIndex of queryIndices) {
-        if (selected.size >= finalTopK) break;
-        const best = contextDedupedEvents.find(event => event._plannerQueryIndices?.includes(queryIndex));
-        if (best) selected.add(best);
-    }
-    for (const event of contextDedupedEvents) {
-        if (selected.size >= finalTopK) break;
-        selected.add(event);
-    }
-    // Keep the canonical score ordering; injection owns chronological ordering.
-    const finalEvents = contextDedupedEvents.filter(event => selected.has(event));
+    const finalEvents = selectEventCandidates(contextDedupedEvents, finalTopK);
+    const selected = new Set(finalEvents);
     contextDedupedEvents.forEach(event => {
         recordCandidateOutcome(candidateOutcomes, event, selected.has(event) ? 'injected' : 'cut_at_trim');
     });
@@ -774,6 +768,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         events: finalEvents,
         candidates: contextDedupedEvents,
         debug: {
+            crossEncoder: crossEncoder.meta,
             candidateOutcomes,
             dualQuery,
             keywordScoringMethod: ebSettings.keyword_scoring_method,
@@ -798,4 +793,36 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
             weights,
         },
     };
+}
+
+/** Planner coverage respects the supplied relevance order, not score scale. */
+export function selectEventCandidates(candidates, topK) {
+    const queryIndices = [...new Set(candidates.flatMap(event => event._plannerQueryIndices || []))].sort((a, b) => a - b);
+    const selected = new Set();
+    for (const index of queryIndices) {
+        if (selected.size >= topK) break;
+        const best = candidates.find(event => event._plannerQueryIndices?.includes(index));
+        if (best) selected.add(best);
+    }
+    for (const event of candidates) {
+        if (selected.size >= topK) break;
+        selected.add(event);
+    }
+    return candidates.filter(event => selected.has(event));
+}
+
+/** Finalize a deferred pre-search when the planner cannot run or returns no queries. */
+export async function finalizeDeferredCrossEncoder(result, { settings, keywordQuery, searchText, skipCrossEncoder }) {
+    if (skipCrossEncoder || settings?.eventbase_cross_encoder_enabled !== true) return result;
+    const ranked = await rerankEventCandidates(result.candidates || result.events || [], keywordQuery || searchText, settings);
+    const events = selectEventCandidates(ranked.events, settings.eventbase_retrieval_top_k || 8);
+    const outcomes = Object.fromEntries(Object.entries(result.debug?.candidateOutcomes || {}).map(([key, entry]) =>
+        [key, { ...entry, stages: [...entry.stages] }]));
+    const selected = new Set(events);
+    for (const event of ranked.events) {
+        const key = String(event.event_id ?? event._hash ?? JSON.stringify(event));
+        if (outcomes[key]) recordCandidateOutcome(outcomes, event, selected.has(event) ? 'injected' : 'cut_at_trim');
+    }
+    return { ...result, events, candidates: ranked.events, debug: { ...result.debug,
+        candidateOutcomes: outcomes, crossEncoder: ranked.meta, finalCount: events.length } };
 }

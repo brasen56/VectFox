@@ -70,5 +70,9 @@ export function formatRetrievalDiagnostics(debug = {}) {
         `Shared EventBase budget: ${debug.estimatedInjectionTokens || 0}/${debug.eventbaseTokenBudget} estimated tokens.`,
         `Main events injected as compact summaries: ${(debug.compactMainEventIds || []).join(', ') || 'none'}.`,
         `NPC cards injected: ${(debug.npcCardCharacters || []).join(', ') || 'none'}.`].filter(Boolean).join('\n');
+    if (debug.crossEncoder?.enabled) {
+        const ce = debug.crossEncoder;
+        castText = [castText, `Cross-encoder: ${ce.used ? 'used' : ce.deferred ? 'deferred' : 'original order'}; ${ce.documentsSent || 0} document(s); ${ce.durationMs || 0}ms${ce.error ? `; ${ce.error}` : ''}.`].filter(Boolean).join('\n');
+    }
     return { cutCount: cuts.length, cutText: cutText || 'No returned candidates were cut.', queryText, ...(castText ? { castText } : {}) };
 }

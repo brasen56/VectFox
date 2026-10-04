@@ -550,13 +550,13 @@ Restart SillyTavern.
 4. Select your Summarization LLM (OpenRouter or vLLM) — used by EventBase extraction during vectorization.
 
    - 💡 **Recommended OpenRouter models:** for a cheap & fast extraction path, use `openai/gpt-4o-mini` or `google/gemini-3.1-flash-lite` — both keep cost and ingestion latency low. If you want higher extraction quality and don't mind paying more, `x-ai/grok-4.3` is a stronger but more expensive option. Avoid older model IDs such as `x-ai/grok-4.1-fast` if OpenRouter returns a 404/deprecation error; model availability changes over time, so verify the exact ID on OpenRouter before long ingestion runs. The same recommendation applies to the **Agent Mode LLM** (configured separately in the AgentMode tab) — if you leave the AgentMode model field blank it inherits this summarizer setting.
-5. Configure API keys if using cloud providers (OpenRouter / vLLM ).
+5. Configure VectFox LLM keys for OpenRouter / vLLM using **Manage Keys** in Core or AgentMode. Add labeled keys and select the active one; changes affect only VectFox LLM calls. Keys are stored in extension settings and can appear in settings backups. Custom endpoints must allow browser CORS. Embedding requests still use SillyTavern's server-side provider credentials. Until you save a VectFox key, LLM calls retain the shared SillyTavern key as a compatibility fallback.
 6. Under **Keyword Extraction**, choose the language of your story.
 7. Most settings work fine on default — feel free to tweak.
 8. Open your chat in SillyTavern, then click the VectFox extension icon again. You **HAVE** to click "Vectorize Content" and choose **Chat History** to vectorize your first DB.
 9. Enable Auto-Sync if needed in the **AutoSync** tab. Frequency is controlled by the EventBase tab under *Extraction > Window Size*.
 10. Vectorize your lorebook / World Info if needed in the **WorldInfo** tab.
-11. (Optional) Turn on **Agent Mode** in the AgentMode tab once everything else works. Leave provider/model/API-key blank to inherit from your summarizer config — that way the same cheap/fast model used in step 4 also drives the planner. See "How It Works → Agent Mode" above for what it does.
+11. (Optional) Turn on **Agent Mode** in the AgentMode tab once everything else works. Leave provider/model/base URL blank to inherit from your summarizer config — that way the same cheap/fast model used in step 4 also drives the planner. The active VectFox key is shared by all LLM features using that provider. See "How It Works → Agent Mode" above for what it does.
 
 ---
 

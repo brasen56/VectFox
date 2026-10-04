@@ -28,6 +28,7 @@ vi.mock('../core/core-vector-api.js', () => ({ queryCollection: vi.fn(), getSave
 vi.mock('../core/constants.js', () => ({ EXTENSION_PROMPT_TAG: '3_vectfox' }));
 vi.mock('../core/eventbase-schema.js', () => ({ EventBaseFatalError: class {}, EventBaseExtractionError: class {} }));
 vi.mock('../core/eventbase-extractor.js', () => ({ extractEvents: vi.fn() }));
+vi.mock('../core/npc-card-llm.js', () => ({ completeNpcCard: vi.fn() }));
 vi.mock('../core/generation-rate-limiter.js', () => ({ generationRateLimiter: {}, generationRateLimitSettings: {} }));
 vi.mock('../core/eventbase-store.js', () => ({
     insertEvents: vi.fn(), isWindowAlreadyExtracted: vi.fn(), markWindowExtracted: vi.fn(),

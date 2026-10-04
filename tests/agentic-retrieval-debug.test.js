@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../../../extensions.js', () => ({ getContext: () => ({ chat: [] }) }));
-vi.mock('../core/eventbase-retrieval.js', () => ({ retrieveEvents: vi.fn() }));
+vi.mock('../core/eventbase-retrieval.js', () => ({ retrieveEvents: vi.fn(), finalizeDeferredCrossEncoder: vi.fn(result => result) }));
 vi.mock('../core/core-vector-api.js', () => ({ queryCollection: vi.fn(), supportsCollectionFilters: vi.fn(async () => true) }));
 vi.mock('../core/character-roster.js', () => ({
     getCharacterRoster: () => ({ groups: [] }), normalizeCharacterName: name => name.trim().toLowerCase(),
@@ -19,7 +19,7 @@ vi.mock('../core/log.js', () => ({ log: { domainEnabled: () => false, warn: vi.f
 vi.mock('../core/search-filter-support.js', () => ({ warnUnsupportedFilters: vi.fn() }));
 
 import { retrieveEventsWithAgent, _validatePlannerFilters, _validateAndTrimQueries } from '../core/agentic-retrieval.js';
-import { retrieveEvents } from '../core/eventbase-retrieval.js';
+import { retrieveEvents, finalizeDeferredCrossEncoder } from '../core/eventbase-retrieval.js';
 import { queryCollection, supportsCollectionFilters } from '../core/core-vector-api.js';
 import { postChatCompletion } from '../core/llm-provider-call.js';
 import { warnUnsupportedFilters } from '../core/search-filter-support.js';
@@ -30,6 +30,24 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.useRealTimers());
 
 describe('Agent Mode recall diagnostics', () => {
+    it('defers reranking until the final merge and finalizes pre-search on planner fallback', async () => {
+        const preSearch = { events: [], candidates: [], debug: {} };
+        retrieveEvents.mockResolvedValue(preSearch);
+        const params = { searchText: 'scene', liveCollectionIds: ['qdrant:one'], settings: {
+            agentic_retrieval_enabled: true, vector_backend: 'qdrant', agent_model: 'model', eventbase_cross_encoder_enabled: true } };
+        postChatCompletion.mockResolvedValue({ content: JSON.stringify({ queries: ['history query'] }) });
+        queryCollection.mockResolvedValue({ hashes: [], metadata: [] });
+        await retrieveEventsWithAgent(params);
+        expect(retrieveEvents.mock.calls[0][0].skipCrossEncoder).toBe(true);
+        expect(retrieveEvents.mock.calls[1][0].skipCrossEncoder).not.toBe(true);
+        expect(finalizeDeferredCrossEncoder).not.toHaveBeenCalled();
+        vi.clearAllMocks();
+        postChatCompletion.mockResolvedValue({ content: JSON.stringify({ queries: [] }) });
+        await retrieveEventsWithAgent(params);
+        expect(retrieveEvents).toHaveBeenCalledTimes(1);
+        expect(finalizeDeferredCrossEncoder).toHaveBeenCalledWith(preSearch, params);
+    });
+
     it('normalizes mixed forms and deduplicates by text and scope', () => {
         expect(_validateAndTrimQueries([null, 42, 'x', 'a'.repeat(301), {},
             ' history query ', { query: 'HISTORY QUERY', characters_any: ['Brennan'] },

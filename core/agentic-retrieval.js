@@ -21,7 +21,7 @@
  */
 
 import { getContext } from '../../../../extensions.js';
-import { retrieveEvents } from './eventbase-retrieval.js';
+import { retrieveEvents, finalizeDeferredCrossEncoder } from './eventbase-retrieval.js';
 import { queryCollection, supportsCollectionFilters } from './core-vector-api.js';
 import { getCharacterRoster, normalizeCharacterName } from './character-roster.js';
 import { warnUnsupportedFilters } from './search-filter-support.js';
@@ -58,17 +58,20 @@ export async function retrieveEventsWithAgent(params) {
     const tAgentStart = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
     // STAGE 1 — existing pre-search runs unconditionally.
-    const preSearch = await retrieveEvents(params);
+    const deferCrossEncoder = settings?.eventbase_cross_encoder_enabled === true
+        && settings?.agentic_retrieval_enabled && settings.vector_backend === 'qdrant' && !params.skipCrossEncoder;
+    const preSearch = await retrieveEvents(deferCrossEncoder ? { ...params, skipCrossEncoder: true } : params);
+    const finishPreSearch = () => deferCrossEncoder ? finalizeDeferredCrossEncoder(preSearch, params) : preSearch;
 
     // STAGE 2 — early exit if agentic is off or backend isn't Qdrant.
     if (!settings?.agentic_retrieval_enabled) {
-        return preSearch;
+        return finishPreSearch();
     }
     if (settings.vector_backend !== 'qdrant') {
         if (agenticDebug) {
             log.domain('agent', 'lifecycle', '[VectFox-Agentic] mode=SKIPPED reason=requires_qdrant_backend');
         }
-        return preSearch;
+        return finishPreSearch();
     }
 
     // STAGE 3 — gather context for planner and call LLM.
@@ -78,7 +81,7 @@ export async function retrieveEventsWithAgent(params) {
         if (agenticDebug) {
             log.warn(`[VectFox-Agentic] mode=SKIPPED reason=${llmCfg.reason}`);
         }
-        return preSearch;
+        return finishPreSearch();
     }
 
     if (agenticDebug) {
@@ -154,7 +157,7 @@ export async function retrieveEventsWithAgent(params) {
         // Matched by name: several tests mock the limiter module without the class.
         if (err?.name === 'GenerationQueueTimeoutError') {
             log.warn(`[VectFox-Agentic] Planner not sent: the shared generation rate limit had no free slot within ${tLlmMs}ms. Using pre-search only. Raise the generation rate limit if this repeats.`);
-            return preSearch;
+            return finishPreSearch();
         }
         // AbortSignal.timeout() throws either a TimeoutError or a generic
         // "user aborted a request" message depending on the runtime. Detect both
@@ -168,7 +171,7 @@ export async function retrieveEventsWithAgent(params) {
         } else {
             log.warn(`[VectFox-Agentic] Planner LLM call failed after ${tLlmMs}ms, using pre-search only: ${err?.message || err}`);
         }
-        return preSearch;
+        return finishPreSearch();
     }
     const tLlmMs = Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tLlmStart));
 
@@ -202,7 +205,7 @@ export async function retrieveEventsWithAgent(params) {
         if (agenticDebug) {
             log.domain('agent', 'lifecycle', '[VectFox-Agentic] Planner returned 0 valid queries — falling back to pre-search only');
         }
-        return preSearch;
+        return finishPreSearch();
     }
 
     // STAGE 4 — run planner queries in parallel against all live collections.
@@ -210,7 +213,7 @@ export async function retrieveEventsWithAgent(params) {
         if (agenticDebug) {
             log.domain('agent', 'lifecycle', '[VectFox-Agentic] No live collections to query — falling back to pre-search only');
         }
-        return preSearch;
+        return finishPreSearch();
     }
 
     const ebSettings = {

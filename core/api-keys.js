@@ -3,105 +3,23 @@
  * VectFox API KEY HELPERS
  * ============================================================================
  *
- * Single source of truth for resolving API keys at runtime, and the
- * one-shot migration that consolidates legacy per-feature key fields
- * into a single key per provider.
+ * VectFox owns the OpenRouter and Custom/vLLM multi-key arrays in
+ * extension_settings.vectfox. Adding, activating, renaming, or deleting
+ * keys never mutates SillyTavern's main-chat secret slots.
  *
- * ARCHITECTURE (post-2026-05-25 simplification):
+ * LLM calls use the active isolated key through llm-provider-call.js.
+ * If none is saved, the old ST proxy remains available for existing users.
+ * Shared-slot readers below are presence indicators only; their masked
+ * values must never be sent as Authorization headers.
  *
- * The original H-1 fix tried to use VectFox-specific `secret_state` slots
- * (e.g. `'summarize_openrouter_api_key'`) to keep summarize/embedding/
- * agentic OpenRouter keys separate. That failed in practice: ST's
- * `writeSecret(customSlot, value)` accepts the write but `readSecretState`
- * doesn't surface custom slots back into the in-memory `secret_state`
- * object — so the keys were write-only and the migration effectively
- * destroyed them; we re-learned it the hard way.
+ * Keys in the isolated arrays are plaintext in settings.json, as on main.
+ * They can be included in settings backups/exports. Direct browser calls
+ * require the provider to allow CORS.
  *
- * Current model — reuse whatever ST already round-trips, and proxy when
- * the real key value is needed:
- *
- *   - OpenRouter (one key for embedding + summarize + agent):
- *     Stored in ST's well-known `SECRET_KEYS.OPENROUTER` slot. ST's
- *     `getSecretState` returns this slot as an array of `{value, label,
- *     active, id}` entries — but `value` is MASKED (e.g. "*******abcd")
- *     unless `allowKeysExposure: true` is set in `config.yaml` (default
- *     false). So `getOpenRouterApiKey()` returns the masked string when
- *     a key is configured, and empty string otherwise. That's a presence
- *     indicator — DON'T send it as a Bearer token; you'll get 401.
- *
- *     Embedding works because it goes through ST's `/api/vector/insert`
- *     (or the Similharity plugin's `/api/plugins/similharity/chunks/insert`)
- *     proxy, which reads the real key server-side via
- *     `readSecret(SECRET_KEYS.OPENROUTER)`.
- *
- *     Summarize, EventBase, and Agentic chat-completion paths apply the
- *     same pattern: POST to `/api/backends/chat-completions/generate` with
- *     `chat_completion_source: 'openrouter'` — ST's server reads the real
- *     key and forwards to OpenRouter. All three VectFox UI inputs
- *     (Embedding / LLM Summarization / AgentMode) write to the same slot
- *     via `writeSecret`, so setting the key in any of them is shared.
- *
- *   - vLLM-style "Custom OpenAI-compatible" (one key for embedding +
- *     summarize + agent):
- *     Stored in ST's `SECRET_KEYS.CUSTOM` slot (`api_key_custom`). Same
- *     masking behavior as OpenRouter — getCustomApiKey() returns the
- *     masked string for presence-check only. Chat-side requests route
- *     through `/api/backends/chat-completions/generate` with
- *     `chat_completion_source: 'custom'` and `custom_url:
- *     settings.vllm_url` in the body — ST's server reads the real key
- *     via `readSecret(SECRET_KEYS.CUSTOM)` and forwards to the
- *     user-specified endpoint. Embedding side relies on
- *     `SECRET_KEYS.VLLM` (ST's dedicated vLLM Text Completion slot) via
- *     ST's `/api/vector/insert` server-side header injection; the user
- *     configures that key via ST's Text Completion → vLLM UI, NOT
- *     through VectFox.
- *
- *     Pre-2026-05-26 the key lived in plaintext `settings.vllm_api_key`.
- *     The header comment in this file used to claim no ST vLLM slot
- *     existed and plaintext was justified by LAN scope — both wrong.
- *     `SECRET_KEYS.VLLM` (`'api_key_vllm'`) exists at ST:secrets.js:22
- *     but is non-EXPORTABLE (masked client-side), so we use the proxy
- *     pattern same as OpenRouter. The migration drains the legacy
- *     plaintext value into `SECRET_KEYS.CUSTOM` (don't-clobber) on
- *     first load post-upgrade.
- *
- *   - Qdrant API key (Cloud auth):
- *     Stored in ST's secret_state under the CUSTOM slot name `api_key_qdrant`
- *     (not in ST's SECRET_KEYS enum — writeSecret/readSecret accept any
- *     string key; only getSecretState's read-to-client path filters by enum).
- *     Server-side: the Similharity plugin reads it via
- *     `readSecret(req.user.directories, 'api_key_qdrant', null)` and uses
- *     the real value to authenticate to Qdrant Cloud. Client-side:
- *     `secret_state.api_key_qdrant` is undefined (enum filter), so the UI
- *     presence indicator round-trips via the plugin's
- *     `/qdrant/key-status` endpoint instead (see `fetchQdrantApiKeyPresence`).
- *     Migration drains any legacy `settings.qdrant_api_key` plaintext into
- *     the slot on first load and deletes the plaintext field.
- *
- *   - Ollama:
- *     No API key field, period. ST itself has no SECRET_KEYS.OLLAMA and
- *     no getOllamaHeaders — ST's ollama vector path never sends an
- *     Authorization header. VectFox previously had an ollama_api_key
- *     plaintext field, but it was dead code (ST silently ignored anything
- *     passed through it). Field removed 2026-05-26; migration drains any
- *     leftover plaintext from settings.json on first reload post-upgrade.
- *     Users who need authed Ollama (rare — Ollama is typically LAN
- *     no-auth) should configure auth at their reverse proxy layer.
- *
- * Migration (`migrateLegacyApiKeys`) runs once at init:
- *   - Consolidates the three legacy OpenRouter slots
- *     (`summarize_openrouter_api_key`, `agentic_retrieval_openrouter_api_key`,
- *     `openrouter_api_key`) into `SECRET_KEYS.OPENROUTER` IF that slot is
- *     currently empty (won't clobber a value the user already set in ST's
- *     UI). Always deletes the three legacy fields from settings.json.
- *   - Consolidates the three legacy vLLM slots
- *     (`summarize_vllm_api_key`, `agentic_retrieval_vllm_api_key`,
- *     `vllm_api_key`) by draining the first non-empty value into
- *     `SECRET_KEYS.CUSTOM` (don't-clobber) and deleting all three legacy
- *     plaintext fields. After migration, the chat-side code paths read
- *     the key server-side via ST's chat-completions proxy.
- *   - Idempotent: empty fields = no-op. Wrapped in try/catch — failures
- *     are non-fatal and don't lock users out of their keys.
+ * Embeddings still use ST/plugin server-side authentication. The key
+ * manager controls LLM credentials; it cannot override embedding secrets.
+ * Qdrant continues to use its dedicated api_key_qdrant server secret.
+ * Legacy per-feature plaintext keys migrate into the isolated arrays.
  *
  * @author Kritblade
  * @version 3.3.1
@@ -109,8 +27,8 @@
  */
 
 import { extension_settings } from '../../../../extensions.js';
-import { SECRET_KEYS, secret_state, writeSecret, readSecretState } from '../../../../secrets.js';
-import { saveSettings } from '../../../../../script.js';
+import { SECRET_KEYS, secret_state, writeSecret } from '../../../../secrets.js';
+import { saveSettings, saveSettingsDebounced } from '../../../../../script.js';
 import { log } from './log.js';
 
 // ─── Internal helpers ───────────────────────────────────────────────────
@@ -147,7 +65,8 @@ function _readSecretValue(slot) {
 // ─── Public readers ─────────────────────────────────────────────────────
 
 /**
- * Resolve the OpenRouter API key — RETURNS A MASKED VALUE, not the real key.
+ * Resolve OpenRouter key presence — RETURNS A MASKED VALUE, not the real key.
+ * Prefers the active VectFox key, then the shared ST slot for compatibility.
  *
  * ST's `getSecretState` masks all values for non-EXPORTABLE_KEYS (OpenRouter
  * is not exportable), so what we get back is something like "*******abcd".
@@ -156,21 +75,19 @@ function _readSecretValue(slot) {
  *   - UI placeholder masking
  *
  * DO NOT pass the return value as a Bearer token — you'll get 401. Instead,
- * route OpenRouter requests through ST's `/api/backends/chat-completions/generate`
- * proxy with `chat_completion_source: 'openrouter'`; the server reads the
- * real key via `readSecret(SECRET_KEYS.OPENROUTER)` and forwards correctly.
- * See `core/summarizer.js::_callOpenRouter` for the canonical call pattern.
+ * use postChatCompletion in llm-provider-call.js. It selects the active
+ * isolated key or the ST proxy without sending masked values upstream.
  *
  * @param {object} [settings] - kept for signature compat; not read.
  * @returns {string} masked value (presence indicator) or empty string
  */
 export function getOpenRouterApiKey(settings) {
-    return _readSecretValue(SECRET_KEYS.OPENROUTER);
+    return maskVectFoxApiKey(getVectFoxOpenRouterApiKey()) || _readSecretValue(SECRET_KEYS.OPENROUTER);
 }
 
 /**
- * Resolve the Custom OpenAI-compatible API key — the slot VectFox uses
- * for vLLM-style endpoints post-2026-05-26. RETURNS A MASKED VALUE,
+ * Resolve Custom/vLLM key presence, preferring the active VectFox key,
+ * then the shared ST slot for compatibility. RETURNS A MASKED VALUE,
  * not the real key — same as `getOpenRouterApiKey`. Use for presence
  * checks and placeholder masking only; chat-side calls route through
  * ST's `/api/backends/chat-completions/generate` proxy with
@@ -181,7 +98,7 @@ export function getOpenRouterApiKey(settings) {
  * @returns {string} masked value (presence indicator) or empty string
  */
 export function getCustomApiKey(settings) {
-    return _readSecretValue(SECRET_KEYS.CUSTOM);
+    return maskVectFoxApiKey(getVectFoxCustomApiKey()) || _readSecretValue(SECRET_KEYS.CUSTOM);
 }
 
 /**
@@ -265,35 +182,223 @@ export async function fetchQdrantApiKeyPresence() {
 // nothing to migrate to since ST itself doesn't authenticate ollama). If a
 // user needs auth for a proxied ollama endpoint, configure it at the proxy.
 
+// ─── VectFox-owned multi-key store (post-2026-06-17) ────────────────────
+// Each provider ('openrouter' | 'custom') maps to an array of
+//   { id, label, value, active }
+// stored in extension_settings.vectfox under vectfox_<provider>_keys. This is
+// VectFox's OWN storage — it NEVER touches ST's secret_state, so adding,
+// switching, renaming or deleting a key here does NOT change the main chat's
+// Connection Profile (and changing the profile does not change VectFox). The
+// stored `value` is the REAL key (plaintext in settings.json — same trust
+// model as the single-string isolated field this replaces).
+//
+// The store is CANONICAL on extension_settings.vectfox. Readers ignore any
+// passed-in `settings` copy: the runtime `settings` object in index.js is a
+// shallow spread of extension_settings.vectfox, so reading the
+// live store is the only way to stay consistent across the UI's
+// `Object.assign(extension_settings.vectfox, settings)` writebacks.
+
+const _VF_KEYS_FIELD = {
+    openrouter: 'vectfox_openrouter_keys',
+    custom: 'vectfox_custom_keys',
+};
+const _VF_LEGACY_FIELD = {
+    openrouter: 'vectfox_openrouter_api_key',
+    custom: 'vectfox_custom_api_key',
+};
+
+function _vfNewId() {
+    try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+    } catch { /* fall through to the manual id */ }
+    return `vfk_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Live key array for a provider, on extension_settings.vectfox. Creates the
+ * array when missing and lazily seeds it from the legacy single-string
+ * isolated field (vectfox_<provider>_api_key) so keys saved under the
+ * pre-array shape still appear as one active entry. Idempotent and free of a
+ * save side effect — the next mutation persists it, and an unpersisted seed
+ * re-derives identically on reload.
+ * @param {string} provider 'openrouter' | 'custom'
+ * @returns {Array<{id:string,label:string,value:string,active:boolean}>}
+ */
+function _vfKeyArray(provider) {
+    const vf = extension_settings?.vectfox;
+    if (!Object.hasOwn(_VF_KEYS_FIELD, provider)) throw new Error(`Unsupported VectFox key provider: ${provider}`);
+    const field = _VF_KEYS_FIELD[provider];
+    if (!vf) return [];
+    if (!Array.isArray(vf[field])) {
+        vf[field] = [];
+        const legacy = vf[_VF_LEGACY_FIELD[provider]];
+        if (typeof legacy === 'string' && legacy.trim().length > 0) {
+            vf[field].push({ id: _vfNewId(), label: 'Imported key', value: legacy.trim(), active: true });
+        }
+    }
+    return vf[field];
+}
+
+/** Ensures exactly one entry is active (the given id, else the first). */
+function _vfNormalizeActive(arr, activeId) {
+    let found = false;
+    for (const e of arr) {
+        e.active = (e.id === activeId);
+        if (e.active) found = true;
+    }
+    if (!found && arr.length) arr[0].active = true;
+}
+
+/**
+ * List a provider's saved keys (the live array — treat as read-only).
+ * @param {string} provider
+ * @returns {Array<{id:string,label:string,value:string,active:boolean}>}
+ */
+export function listVectFoxKeys(provider) {
+    return _vfKeyArray(provider);
+}
+
+/** Number of saved keys for a provider. */
+export function getVectFoxKeyCount(provider) {
+    return _vfKeyArray(provider).length;
+}
+
+/** The active key's label for a provider, or '' if none. */
+export function getActiveVectFoxKeyLabel(provider) {
+    const arr = _vfKeyArray(provider);
+    const active = arr.find(e => e.active) || arr[0];
+    return active?.label || '';
+}
+
+/** The active key's REAL value for a provider, or '' if none configured. */
+export function getActiveVectFoxKeyValue(provider) {
+    const arr = _vfKeyArray(provider);
+    const active = arr.find(e => e.active) || arr[0];
+    const v = active?.value;
+    return (typeof v === 'string' && v.trim().length > 0) ? v.trim() : '';
+}
+
+/** Mask for UI/presence checks; never reveal a short key in full. */
+export function maskVectFoxApiKey(value) {
+    const key = typeof value === 'string' ? value.trim() : '';
+    if (!key) return '';
+    if (key.length <= 4) return '*'.repeat(key.length);
+    return '*'.repeat(Math.min(key.length - 4, 8)) + key.slice(-4);
+}
+
+/**
+ * Add a key for a provider and make it active. Dedupes by value: pasting a key
+ * that already exists just re-activates that entry instead of creating a
+ * duplicate. Returns the entry id, or null when the value is empty.
+ * @param {string} provider
+ * @param {string} value REAL key
+ * @param {string} [label]
+ * @returns {string|null}
+ */
+export function addVectFoxKey(provider, value, label) {
+    const v = (typeof value === 'string' ? value : '').trim();
+    if (!v) return null;
+    if (!extension_settings?.vectfox) throw new Error('VectFox settings are not initialized');
+    const arr = _vfKeyArray(provider);
+    const existing = arr.find(e => e.value === v);
+    if (existing) {
+        if (typeof label === 'string' && label.trim()) existing.label = label.trim();
+        _vfNormalizeActive(arr, existing.id);
+        saveSettingsDebounced();
+        return existing.id;
+    }
+    const id = _vfNewId();
+    arr.push({ id, label: (typeof label === 'string' && label.trim()) || `Key ${arr.length + 1}`, value: v, active: true });
+    _vfNormalizeActive(arr, id);
+    saveSettingsDebounced();
+    return id;
+}
+
+/** Make a saved key active. @returns {boolean} whether the id was found. */
+export function activateVectFoxKey(provider, id) {
+    const arr = _vfKeyArray(provider);
+    if (!arr.some(e => e.id === id)) return false;
+    _vfNormalizeActive(arr, id);
+    saveSettingsDebounced();
+    return true;
+}
+
+/** Rename a saved key. @returns {boolean} whether the id was found. */
+export function renameVectFoxKey(provider, id, label) {
+    const arr = _vfKeyArray(provider);
+    const e = arr.find(x => x.id === id);
+    if (!e) return false;
+    e.label = (typeof label === 'string' ? label.trim() : '') || e.label;
+    saveSettingsDebounced();
+    return true;
+}
+
+/**
+ * Delete a saved key; promotes the first remaining entry to active when the
+ * deleted one was active (parity with ST's deleteSecret).
+ * @returns {boolean} whether the id was found.
+ */
+export function deleteVectFoxKey(provider, id) {
+    const arr = _vfKeyArray(provider);
+    const idx = arr.findIndex(e => e.id === id);
+    if (idx === -1) return false;
+    const wasActive = arr[idx].active;
+    arr.splice(idx, 1);
+    if (wasActive && arr.length && !arr.some(e => e.active)) arr[0].active = true;
+    // Once the array is canonical, an old single-string field must not revive
+    // a deleted key on a future reload/migration.
+    delete extension_settings.vectfox[_VF_LEGACY_FIELD[provider]];
+    saveSettingsDebounced();
+    return true;
+}
+
+// ─── Provider-specific convenience readers/writers ──────────────────────
+// Readers used by the shared LLM helper and settings UI.
+// The summarizer/agentic/
+// extractor callers don't change — they now resolve the ACTIVE key from the
+// array store above. The `settings` param is accepted for signature compat
+// but ignored (the store is canonical on extension_settings.vectfox).
+
+export function getVectFoxOpenRouterApiKey(settings) {
+    return getActiveVectFoxKeyValue('openrouter');
+}
+
+export function getVectFoxCustomApiKey(settings) {
+    return getActiveVectFoxKeyValue('custom');
+}
+
+export function hasVectFoxOpenRouterApiKey(settings) {
+    return getActiveVectFoxKeyValue('openrouter').length > 0;
+}
+
+export function hasVectFoxCustomApiKey(settings) {
+    return getActiveVectFoxKeyValue('custom').length > 0;
+}
+
+/**
+ * Save an OpenRouter key from the paste-to-save input — appends to the store
+ * (dedupe + activate). `liveSettings` is accepted for call-site compat but
+ * unused (the store is canonical on extension_settings.vectfox).
+ */
+export function setVectFoxOpenRouterApiKey(value, liveSettings) {
+    addVectFoxKey('openrouter', value);
+}
+
+export function setVectFoxCustomApiKey(value, liveSettings) {
+    addVectFoxKey('custom', value);
+}
+
 // ─── One-shot legacy field migration ────────────────────────────────────
 
 /**
- * Consolidate legacy per-feature key fields into the new one-key-per-provider
- * shape. Runs once at init from `index.js`.
- *
- * For OpenRouter:
- *   - Legacy fields: `summarize_openrouter_api_key`,
- *     `agentic_retrieval_openrouter_api_key`, `openrouter_api_key`
- *   - Picks the first non-empty value as the canonical key.
- *   - Writes to `SECRET_KEYS.OPENROUTER` ONLY IF that slot is currently
- *     empty (don't clobber a value the user set through ST's own UI).
- *   - Deletes all three legacy fields from `extension_settings.vectfox`.
- *
- * For vLLM:
- *   - Legacy fields: `summarize_vllm_api_key`,
- *     `agentic_retrieval_vllm_api_key`, `vllm_api_key`
- *   - Picks the first non-empty value, stores it in `vllm_api_key` plaintext.
- *   - Deletes the other two from `extension_settings.vectfox`.
- *
- * qdrant_api_key: drained to secret_state custom slot 'api_key_qdrant'
- * (gated on Similharity plugin probe — see Qdrant drain block below).
- *
- * ollama_api_key: drained-and-deleted from settings.json (no destination —
- * ST itself doesn't authenticate ollama; field was dead code on both sides).
- *
- * Idempotent: on subsequent runs the legacy fields are already absent
- * and the function is a no-op.
- *
+ * Migrate legacy OpenRouter/Custom plaintext fields into isolated key arrays.
+ * Existing active selections and all distinct legacy keys are preserved.
+ * Shared ST secrets cannot be copied because the client sees masked values;
+ * users can re-enter those keys, with the ST proxy as a compatibility fallback.
+ * Qdrant still migrates to its dedicated server secret when supported.
+ * Runs before index.js refreshes its settings snapshot; idempotent on reload.
  * @returns {Promise<{summary: string}>}
  */
 export async function migrateLegacyApiKeys() {
@@ -327,104 +432,26 @@ export async function migrateLegacyApiKeys() {
     let mutated = false;
     const moves = []; // human-readable log entries
 
-    // ─── OpenRouter consolidation ───
-    const orLegacy = [
-        'summarize_openrouter_api_key',
-        'agentic_retrieval_openrouter_api_key',
-        'openrouter_api_key',
-    ];
-    let orValue = '';
-    for (const field of orLegacy) {
-        if (!Object.prototype.hasOwnProperty.call(vf, field)) continue;
-        const v = vf[field];
-        if (!orValue && typeof v === 'string' && v.trim().length > 0) {
-            orValue = v.trim();
-            moves.push(`OpenRouter source: ${field} (len=${orValue.length})`);
-        }
-        delete vf[field];
-        mutated = true;
-    }
-    if (orValue) {
-        const existing = _readSecretValue(SECRET_KEYS.OPENROUTER);
-        if (!existing) {
-            try {
-                await writeSecret(SECRET_KEYS.OPENROUTER, orValue);
-                moves.push(`OpenRouter → wrote to SECRET_KEYS.OPENROUTER (was empty)`);
-            } catch (err) {
-                log.warn('[VectFox migrate] writeSecret(SECRET_KEYS.OPENROUTER) failed:', err?.message || err);
-                moves.push(`OpenRouter → writeSecret FAILED, key not migrated`);
+    // Preserve every distinct legacy key in VectFox's own store. Never write
+    // to OPENROUTER/CUSTOM/VLLM: those slots belong to ST's connections.
+    for (const [provider, fields] of Object.entries({
+        openrouter: ['summarize_openrouter_api_key', 'agentic_retrieval_openrouter_api_key', 'openrouter_api_key', 'vectfox_openrouter_api_key'],
+        custom: ['summarize_vllm_api_key', 'agentic_retrieval_vllm_api_key', 'vllm_api_key', 'vectfox_custom_api_key'],
+    })) {
+        const keys = _vfKeyArray(provider);
+        const activeId = (keys.find(key => key.active) || keys[0])?.id;
+        for (const field of fields) {
+            if (!Object.prototype.hasOwnProperty.call(vf, field)) continue;
+            const value = typeof vf[field] === 'string' ? vf[field].trim() : '';
+            if (value && !keys.some(key => key.value === value)) {
+                keys.push({ id: _vfNewId(), label: `Imported key ${keys.length + 1}`, value, active: false });
+                moves.push(`${provider} → imported legacy key into VectFox store`);
             }
-        } else {
-            moves.push(`OpenRouter → SECRET_KEYS.OPENROUTER already has a key, keeping that one (didn't clobber)`);
+            delete vf[field];
+            mutated = true;
         }
+        _vfNormalizeActive(keys, activeId);
     }
-
-    // ─── vLLM → SECRET_KEYS.CUSTOM drain ───
-    // Pre-2026-05-26: VectFox stored the vLLM-style key plaintext in
-    // `settings.vllm_api_key` and 2 sibling legacy fields. The chat-side
-    // code did direct fetches with `Authorization: Bearer ${key}`.
-    // Post-refactor: chat-side routes through ST's chat-completions proxy
-    // with `chat_completion_source: 'custom'`, which reads the key from
-    // `SECRET_KEYS.CUSTOM` server-side. Drain the legacy plaintext value
-    // into that slot (first non-empty wins) and delete all three legacy
-    // plaintext fields. Don't-clobber rule: if the slot is already non-
-    // empty, leave it alone — user may have configured their main chat to
-    // use Custom OpenAI-compatible with a different value and we'd silently
-    // hijack it.
-    const vllmLegacy = [
-        'summarize_vllm_api_key',
-        'agentic_retrieval_vllm_api_key',
-        'vllm_api_key',
-    ];
-    let vllmValue = '';
-    for (const field of vllmLegacy) {
-        if (!Object.prototype.hasOwnProperty.call(vf, field)) continue;
-        const v = vf[field];
-        if (!vllmValue && typeof v === 'string' && v.trim().length > 0) {
-            vllmValue = v.trim();
-            moves.push(`vLLM source: ${field} (len=${vllmValue.length})`);
-        }
-        delete vf[field];
-        mutated = true;
-    }
-    if (vllmValue) {
-        // Dual-write: chat-side proxy reads SECRET_KEYS.CUSTOM; embedding-side
-        // proxy reads SECRET_KEYS.VLLM. Writing to both preserves the "one
-        // shared key" UX promise from pre-2026-05-26 while moving storage out
-        // of plaintext. Each write is don't-clobber so existing ST main-chat
-        // configs (Custom source) or existing ST vLLM Text Completion configs
-        // are left alone — users with intentional per-slot values keep them.
-        const existingCustom = _readSecretValue(SECRET_KEYS.CUSTOM);
-        if (!existingCustom) {
-            try {
-                await writeSecret(SECRET_KEYS.CUSTOM, vllmValue);
-                moves.push(`vLLM → wrote to SECRET_KEYS.CUSTOM (was empty)`);
-            } catch (err) {
-                log.warn('[VectFox migrate] writeSecret(SECRET_KEYS.CUSTOM) failed:', err?.message || err);
-                moves.push(`vLLM → writeSecret(SECRET_KEYS.CUSTOM) FAILED, chat-side key not migrated — re-enter via VectFox UI`);
-            }
-        } else {
-            const msg = `vLLM → SECRET_KEYS.CUSTOM already has a value (likely from ST main-chat config) — kept that one for chat-side. To override, clear ST's Custom OpenAI-compatible key and re-enter via VectFox UI.`;
-            log.warn(`[VectFox migrate] ${msg}`);
-            moves.push(msg);
-        }
-
-        const existingVllm = _readSecretValue(SECRET_KEYS.VLLM);
-        if (!existingVllm) {
-            try {
-                await writeSecret(SECRET_KEYS.VLLM, vllmValue);
-                moves.push(`vLLM → wrote to SECRET_KEYS.VLLM (was empty, used by embedding path)`);
-            } catch (err) {
-                log.warn('[VectFox migrate] writeSecret(SECRET_KEYS.VLLM) failed:', err?.message || err);
-                moves.push(`vLLM → writeSecret(SECRET_KEYS.VLLM) FAILED, embedding-side key not migrated — configure via ST's Text Completion → vLLM UI`);
-            }
-        } else {
-            const msg = `vLLM → SECRET_KEYS.VLLM already has a value (from ST Text Completion → vLLM config) — kept that one for embedding-side.`;
-            log.warn(`[VectFox migrate] ${msg}`);
-            moves.push(msg);
-        }
-    }
-
     // ─── Qdrant API key → 'api_key_qdrant' (custom slot) drain ───
     // Pre-2026-05-26: VectFox stored the Qdrant Cloud API key plaintext in
     // settings.qdrant_api_key. The backends/qdrant.js init flow sent the raw
@@ -563,8 +590,6 @@ export async function migrateLegacyApiKeys() {
 
     if (moves.length > 0) {
         log.lifecycle(`[VectFox migrate] Migration complete:\n  - ${moves.join('\n  - ')}`);
-        // Refresh in-memory secret_state if we wrote OpenRouter or CUSTOM
-        try { await readSecretState(); } catch {}
     } else {
         log.lifecycle('[VectFox migrate] No legacy API-key fields found — nothing to migrate');
     }

@@ -18,7 +18,7 @@
 
 import { getOpenRouterApiKey, getCustomApiKey } from './api-keys.js';
 import { getDefaultSummarizePrompt } from './prompts-i18n.js';
-import { postChatCompletion, resolveModelParameterStyle, LlmCallError } from './llm-provider-call.js';
+import { postChatCompletion, resolveModelParameterStyle, buildCustomChatCompletionsUrl, LlmCallError } from './llm-provider-call.js';
 import { log } from './log.js';
 
 /**
@@ -256,11 +256,8 @@ async function _callOpenRouter(prompt, model, settings, originalLength, maxToken
 /**
  * Build the `/v1/chat/completions` endpoint URL from a user-supplied vLLM base URL.
  *
- * Tolerates whether the user pasted `http://localhost:8000` (no /v1 suffix) or
- * `https://openrouter.ai/api/v1` (with /v1 suffix) — strips the trailing `/v1`
- * if present, then re-appends `/v1/chat/completions` so we always hit the same
- * canonical OpenAI-compatible path. Mirrors the suffix-normalization pattern
- * core-vector-api.js already uses for the embeddings URL.
+ * Accepts a bare base URL, a versioned base (/v1, /v4, …), or an explicit
+ * /chat/completions endpoint. Uses the shared direct-call URL normalizer.
  *
  * Exported so eventbase-extractor.js and agentic-retrieval.js share the same
  * normalization — the vLLM-style base URL flows through three call sites and
@@ -270,11 +267,7 @@ async function _callOpenRouter(prompt, model, settings, originalLength, maxToken
  * @returns {string} fully-qualified chat-completions URL
  */
 export function buildVllmChatCompletionsUrl(baseUrl) {
-    return String(baseUrl || '')
-        .trim()
-        .replace(/\/+$/, '')        // trailing slashes
-        .replace(/\/v1$/, '')       // trailing /v1 (e.g. openrouter.ai/api/v1)
-        + '/v1/chat/completions';
+    return buildCustomChatCompletionsUrl(baseUrl);
 }
 
 async function _callVLLM(prompt, model, settings, maxTokens = DEFAULT_MAX_TOKENS, timeoutMs = settings?.summarize_timeout_ms || DEFAULT_TIMEOUT_MS) {

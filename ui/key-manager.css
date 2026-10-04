@@ -1,0 +1,293 @@
+/* ============================================================================
+ * VectFox KEY MANAGER STYLES
+ * ============================================================================
+ * Styles for the multi-key management modal (ui/key-manager.js).
+ * Uses VectFox's shared design tokens (var(--grey30), var(--SmartThemeBlurTintColor))
+ * so it adapts to whatever ST theme is active.
+ * ============================================================================ */
+
+/* ── Overlay backdrop ─────────────────────────────────────────────── */
+.vectfox-key-manager-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
+    animation: vectfox-km-fade-in 0.15s ease-out;
+}
+
+@keyframes vectfox-km-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ── Modal container ──────────────────────────────────────────────── */
+.vectfox-key-manager-modal {
+    width: min(560px, 92vw);
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--grey30);
+    border-radius: 10px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+    color: var(--SmartThemeBodyColor);
+    overflow: hidden;
+    animation: vectfox-km-slide-in 0.2s ease-out;
+}
+
+@keyframes vectfox-km-slide-in {
+    from { transform: translateY(10px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Header ───────────────────────────────────────────────────────── */
+.vectfox-key-manager-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--grey30);
+    flex-shrink: 0;
+}
+
+.vectfox-key-manager-header h3 {
+    margin: 0;
+    font-size: 1.05em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.vectfox-key-manager-header h3 i {
+    color: var(--SmartThemeQuoteColor, #e6a23c);
+}
+
+.vectfox-key-manager-close {
+    background: transparent;
+    border: none;
+    color: var(--SmartThemeBodyColor);
+    font-size: 1.1em;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    opacity: 0.7;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.vectfox-key-manager-close:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* ── Body (scrollable list + add section) ─────────────────────────── */
+.vectfox-key-manager-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.vectfox-key-manager-list-container {
+    flex: 1;
+    min-height: 80px;
+}
+
+/* ── Key list items ───────────────────────────────────────────────── */
+.vectfox-key-manager-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.vectfox-key-manager-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--grey30);
+    border-radius: 6px;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.vectfox-key-manager-item:hover {
+    border-color: var(--SmartThemeQuoteColor, #e6a23c);
+}
+
+.vectfox-key-manager-item-active {
+    border-color: var(--SmartThemeQuoteColor, #e6a23c);
+    background: rgba(230, 162, 60, 0.08);
+}
+
+.vectfox-key-manager-item-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.vectfox-key-manager-item-status {
+    font-size: 1.1em;
+    color: var(--SmartThemeQuoteColor, #e6a23c);
+    flex-shrink: 0;
+}
+
+.vectfox-key-manager-item-label {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vectfox-key-manager-item-value {
+    opacity: 0.6;
+    font-size: 0.85em;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-left: auto;
+}
+
+.vectfox-key-manager-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.vectfox-key-manager-item-actions button {
+    padding: 4px 8px;
+    font-size: 0.85em;
+}
+
+.vectfox-key-manager-active-badge {
+    background: var(--SmartThemeQuoteColor, #e6a23c);
+    color: #000;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 0.75em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────── */
+.vectfox-key-manager-empty {
+    text-align: center;
+    padding: 30px 10px;
+    opacity: 0.6;
+    font-size: 0.9em;
+}
+
+/* ── Add new key section ──────────────────────────────────────────── */
+.vectfox-key-manager-add-section {
+    border-top: 1px solid var(--grey30);
+    padding-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.vectfox-key-manager-section-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0.85;
+    font-weight: 600;
+}
+
+.vectfox-key-manager-add-btn {
+    align-self: flex-start;
+    margin-top: 4px;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────── */
+.vectfox-key-manager-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--grey30);
+    flex-shrink: 0;
+}
+
+.vectfox-key-manager-hint {
+    opacity: 0.7;
+    line-height: 1.4;
+    flex: 1;
+}
+
+.vectfox-key-manager-done-btn {
+    flex-shrink: 0;
+}
+
+/* ── "Manage Keys" button (next to each API key input) ────────────── */
+.vectfox-key-manager-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85em;
+    padding: 4px 8px;
+    margin-top: 4px;
+    cursor: pointer;
+}
+
+.vectfox-key-manager-trigger .vectfox-key-count-badge {
+    background: var(--SmartThemeQuoteColor, #e6a23c);
+    color: #000;
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 0.85em;
+    font-weight: 700;
+    min-width: 18px;
+    text-align: center;
+}
+
+.vectfox-key-manager-trigger.vectfox-key-manager-trigger-multi .vectfox-key-count-badge {
+    animation: vectfox-km-pulse 2s ease-in-out infinite;
+}
+
+@keyframes vectfox-km-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* ── Mobile responsive ────────────────────────────────────────────── */
+@media (max-width: 600px) {
+    .vectfox-key-manager-modal {
+        width: 96vw;
+        max-height: 90vh;
+    }
+
+    .vectfox-key-manager-item {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .vectfox-key-manager-item-info {
+        margin-bottom: 8px;
+    }
+
+    .vectfox-key-manager-item-actions {
+        justify-content: flex-end;
+    }
+
+    .vectfox-key-manager-footer {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .vectfox-key-manager-done-btn {
+        align-self: stretch;
+    }
+}

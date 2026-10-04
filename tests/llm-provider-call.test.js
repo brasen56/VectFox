@@ -10,6 +10,12 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const isolatedKeys = vi.hoisted(() => ({ openrouter: '', custom: '' }));
+vi.mock('../core/api-keys.js', () => ({
+    getVectFoxOpenRouterApiKey: () => isolatedKeys.openrouter,
+    getVectFoxCustomApiKey: () => isolatedKeys.custom,
+}));
+
 vi.mock('../../../../../script.js', () => ({
     getRequestHeaders: () => ({ 'Content-Type': 'application/json' }),
 }));
@@ -34,7 +40,7 @@ vi.mock('../core/log.js', () => ({
 }));
 
 import StringUtils from '../utils/string-utils.js';
-import { postChatCompletion, parseJsonArrayFromLlm, resolveModelParameterStyle, LlmCallError } from '../core/llm-provider-call.js';
+import { postChatCompletion, parseJsonArrayFromLlm, resolveModelParameterStyle, buildCustomChatCompletionsUrl, LlmCallError } from '../core/llm-provider-call.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -75,6 +81,8 @@ function baseArgs(overrides = {}) {
 }
 
 beforeEach(() => {
+    isolatedKeys.openrouter = '';
+    isolatedKeys.custom = '';
     vi.restoreAllMocks();
     mockGetModelConfigError.mockReturnValue(null);
     mockIsConnectionError.mockReturnValue(false);
@@ -85,6 +93,66 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // postChatCompletion — request shaping
 // ---------------------------------------------------------------------------
+
+describe('postChatCompletion — isolated keys', () => {
+    it('calls OpenRouter directly with the active VectFox key and merged request options', async () => {
+        isolatedKeys.openrouter = 'vf-openrouter-key';
+        const fetchMock = vi.fn(async () => okResponse({ content: 'isolated reply' }));
+        vi.stubGlobal('fetch', fetchMock);
+        const result = await postChatCompletion(baseArgs({
+            sendTemperature: false, tokenLimitParameter: 'max_completion_tokens',
+            reasoningEffort: 'none', responseFormat: { type: 'json_object' },
+        }));
+        const [url, options] = fetchMock.mock.calls[0];
+        expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');
+        expect(options.headers.Authorization).toBe('Bearer vf-openrouter-key');
+        expect(options.signal).toBeInstanceOf(AbortSignal);
+        expect(JSON.parse(options.body)).toEqual({
+            model: 'test/model', messages: baseArgs().messages, max_completion_tokens: 100,
+            reasoning_effort: 'none', response_format: { type: 'json_object' },
+        });
+        expect(result.content).toBe('isolated reply');
+    });
+
+    it.each(['vllm', 'custom'])('uses the isolated Custom key for provider %s', async provider => {
+        isolatedKeys.custom = 'vf-custom-key';
+        const fetchMock = vi.fn(async () => okResponse());
+        vi.stubGlobal('fetch', fetchMock);
+        await postChatCompletion(baseArgs({ provider, vllmUrl: 'https://custom.example/api/v4/' }));
+        const [url, options] = fetchMock.mock.calls[0];
+        expect(url).toBe('https://custom.example/api/v4/chat/completions');
+        expect(options.headers).toEqual({ 'Content-Type': 'application/json', Authorization: 'Bearer vf-custom-key' });
+        expect(JSON.parse(options.body).custom_url).toBeUndefined();
+        expect(JSON.parse(options.body).chat_completion_source).toBeUndefined();
+    });
+
+    it('reads key changes on the next call', async () => {
+        const fetchMock = vi.fn(async () => okResponse());
+        vi.stubGlobal('fetch', fetchMock);
+        isolatedKeys.openrouter = 'first-key';
+        await postChatCompletion(baseArgs());
+        isolatedKeys.openrouter = 'second-key';
+        await postChatCompletion(baseArgs());
+        expect(fetchMock.mock.calls.map(([, opts]) => opts.headers.Authorization)).toEqual(['Bearer first-key', 'Bearer second-key']);
+    });
+
+    it('reports isolated-key auth failures without silently retrying with an ST key', async () => {
+        isolatedKeys.openrouter = 'bad-key';
+        const fetchMock = vi.fn(async () => errorResponse(401, 'Unauthorized'));
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(postChatCompletion(baseArgs())).rejects.toMatchObject({ kind: 'auth', status: 401 });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['http://localhost:8000', 'http://localhost:8000/v1/chat/completions'],
+        ['https://custom.example/api/v1/', 'https://custom.example/api/v1/chat/completions'],
+        ['https://custom.example/api/v4', 'https://custom.example/api/v4/chat/completions'],
+        [' https://custom.example/api/v4/chat/completions/ ', 'https://custom.example/api/v4/chat/completions'],
+    ])('normalizes custom URL %s', (input, expected) => {
+        expect(buildCustomChatCompletionsUrl(input)).toBe(expected);
+    });
+});
 
 describe('postChatCompletion — request body', () => {
     it('routes OpenRouter through the proxy with chat_completion_source=openrouter', async () => {

@@ -17,6 +17,8 @@ vi.mock('../../../../../script.js', () => ({
 vi.mock('../core/api-keys.js', () => ({
     getOpenRouterApiKey: () => 'mock-masked-key',
     getCustomApiKey: () => 'mock-masked-key',
+    getVectFoxOpenRouterApiKey: () => '',
+    getVectFoxCustomApiKey: () => '',
 }));
 
 // core/log.js reads extension_settings for verbosity/domain gating — mock the
