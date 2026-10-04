@@ -32,12 +32,15 @@ export function normalizeCharacterName(name) {
 }
 
 function slimEvent(item) {
-    const event = { ...parseEmbedText(item.text || ''), ...item.metadata };
+    const parsed = parseEmbedText(item.text || '');
+    const event = { ...parsed, ...item.metadata };
     if (!event.event_id) return null; // Native hashes-only fallback has no roster data.
     return {
         event_id: event.event_id,
         hash: item.hash,
-        summary: String(event.summary || '').split(/\r?\n/)[0],
+        // EventBase keeps the summary only in the embed text, and the Qdrant
+        // plugin stores `summary: null` on every point, so null must not win.
+        summary: String(event.summary || parsed.summary || '').split(/\r?\n/)[0],
         DateTime: event.DateTime,
         scene_time: event.scene_time,
         importance: event.importance,

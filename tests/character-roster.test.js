@@ -203,6 +203,13 @@ describe('collection event index', () => {
         expect(indexed.scene_time).toBe('10:00');
     });
 
+    it('recovers summaries when the Qdrant payload stores summary: null', async () => {
+        const e = item('1', ['Kai']);
+        e.metadata.summary = null;
+        await ensureCharacterIndex('one', {}, async () => ({ listChunks: async () => ({ items: [e] }) }));
+        expect(getCharacterRoster(['one']).events[0].summary).toBe('Summary 1');
+    });
+
     it('ignores junk in the roster and extraction hints without changing events or their total', async () => {
         const junk = ['physics-ugrad-advising', 'nurse, the waitress'];
         const items = [item('1', ['Ezra', ...junk]), item('2', ['Ezra Blackwell']), item('3', junk)];

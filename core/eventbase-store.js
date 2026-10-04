@@ -284,7 +284,9 @@ export async function getEventsSince(chatUUID, marker, settings) {
         const end = md.source_window_end;
         if (typeof end === 'number' && end > maxEnd) maxEnd = end;
         if (typeof end === 'number' && end >= lowerBound) {
-            events.push({ ...parseEmbedText(item.text || ''), ...md });
+            // The Qdrant plugin stores `summary: null`; the real summary is in the embed text.
+            const parsed = parseEmbedText(item.text || '');
+            events.push({ ...parsed, ...md, summary: md.summary || parsed.summary });
         }
     }
 

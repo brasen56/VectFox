@@ -383,6 +383,14 @@ describe('getEventsSince', () => {
         expect(result.events).toHaveLength(2);
     });
 
+    it('keeps the embed-text summary when the Qdrant payload stores summary: null', async () => {
+        listChunksMock.mockResolvedValue({ items: [makeItem(5, { summary: null })] });
+
+        const result = await getEventsSince(CHAT_UUID, -1, {});
+
+        expect(result.events[0].summary).toBe('[dialogue_significant] event at 5');
+    });
+
     it('degrades to an empty result (not a throw) when the backend read fails', async () => {
         listChunksMock.mockRejectedValue(new Error('Qdrant unreachable'));
 
