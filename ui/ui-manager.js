@@ -1277,6 +1277,15 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </div>
                                 <button type="button" id="VectFox_character_roster_refresh" class="vectfox-btn vectfox-btn-secondary">Review / Refresh roster</button>
                                 <label class="vectfox-label" style="margin-top:12px;">Scene-cast history</label>
+                                <label>Shared EventBase token budget <input id="VectFox_eventbase_token_budget" type="number" class="vectfox-input" min="0" step="100" style="width:100px;" /></label>
+                                <small class="VectFox_hint">Caps main events, cast history/cards and context/XML wrappers together using a conservative estimate (default 4000). Lower-ranked main events use compact summaries. Zero disables this injection; summarizer injection has its own budget.</small>
+                                <label><input id="VectFox_eventbase_npc_cards_enabled" type="checkbox" /> LLM-written NPC cards for long histories</label>
+                                <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                                    <label>Minimum events <input id="VectFox_eventbase_npc_card_min_events" type="number" class="vectfox-input" min="1" style="width:80px;" /></label>
+                                    <label>Card tokens <input id="VectFox_eventbase_npc_card_tokens" type="number" class="vectfox-input" min="1" step="50" style="width:90px;" /></label>
+                                    <button type="button" id="VectFox_eventbase_npc_cards_reset" class="vectfox-btn vectfox-btn-secondary">Reset NPC cards</button>
+                                </div>
+                                <small class="VectFox_hint">Uses the Core summarization model, at most one background call per in-play NPC per turn. The first build reads up to 4 batches; longer histories are sampled. Afterwards a card updates from new events only, once 5 have arrived, and is shown with those newer events until then. Cards are source-linked LLM summaries, not guaranteed lossless; Reset rebuilds them if they drift. Dry-runs do not generate cards.</small>
                                 <div style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0;">
                                     <label>Sticky messages <input id="VectFox_eventbase_cast_sticky_messages" type="number" class="vectfox-input" min="0" step="1" style="width:80px;" /></label>
                                     <label>Maximum characters <input id="VectFox_eventbase_cast_max_characters" type="number" class="vectfox-input" min="0" step="1" style="width:80px;" /></label>
@@ -4807,10 +4816,23 @@ function bindSettingsEvents(settings, callbacks) {
         });
 
     // Custom extraction prompt textarea — pre-fill with default if nothing saved.
-    for (const [key, fallback] of [['eventbase_cast_sticky_messages', 30], ['eventbase_cast_max_characters', 3], ['eventbase_cast_token_budget', 700]]) {
+    $('#VectFox_eventbase_npc_cards_enabled').prop('checked', !!settings.eventbase_npc_cards_enabled).on('change', function() {
+        settings.eventbase_npc_cards_enabled = $(this).prop('checked');
+        Object.assign(extension_settings.vectfox, settings);
+        saveSettingsDebounced();
+    });
+    $('#VectFox_eventbase_npc_cards_reset').on('click', () => {
+        const count = Object.keys(settings.eventbase_npc_cards || {}).length;
+        if (!confirm(`Delete ${count} saved NPC card(s)?\n\nEach in-play NPC's card is rebuilt on its next turns, using up to 4 summarization calls per NPC.`)) return;
+        settings.eventbase_npc_cards = {};
+        Object.assign(extension_settings.vectfox, settings);
+        saveSettingsDebounced();
+        toastr.success('NPC cards reset', 'VectFox');
+    });
+    for (const [key, fallback] of [['eventbase_cast_sticky_messages', 30], ['eventbase_cast_max_characters', 3], ['eventbase_cast_token_budget', 700], ['eventbase_token_budget', 4000], ['eventbase_npc_card_min_events', 30], ['eventbase_npc_card_tokens', 350]]) {
         $(`#VectFox_${key}`).val(settings[key] ?? fallback).on('change', function() {
             const value = Number($(this).val());
-            settings[key] = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
+            settings[key] = Number.isFinite(value) ? Math.max(key.startsWith('eventbase_npc_card_') ? 1 : 0, Math.floor(value)) : fallback;
             $(this).val(settings[key]);
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();

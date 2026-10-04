@@ -11,7 +11,10 @@
  * ============================================================================
  */
 
-import { setExtensionPrompt, extension_prompts, getCurrentChatId, substituteParams, chat_metadata } from '../../../../../script.js';
+import { setExtensionPrompt, extension_prompts, getCurrentChatId, substituteParams, chat_metadata, saveSettingsDebounced } from '../../../../../script.js';
+import { formatBudgetedEventBase } from './eventbase-token-budget.js';
+import { getNpcCards } from './npc-cards.js';
+import { completeNpcCard } from './npc-card-llm.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID, parseRegistryKey, COLLECTION_PREFIXES, buildRegistryKey } from './collection-ids.js';
 import { getCollectionRegistry } from './collection-loader.js';
@@ -25,7 +28,6 @@ import { getSavedHashes } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
-import { formatEventsForInjectionDetailed, formatCastHistoryDetailed } from './eventbase-injection.js';
 import { eventDebugKey } from './eventbase-retrieval-debug.js';
 import { getCharacterRoster } from './character-roster.js';
 import { detectSceneCast } from './scene-cast.js';
@@ -1249,18 +1251,26 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     const inPlay = roster.ready ? detectSceneCast({ roster, chat: chat || liveChat,
         plannerCharacters: debug?.plannerCharacters, chatId: `${currentChatId}:${uuid}`, settings, dryRun, testMessage, includeAll: true }) : [];
     const cast = inPlay.slice(0, resolveCastSetting(settings, 'eventbase_cast_max_characters'));
-    const mainResult = events?.length ? formatEventsForInjectionDetailed(events, settings) : { text: '', includedCount: 0 };
-    const castResult = roster.ready ? formatCastHistoryDetailed({ roster, cast, diagnosticCast: inPlay,
-        mainEvents: mainResult.text ? events : [], settings, chatLength: effectiveChatLength,
-        currentCollectionIds: lockedLiveCollections.filter(c => c.collectionId.endsWith(`_${uuid}`)).map(c => c.collectionId) }) : { text: '', includedCount: 0, zeroInjectionCharacters: [] };
-    const mainInjectedEvents = mainResult.text ? events || [] : [];
+    const cards = getNpcCards({ roster, cast, settings, dryRun, complete: completeNpcCard,
+        save: () => { extension_settings.vectfox.eventbase_npc_cards = settings.eventbase_npc_cards; saveSettingsDebounced(); },
+        onError: error => log.warn('[NPC card] Refresh failed; using history spine:', error.message) });
+    const budgeted = formatBudgetedEventBase({ events: events || [], roster, cast, diagnosticCast: inPlay, cards,
+        settings, chatLength: effectiveChatLength,
+        globalContext: settings.rag_context ? substituteParams(settings.rag_context) : '', xmlTag: settings.rag_xml_tag || '',
+        currentCollectionIds: lockedLiveCollections.filter(c => c.collectionId.endsWith(`_${uuid}`)).map(c => c.collectionId) });
+    const mainResult = budgeted.main, castResult = budgeted.cast;
+    const mainInjectedEvents = mainResult.events || [];
     const castInjectedEventIds = (castResult.events || []).map(eventDebugKey);
     Object.assign(dryRunDebug, { castIndexReady: roster.ready, castPendingCollections: roster.pendingCollections,
+        mainInjectedEventIds: mainInjectedEvents.map(eventDebugKey),
         finalInjectedEventIds: [...new Set([...mainInjectedEvents.map(eventDebugKey), ...castInjectedEventIds])],
         castInjectedEventIds,
         sceneCast: cast.map(entry => ({ name: entry.group.name, signals: entry.signals, lastMention: entry.lastMention })),
         inPlayCharacters: inPlay.map(entry => ({ name: entry.group.name, signals: entry.signals, lastMention: entry.lastMention })),
-        castEventCount: castResult.includedCount, zeroInjectionCharacters: castResult.zeroInjectionCharacters });
+        castEventCount: castResult.includedCount, zeroInjectionCharacters: castResult.zeroInjectionCharacters,
+        npcCardCharacters: castResult.cardCharacters, eventbaseTokenBudget: budgeted.budget,
+        estimatedInjectionTokens: budgeted.estimatedTokens, compactMainEventIds: mainResult.compactEventIds,
+        budgetCutEventIds: (events || []).filter(e => !mainInjectedEvents.includes(e)).map(eventDebugKey) });
     if (castResult.zeroInjectionCharacters.length) log.lifecycle(`[EventBase] In play with zero events injected: ${castResult.zeroInjectionCharacters.map(c => `${c.name} (${c.signals.join(' + ')})`).join(', ')}`);
 
     if (!events?.length && !castResult.text) {
@@ -1278,7 +1288,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         return;
     }
 
-    let injectionText = [mainResult.text, castResult.text].filter(Boolean).join('\n\n');
+    let injectionText = budgeted.text;
     const injectedCount = mainResult.includedCount + castResult.includedCount;
     if (!injectionText) {
         log.verbose('[EventBase] Injection text empty after formatting');
@@ -1292,17 +1302,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         toastr.success(`EventBase: ${injectedCount} event(s) injected`, 'VectFox Retrieval');
     }
 
-    // Apply global RAG context if configured (same as legacy chunk path)
-    const globalContext = settings.rag_context ? substituteParams(settings.rag_context) : '';
-    if (globalContext) {
-        injectionText = `${globalContext}\n\n${injectionText}`;
-    }
-
-    // Wrap with XML tag if configured (same as legacy path)
-    const xmlTag = settings.rag_xml_tag || '';
-    if (xmlTag) {
-        injectionText = `<${xmlTag}>\n${injectionText}\n</${xmlTag}>`;
-    }
+    // Context and XML wrappers were included in the shared token envelope.
 
     // Dry-run: return text without touching the extension prompt slot
     if (dryRun) {

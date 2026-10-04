@@ -51,6 +51,17 @@ describe('EventBase recall diagnostics', () => {
         expect(result.queryText).toContain('2 hit(s) returned (2 unique); 1 injected');
     });
 
+    it('reports shared-budget use, compact main events and injected cards', () => {
+        const withCompacts = formatRetrievalDiagnostics({ eventbaseTokenBudget: 4000,
+            estimatedInjectionTokens: 1200, compactMainEventIds: ['e5', 'e8'], npcCardCharacters: ['Brennan'] });
+        expect(withCompacts.castText).toContain('Shared EventBase budget: 1200/4000 estimated tokens.');
+        expect(withCompacts.castText).toContain('Main events injected as compact summaries: e5, e8.');
+        expect(withCompacts.castText).toContain('NPC cards injected: Brennan.');
+        const withoutCompacts = formatRetrievalDiagnostics({ eventbaseTokenBudget: 4000, estimatedInjectionTokens: 0 });
+        expect(withoutCompacts.castText).toContain('Main events injected as compact summaries: none.');
+        expect(withoutCompacts.castText).toContain('NPC cards injected: none.');
+        expect(formatRetrievalDiagnostics({})).not.toHaveProperty('castText');
+    });
     it('supports absent debug data', () => {
         expect(formatRetrievalDiagnostics()).toEqual({
             cutCount: 0, cutText: 'No returned candidates were cut.', queryText: '',

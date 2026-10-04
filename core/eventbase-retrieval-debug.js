@@ -50,12 +50,14 @@ export function formatRetrievalDiagnostics(debug = {}) {
             ? !finalIds.has(id) : entry.outcome !== 'injected');
     const rescues = (debug.castInjectedEventIds || []).filter(id =>
         debug.candidateOutcomes?.[id] && debug.candidateOutcomes[id].outcome !== 'injected');
+    const budgetCuts = new Set(debug.budgetCutEventIds || []);
     const cutText = cuts.map(([id, entry]) =>
-        `${id} — ${entry.outcome.replace(/_/g, ' ')}\n  ${entry.summary}`).join('\n\n');
+        `${id} — ${budgetCuts.has(id) ? 'cut by shared token budget' : entry.outcome.replace(/_/g, ' ')}\n  ${entry.summary}`).join('\n\n');
+    const mainIds = debug.mainInjectedEventIds ? new Set(debug.mainInjectedEventIds) : null;
     const queryText = (debug.plannerQuerySummary || []).map(query =>
         `${query.queryText}`
         + (query.queryIndex != null ? ` [Q${query.queryIndex + 1}; characters: ${(query.characters_any || []).join(', ') || 'unscoped'}]` : '')
-        + `\n  ${query.hitsReturned} hit(s) returned (${query.uniqueHits} unique); ${query.survivedCount} injected in main lane`
+        + `\n  ${query.hitsReturned} hit(s) returned (${query.uniqueHits} unique); ${mainIds ? (query.eventIds || []).filter(id => mainIds.has(id)).length : query.survivedCount} injected in main lane`
         + (query.failedCalls ? `; ${query.failedCalls} failed call(s)` : '')
         + (query.timedOutCalls ? `; ${query.timedOutCalls} timed-out call(s)` : '')).join('\n\n');
     let castText = debug.castIndexReady === false
@@ -64,5 +66,9 @@ export function formatRetrievalDiagnostics(debug = {}) {
             ? `In play with zero events injected: ${debug.zeroInjectionCharacters.map(c => `${c.name} (${c.signals.join(' + ')})`).join(', ') || 'none'}.`
             : '';
     if (rescues.length) castText = [castText, `Rescued by cast history: ${rescues.join(', ')}.`].filter(Boolean).join('\n');
+    if (debug.eventbaseTokenBudget != null) castText = [castText,
+        `Shared EventBase budget: ${debug.estimatedInjectionTokens || 0}/${debug.eventbaseTokenBudget} estimated tokens.`,
+        `Main events injected as compact summaries: ${(debug.compactMainEventIds || []).join(', ') || 'none'}.`,
+        `NPC cards injected: ${(debug.npcCardCharacters || []).join(', ') || 'none'}.`].filter(Boolean).join('\n');
     return { cutCount: cuts.length, cutText: cutText || 'No returned candidates were cut.', queryText, ...(castText ? { castText } : {}) };
 }

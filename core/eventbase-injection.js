@@ -3,8 +3,7 @@
  * EVENTBASE INJECTION
  * ============================================================================
  * Formats retrieved EventRecord objects into a prompt block for injection.
- * No hard character budget is enforced — Top-K and retrieval filters control
- * payload size.
+ * Main events and cast history share a conservative estimated-token budget.
  * ============================================================================
  */
 
@@ -249,14 +248,14 @@ function _orderEventsForPresentation(events) {
 
 /**
  * Format retrieved events into a prompt injection string.
- * No hard cap is applied here; Top-K and retrieval filters control payload size.
+ * A supplied token budget selects full or compact records in relevance order.
  * Events are re-ordered chronologically for presentation before formatting.
  *
  * @param {object[]} events   - Re-ranked EventRecord objects (highest score first)
  * @param {object}   settings - VectFox settings
  * @returns {string}          - Formatted string ready for injection (empty string if nothing fits)
  */
-export function formatEventsForInjectionDetailed(events, _settings) {
+export function formatEventsForInjectionDetailed(events, _settings, tokenBudget = Infinity) {
     if (!events?.length) {
         return { text: '', includedCount: 0, requestedCount: 0 };
     }
@@ -267,18 +266,33 @@ export function formatEventsForInjectionDetailed(events, _settings) {
     const total = events.length;
     const ranked = events.map((e, i) => ({ ...e, _contextRelevanceRank: i + 1, _contextRelevanceTotal: total }));
 
-    const ordered = _orderEventsForPresentation(ranked);
-
     const format = String(_settings?.eventbase_injection_format || 'densetext').toLowerCase();
-    const body = format === 'densetext'
-        ? _formatAsDenseText(ordered)
-        : format === 'summaryonly'
-            ? _formatAsSummaryOnly(ordered)
-            : _formatAsJson(ordered);
+    const renderFull = list => format === 'densetext' ? _formatAsDenseText(list)
+        : format === 'summaryonly' ? _formatAsSummaryOnly(list) : _formatAsJson(list);
+    const selected = [], compact = [];
+    const render = () => {
+        const parts = [];
+        if (selected.length) parts.push(renderFull(_orderEventsForPresentation(selected)));
+        if (compact.length) parts.push(`Compact recalled events:\n${_orderEventsForPresentation(compact).map(e =>
+            `- [${castTime(e)}] (relevance ${e._contextRelevanceRank}/${total}) ${e.summary || _summaryFromText(e.text)}`).join('\n')}`);
+        return parts.length ? `${INJECTION_HEADER}\n${parts.join('\n\n')}` : '';
+    };
+    // Spend on full detail in score order, then try an atomic compact summary.
+    // Never slice JSON or a factual line in the middle to make it fit.
+    for (const event of ranked) {
+        selected.push(event);
+        if (estimateCastTokens(render()) <= tokenBudget) continue;
+        selected.pop();
+        compact.push(event);
+        if (estimateCastTokens(render()) > tokenBudget) compact.pop();
+    }
+    const includedRanks = new Set([...selected, ...compact].map(e => e._contextRelevanceRank));
 
     return {
-        text: `${INJECTION_HEADER}\n${body}`,
-        includedCount: ordered.length,
+        text: render(),
+        events: events.filter((e, i) => includedRanks.has(i + 1)),
+        compactEventIds: compact.map(e => e.event_id),
+        includedCount: selected.length + compact.length,
         requestedCount: events.length,
     };
 }
@@ -312,6 +326,11 @@ function compareCastKeys(a, b) {
         || a.frame.localeCompare(b.frame)
         || (a.position === b.position ? 0 : a.position - b.position)
         || a.id.localeCompare(b.id);
+}
+
+/** The cast lane's total chronological order, shared with NPC card input batching. */
+export function compareCastChronology(a, b) {
+    return compareCastKeys(castOrderKey(a), castOrderKey(b));
 }
 
 /** Earliest, latest, persistent/important, then farthest timeline gaps. */
@@ -357,8 +376,10 @@ export function selectHistorySpine(events, budget, renderLine) {
     return ordered.filter(e => selected.has(e));
 }
 
+const CARD_NEWER_HEADER = 'Newer events not yet in the card (oldest → newest):\n';
+
 /** Compact cast lane, allocated smallest history first, after main selection. */
-export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast, mainEvents = [], settings = {}, chatLength = 0, currentCollectionId = '', currentCollectionIds = [currentCollectionId] }) {
+export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast, mainEvents = [], settings = {}, chatLength = 0, currentCollectionId = '', currentCollectionIds = [currentCollectionId], cards = new Map() }) {
     const mainIds = new Set(mainEvents.map(e => e.event_id));
     const claimed = new Set(mainIds);
     const depth = settings.deduplication_depth ?? 0;
@@ -379,13 +400,37 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
             ? 'dated oldest → newest; unknown times last, grouped by source' : 'oldest → newest';
         const header = `Known history with ${entry.group.name.replace(/\s+/g, ' ')} (${orderLabel}):\n`;
         events.forEach(line);
-        return { ...entry, events, header, cost: estimateCastTokens(header) + events.reduce((sum, e) => sum + costs.get(e), 0) };
+        const cachedCard = cards.get(entry.group.name);
+        const eligibleIds = new Set(events.map(e => e.event_id));
+        // Do not let a synthesized card bypass visible-context or main-lane
+        // exclusions. If any cited evidence is excluded, use the eligible spine.
+        const card = cachedCard?.sourceEventIds?.length && cachedCard.sourceEventIds.every(id => eligibleIds.has(id)) ? cachedCard : null;
+        // Cards are atomic. Oversized cards fall back to the source-event spine.
+        const cardText = card ? `Known history with ${entry.group.name.replace(/\s+/g, ' ')} (NPC card):\n${card.text}` : '';
+        return { ...entry, events, header, card, cardText, cost: cardText ? estimateCastTokens(cardText + '\n') : estimateCastTokens(header) + events.reduce((sum, e) => sum + costs.get(e), 0) };
     }).sort((a, b) => a.cost - b.cost || b.lastMention - a.lastMention);
     let remaining = resolveCastSetting(settings, 'eventbase_cast_token_budget');
-    const blocks = [], included = [], skipped = [];
+    const blocks = [], included = [], skipped = [], cardCharacters = [];
     const allocate = (history, slice) => {
         const events = history.events.filter(e => !claimed.has(e.event_id));
         if (!events.length) return true;
+        const limit = Math.min(slice, remaining);
+        const cardCost = history.cardText ? estimateCastTokens(history.cardText + '\n') : Infinity;
+        if (cardCost <= limit && history.card.sourceEventIds.every(id => !claimed.has(id))) {
+            // Events the card has not absorbed yet follow it as source lines,
+            // under the same exclusions and within the same slice.
+            const unread = new Set(history.card.pendingEventIds || []);
+            const newer = selectHistorySpine(events.filter(e => unread.has(e.event_id)),
+                limit - cardCost - estimateCastTokens(CARD_NEWER_HEADER), line);
+            const block = newer.length ? `${history.cardText}\n${CARD_NEWER_HEADER}${newer.map(line).join('')}`.trimEnd() : history.cardText;
+            remaining -= estimateCastTokens(block + '\n');
+            blocks.push(block);
+            cardCharacters.push(history.group.name);
+            const sources = [...events.filter(e => history.card.sourceEventIds.includes(e.event_id)), ...newer];
+            included.push(...sources);
+            sources.forEach(e => claimed.add(e.event_id));
+            return true;
+        }
         const selected = selectHistorySpine(events, slice - estimateCastTokens(history.header) - estimateCastTokens('\n'), line);
         if (!selected.length) return false;
         const block = history.header + selected.map(line).join('');
@@ -411,7 +456,7 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
     for (const history of skipped) allocate(history, remaining);
     const injectedIds = new Set([...mainEvents, ...included].map(e => e.event_id));
     return {
-        text: blocks.join('\n\n'), events: included, includedCount: included.length,
+        text: blocks.join('\n\n'), events: included, includedCount: included.length, cardCharacters,
         zeroInjectionCharacters: diagnosticCast.filter(entry => ![...entry.group.eventIds].some(id => injectedIds.has(id)))
             .map(entry => ({ name: entry.group.name, signals: entry.signals })),
     };

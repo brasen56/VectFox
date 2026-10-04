@@ -96,7 +96,9 @@ describe('EventBase dry-run diagnostic contract', () => {
         expect(result.injectionText).toBeNull();
         expect(result.debug.candidateOutcomes).toEqual({});
         expect(result.debug.zeroInjectionCharacters).toEqual([{ name: 'Brennan', signals: ['text'] }]);
-        expect(formatRetrievalDiagnostics(result.debug).castText).toBe('In play with zero events injected: Brennan (text).');
+        const diagnosticText = formatRetrievalDiagnostics(result.debug).castText;
+        expect(diagnosticText).toContain('In play with zero events injected: Brennan (text).');
+        expect(diagnosticText).toContain('Shared EventBase budget: 0/4000 estimated tokens.');
         expect(setExtensionPrompt).not.toHaveBeenCalled();
     });
 
