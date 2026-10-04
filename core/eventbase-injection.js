@@ -8,6 +8,8 @@
  * ============================================================================
  */
 
+import { resolveCastSetting } from './scene-cast-settings.js';
+
 // ---------------------------------------------------------------------------
 // JSON format
 // ---------------------------------------------------------------------------
@@ -278,6 +280,140 @@ export function formatEventsForInjectionDetailed(events, _settings) {
         text: `${INJECTION_HEADER}\n${body}`,
         includedCount: ordered.length,
         requestedCount: events.length,
+    };
+}
+
+/** Conservative estimate, not a model tokenizer: non-ASCII characters cost one. */
+export function estimateCastTokens(text) {
+    const chars = [...text];
+    const nonAscii = chars.filter(c => c.codePointAt(0) > 127).length;
+    return Math.ceil((chars.length - nonAscii) / 4) + nonAscii;
+}
+
+function castTime(event) {
+    return _formatStoryTime(event.DateTime) || event.scene_time || 'story time unknown';
+}
+
+// Unknown story times follow all dated events. Source positions are comparable
+// only within one frame, never across conversations. For coalesced events use
+// the lexically first collection as their canonical frame; untagged events share
+// the empty frame. This is a total ordering, not a pair-dependent date fallback.
+function castOrderKey(event) {
+    const time = event.DateTime ? Date.parse(event.DateTime) : NaN;
+    const frame = event._sortFrame ?? (event._collectionIds || []).reduce((first, id) =>
+        first === null || String(id) < first ? String(id) : first, null) ?? '';
+    return { time: Number.isFinite(time) ? time : Infinity, frame: String(frame),
+        position: Number.isFinite(event.source_window_end) ? event.source_window_end : Infinity,
+        id: String(event.event_id) };
+}
+
+function compareCastKeys(a, b) {
+    return (a.time === b.time ? 0 : a.time - b.time)
+        || a.frame.localeCompare(b.frame)
+        || (a.position === b.position ? 0 : a.position - b.position)
+        || a.id.localeCompare(b.id);
+}
+
+/** Earliest, latest, persistent/important, then farthest timeline gaps. */
+export function selectHistorySpine(events, budget, renderLine) {
+    if (!events.length || budget <= 0) return [];
+    const keys = new Map(events.map(event => [event, castOrderKey(event)]));
+    const chronology = (a, b) => compareCastKeys(keys.get(a), keys.get(b));
+    const ordered = [...events].sort(chronology);
+    const costs = new Map(ordered.map(event => [event, estimateCastTokens(renderLine(event))]));
+    const selected = new Set();
+    let remaining = budget;
+    const take = event => {
+        if (!event || selected.has(event)) return;
+        const cost = costs.get(event);
+        if (cost <= remaining) { selected.add(event); remaining -= cost; }
+    };
+    take(ordered[0]);
+    take(ordered.at(-1));
+    for (const event of [...ordered].sort((a, b) => Number(b.should_persist === true) - Number(a.should_persist === true)
+        || (b.importance ?? 0) - (a.importance ?? 0) || chronology(a, b))) {
+        if (event.should_persist === true || (event.importance ?? 0) >= 7) take(event);
+    }
+    const positions = new Map(ordered.map((e, i) => [e, i]));
+    let candidates = ordered.filter(e => !selected.has(e) && costs.get(e) <= remaining);
+    const distances = new Map(candidates.map(e => [e, Infinity]));
+    for (const event of candidates) for (const chosen of selected) {
+        distances.set(event, Math.min(distances.get(event), Math.abs(positions.get(chosen) - positions.get(event))));
+    }
+    while (candidates.length) {
+        // Candidates retain chronological order, so a linear maximum scan also
+        // supplies the chronological tie-break without sorting the pool again.
+        let candidate = candidates[0];
+        for (const event of candidates) {
+            if (distances.get(event) > distances.get(candidate)) candidate = event;
+        }
+        take(candidate);
+        candidates = candidates.filter(e => e !== candidate && costs.get(e) <= remaining);
+        for (const event of candidates) {
+            distances.set(event, Math.min(distances.get(event), Math.abs(positions.get(candidate) - positions.get(event))));
+        }
+        if (remaining <= 0) break;
+    }
+    return ordered.filter(e => selected.has(e));
+}
+
+/** Compact cast lane, allocated smallest history first, after main selection. */
+export function formatCastHistoryDetailed({ roster, cast, mainEvents = [], settings = {}, chatLength = 0, currentCollectionId = '', currentCollectionIds = [currentCollectionId] }) {
+    const mainIds = new Set(mainEvents.map(e => e.event_id));
+    const claimed = new Set(mainIds);
+    const depth = settings.deduplication_depth ?? 0;
+    const lines = new Map(), costs = new Map();
+    const line = e => {
+        if (!lines.has(e)) {
+            const text = `- [${String(castTime(e)).replace(/\s+/g, ' ')}] ${String(e.summary || _summaryFromText(e.text)).replace(/\s+/g, ' ').trim()}\n`;
+            lines.set(e, text);
+            costs.set(e, estimateCastTokens(text));
+        }
+        return lines.get(e);
+    };
+    const histories = cast.map(entry => {
+        const events = roster.events.filter(e => entry.group.eventIds.has(e.event_id) && !mainIds.has(e.event_id)
+            && !(depth > 0 && e._collectionIds?.some(id => currentCollectionIds.includes(id)) && (e.source_window_end ?? -1) >= chatLength - depth)
+            && (e.summary || e.text));
+        const orderLabel = events.some(e => !Number.isFinite(castOrderKey(e).time))
+            ? 'dated oldest → newest; unknown times last, grouped by source' : 'oldest → newest';
+        const header = `Known history with ${entry.group.name.replace(/\s+/g, ' ')} (${orderLabel}):\n`;
+        events.forEach(line);
+        return { ...entry, events, header, cost: estimateCastTokens(header) + events.reduce((sum, e) => sum + costs.get(e), 0) };
+    }).sort((a, b) => a.cost - b.cost || b.lastMention - a.lastMention);
+    let remaining = resolveCastSetting(settings, 'eventbase_cast_token_budget');
+    const blocks = [], included = [], skipped = [];
+    const allocate = (history, slice) => {
+        const events = history.events.filter(e => !claimed.has(e.event_id));
+        if (!events.length) return true;
+        const selected = selectHistorySpine(events, slice - estimateCastTokens(history.header) - estimateCastTokens('\n'), line);
+        if (!selected.length) return false;
+        const block = history.header + selected.map(line).join('');
+        // Account for the separator as well as headers and event lines.
+        const cost = estimateCastTokens(block + '\n');
+        if (cost > remaining) return false;
+        remaining -= cost;
+        blocks.push(block.trimEnd());
+        included.push(...selected);
+        selected.forEach(e => claimed.add(e.event_id));
+        return true;
+    };
+    for (let i = 0; i < histories.length; i++) {
+        const history = histories[i];
+        const events = history.events.filter(e => !claimed.has(e.event_id));
+        if (!events.length) continue;
+        const whole = estimateCastTokens(history.header) + events.reduce((sum, e) => sum + costs.get(e), 0);
+        const slice = whole + estimateCastTokens('\n') <= remaining ? remaining : Math.floor(remaining / histories.slice(i).filter(h => h.events.some(e => !claimed.has(e.event_id))).length);
+        if (!allocate(history, slice)) skipped.push(history);
+    }
+    // Equal shares can all be unusable. Retry in smallest-history-first order
+    // against the actual remainder, rechecking shared-event claims each time.
+    for (const history of skipped) allocate(history, remaining);
+    const injectedIds = new Set([...mainEvents, ...included].map(e => e.event_id));
+    return {
+        text: blocks.join('\n\n'), events: included, includedCount: included.length,
+        zeroInjectionCharacters: cast.filter(entry => ![...entry.group.eventIds].some(id => injectedIds.has(id)))
+            .map(entry => ({ name: entry.group.name, signals: entry.signals })),
     };
 }
 

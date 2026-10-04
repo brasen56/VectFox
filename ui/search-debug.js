@@ -1573,7 +1573,7 @@ export function openQueryTestModal() {
                             <div id="VectFox_qtester_queries_eb" style="white-space:pre-wrap; font-size:0.8em;"></div>
                             <details id="VectFox_qtester_cuts_eb">
                                 <summary id="VectFox_qtester_cuts_label_eb">Considered but cut</summary>
-                                <small>Only returned candidates are traced; server-side filters and events no query found are not visible here.</small>
+                                <small>Final cuts after main and cast injection; cast rescues are excluded. Only returned candidates are traced; server-side filters and events no query found are not visible here.</small>
                                 <div id="VectFox_qtester_cuts_text_eb" style="white-space:pre-wrap; overflow-wrap:anywhere; font-size:0.8em;"></div>
                             </details>
                         </div>
@@ -1652,7 +1652,7 @@ export function openQueryTestModal() {
 
             // --- EventBase diagnostics ---
             const diagnostics = formatRetrievalDiagnostics(ebResult?.debug);
-            $('#VectFox_qtester_queries_eb').text(diagnostics.queryText);
+            $('#VectFox_qtester_queries_eb').text([diagnostics.queryText, diagnostics.castText].filter(Boolean).join('\n\n'));
             $('#VectFox_qtester_cuts_eb').prop('open', false);
             $('#VectFox_qtester_cuts_label_eb').text(`Considered but cut (${diagnostics.cutCount})`);
             $('#VectFox_qtester_cuts_text_eb').text(diagnostics.cutText);

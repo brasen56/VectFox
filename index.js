@@ -338,6 +338,9 @@ const defaultSettings = {
     debug_vectorizing_log: false,                // Verbose vectorization progress logs in console
     eventbase_custom_prompt: '',                  // Custom extraction prompt (empty = use built-in default)
     eventbase_lead_share_threshold: 0.25,
+    eventbase_cast_sticky_messages: 30,
+    eventbase_cast_max_characters: 3,
+    eventbase_cast_token_budget: 700,
     eventbase_lead_min_events: 20,
     eventbase_known_characters_limit: 40,
     eventbase_known_characters_max_chars: 4000,

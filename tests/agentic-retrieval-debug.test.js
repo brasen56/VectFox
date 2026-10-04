@@ -22,6 +22,14 @@ import { postChatCompletion } from '../core/llm-provider-call.js';
 beforeEach(() => vi.clearAllMocks());
 
 describe('Agent Mode recall diagnostics', () => {
+    it('exposes planner cast detections even with filters disabled and no valid queries', async () => {
+        retrieveEvents.mockResolvedValue({ events: [], debug: {} });
+        postChatCompletion.mockResolvedValue({ content: JSON.stringify({ queries: [], filters: { characters_any: ['Brennan', 42] } }) });
+        const result = await retrieveEventsWithAgent({ settings: { agentic_retrieval_enabled: true,
+            vector_backend: 'qdrant', agent_model: 'model', agentic_filters_enabled: false } });
+        expect(result.debug.plannerCharacters).toEqual(['Brennan']);
+        expect(queryCollection).not.toHaveBeenCalled();
+    });
     it('preserves pre-search cuts while counting final survivors for every planner query', async () => {
         const shared = { event_id: 'shared', text: 'shared memory' };
         const preCut = { outcome: 'cut_at_trim', summary: 'pre-search cut', stages: ['reached_pool', 'cut_at_trim'] };

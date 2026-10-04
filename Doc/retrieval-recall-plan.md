@@ -1,6 +1,6 @@
 # EventBase recall plan
 
-Status: Phase 0a and Phase 1 implemented; later phases remain proposals. Revision 2, 2026-10-02 (incorporates co-author review; changes listed at the end).
+Status: Phases 0a, 0b, 1, and 2 implemented; Phases 3 and 4 remain proposals. Revision 2, 2026-10-02 (incorporates co-author review; changes listed at the end).
 
 ## Problem
 
@@ -120,15 +120,28 @@ Built in [eventbase-injection.js](../core/eventbase-injection.js) from the exist
 
 **Why a block and not reserved slots.** A few reserved slots would go to the character's events that best match the current scene. In the Brennan case those are his contract events, and the LLC filing would still lose.
 
+**Phase 2 implementation notes (2026-10-03):**
+- The cast lane reads the ready locked-collection roster only; it adds no per-turn database query. If any locked index is pending, the lane skips that turn and the query tester reports the pending collections.
+- `eventbase_cast_sticky_messages` (30), `eventbase_cast_max_characters` (3), and `eventbase_cast_token_budget` (700) are editable in the EventBase tab. Zero budget or maximum characters disables injection. The budget is a conservative estimate (ASCII characters / 4, non-ASCII characters / 1), including block headers and separators, not an exact model tokenizer count.
+- Text detection uses cleaned non-system messages, Unicode name boundaries, aliases, and literal CJK names. Planner detections are unioned independently of whether backend filters are enabled; lead groups are excluded without changing Phase 3's backend filter behavior.
+- Session-local planner memory is keyed by chat ID and UUID, ages by non-system message count, and validates the observed chat prefix so edits, swipes, and shrink do not preserve stale detections. It is bounded to 20 chats and is not persisted across reloads. Dry-runs neither write nor prune memory; a tester message is treated as a hypothetical additional message.
+- Small histories are allocated first; larger histories retain earliest/latest events, persistent or high-importance (7+) events, then farthest timeline gaps. Lines are rendered chronologically by parseable story dates, with source-window order as the fallback. Shared events appear only once across cast blocks.
+- Main-injected event IDs and already-visible current-chat source windows are excluded. Archive and cross-chat source windows are not compared with current-chat coordinates. The compact block follows the main block under the same global context/XML wrapper and can inject even when main retrieval is empty.
+- Phase 0b is exposed in dry-run diagnostics and lifecycle logs: each capped in-play character with no event in either injection lane is listed with its text/planner signals.
+- Automated regression fixtures verify the Brennan LLC miss with Agent Mode on and off. The real-chat dry-run remains a manual verification step.
+
 ### Phase 3: Planner and pool fixes
 
 In rough order of effort:
 
+## Phase 3A:
 1. **Hybrid-path guard.** Planner filters are dropped with only a lifecycle-log warning when `hybrid_native_prefer` is false and the EventBase keyword method is `bm25` ([core-vector-api.js:1141](../core/core-vector-api.js)), and Agent Mode's gate only checks for the Qdrant backend. Add one shared check for "filters will reach the backend"; when it fails, warn visibly once and stop emitting filters.
 2. **Filter hygiene.** In `_validatePlannerFilters` ([agentic-retrieval.js:480](../core/agentic-retrieval.js)), strip lead alias groups from `characters_any` and expand the rest to all aliases. If nothing is left, send no character filter.
 3. **Soft importance floor.** Stop sending `importance_gte` as a hard filter; importance already lowers the score in the re-rank. Keep a setting to restore the old behavior.
 4. **Overfetch setting.** Replace the three `top_k * 2` sites with one helper and a setting (proposed `eventbase_retrieval_overfetch`, default 40).
 5. **Full pool into the merge.** `retrieveEvents` also returns its post-dedup, pre-trim candidates; stage 5 merges those. The planner still sees only the top slice.
+
+## Phase 3B:
 6. **Per-query coverage.** Tag agentic hits with their query index. At the trim, take the best surviving hit from each planner query first, then fill by score.
 7. **Per-query filters.** Change the planner schema so each query carries its own character list, accepting the old string form too. Last because it touches the planner prompt in all six language variants.
 

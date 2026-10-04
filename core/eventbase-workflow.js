@@ -24,7 +24,10 @@ import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtra
 import { getSavedHashes } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
-import { formatEventsForInjectionDetailed } from './eventbase-injection.js';
+import { formatEventsForInjectionDetailed, formatCastHistoryDetailed } from './eventbase-injection.js';
+import { eventDebugKey } from './eventbase-retrieval-debug.js';
+import { getCharacterRoster } from './character-roster.js';
+import { detectSceneCast } from './scene-cast.js';
 import { isCollectionEnabled, isCollectionActiveForContextAnyKey, setCollectionLock, setCollectionMeta } from './collection-metadata.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { log } from './log.js';
@@ -1240,8 +1243,23 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
 
     // Return diagnostics even when every candidate was cut.
     const dryRunDebug = { candidateOutcomes: {}, plannerQuerySummary: [], ...debug };
+    const roster = getCharacterRoster([...lockedLiveCollections, ...archiveCollections].map(c => c.collectionId), settings);
+    const cast = roster.ready ? detectSceneCast({ roster, chat: chat || liveChat,
+        plannerCharacters: debug?.plannerCharacters, chatId: `${currentChatId}:${uuid}`, settings, dryRun, testMessage }) : [];
+    const mainResult = events?.length ? formatEventsForInjectionDetailed(events, settings) : { text: '', includedCount: 0 };
+    const castResult = roster.ready ? formatCastHistoryDetailed({ roster, cast,
+        mainEvents: mainResult.text ? events : [], settings, chatLength: effectiveChatLength,
+        currentCollectionIds: lockedLiveCollections.filter(c => c.collectionId.endsWith(`_${uuid}`)).map(c => c.collectionId) }) : { text: '', includedCount: 0, zeroInjectionCharacters: [] };
+    const mainInjectedEvents = mainResult.text ? events || [] : [];
+    const castInjectedEventIds = (castResult.events || []).map(eventDebugKey);
+    Object.assign(dryRunDebug, { castIndexReady: roster.ready, castPendingCollections: roster.pendingCollections,
+        finalInjectedEventIds: [...new Set([...mainInjectedEvents.map(eventDebugKey), ...castInjectedEventIds])],
+        castInjectedEventIds,
+        sceneCast: cast.map(entry => ({ name: entry.group.name, signals: entry.signals, lastMention: entry.lastMention })),
+        castEventCount: castResult.includedCount, zeroInjectionCharacters: castResult.zeroInjectionCharacters });
+    if (castResult.zeroInjectionCharacters.length) log.lifecycle(`[EventBase] In play with zero events injected: ${castResult.zeroInjectionCharacters.map(c => `${c.name} (${c.signals.join(' + ')})`).join(', ')}`);
 
-    if (!events?.length) {
+    if (!events?.length && !castResult.text) {
         log.lifecycle('[EventBase] No events to inject');
         log.verbose(`[EventBase Popup] no-events branch gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result} → fire=${!!settings.retrieval_popup_on_result}`);
         if (settings.retrieval_popup_on_result) {
@@ -1256,9 +1274,8 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         return;
     }
 
-    const injectionResult = formatEventsForInjectionDetailed(events, settings);
-    let injectionText = injectionResult.text;
-    const injectedCount = injectionResult.includedCount;
+    let injectionText = [mainResult.text, castResult.text].filter(Boolean).join('\n\n');
+    const injectedCount = mainResult.includedCount + castResult.includedCount;
     if (!injectionText) {
         log.verbose('[EventBase] Injection text empty after formatting');
         if (dryRun) return { injectionText: null, eventCount: 0, lockedCollectionsCount: lockedLiveCollections.length, archiveCollectionsCount: archiveCollections.length, debug: dryRunDebug };
@@ -1295,7 +1312,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     setExtensionPrompt(EVENTBASE_PROMPT_TAG, injectionText, settings.position, settings.depth, false);
 
     if (log.domainEnabled('injection')) {
-        log.domain('injection', 'trace', `[EventBase] Injected ${injectedCount} event(s) (requested ${events.length}), text length: ${injectionText.length}`);
+        log.domain('injection', 'trace', `[EventBase] Injected ${injectedCount} event(s) (main requested ${events?.length || 0}), text length: ${injectionText.length}`);
         log.domain('injection', 'trace', `[EventBase] setExtensionPrompt tag="${EVENTBASE_PROMPT_TAG}" position=${settings.position} depth=${settings.depth}`);
         // Verify the slot is actually populated
         const slotContent = extension_prompts[EVENTBASE_PROMPT_TAG];

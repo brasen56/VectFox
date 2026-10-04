@@ -174,6 +174,10 @@ export async function retrieveEventsWithAgent(params) {
         log.domain('agent', 'verbose', JSON.stringify(plan, null, 2));
     }
 
+    // Expose detections independently of filter enablement and query success.
+    preSearch.debug = { ...preSearch.debug, plannerCharacters: Array.isArray(plan?.filters?.characters_any)
+        ? plan.filters.characters_any.filter(name => typeof name === 'string' && name.trim()) : [] };
+
     // Validate planner output.
     const maxQueries = Math.max(1, Math.min(6, settings.agentic_retrieval_max_queries || 6));
     const validatedQueries = _validateAndTrimQueries(plan?.queries, maxQueries);
@@ -294,6 +298,7 @@ export async function retrieveEventsWithAgent(params) {
             preSearchCandidateOutcomes: preSearch.debug?.candidateOutcomes || {},
             plannerQuerySummary: summarizePlannerQueries(validatedQueries, fanoutResults, final.events || []),
             agenticMode: true,
+            plannerCharacters: preSearch.debug.plannerCharacters,
             agenticQueries: validatedQueries,
             agenticRationale: typeof plan?.rationale === 'string' ? plan.rationale : null,
             agenticLLMMs: tLlmMs,

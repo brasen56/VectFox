@@ -1270,6 +1270,13 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <label>Minimum collection events <input id="VectFox_eventbase_lead_min_events" type="number" class="vectfox-input" min="1" step="1" style="width:70px;" /></label>
                                 </div>
                                 <button type="button" id="VectFox_character_roster_refresh" class="vectfox-btn vectfox-btn-secondary">Review / Refresh roster</button>
+                                <label class="vectfox-label" style="margin-top:12px;">Scene-cast history</label>
+                                <div style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0;">
+                                    <label>Sticky messages <input id="VectFox_eventbase_cast_sticky_messages" type="number" class="vectfox-input" min="0" step="1" style="width:80px;" /></label>
+                                    <label>Maximum characters <input id="VectFox_eventbase_cast_max_characters" type="number" class="vectfox-input" min="0" step="1" style="width:80px;" /></label>
+                                    <label>Token budget <input id="VectFox_eventbase_cast_token_budget" type="number" class="vectfox-input" min="0" step="50" style="width:90px;" /></label>
+                                </div>
+                                <small class="VectFox_hint">Recall minor characters' history from the roster, independently of the current topic. Leads are excluded. Small histories fit first; larger histories use a chronological spine. Budget uses a conservative token estimate, not a model tokenizer. Set budget or maximum characters to 0 to disable.</small>
                                 <div id="VectFox_character_roster_review" style="margin-top:8px;"></div>
                             </div>
                             <div class="vectfox-setting-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
@@ -4776,6 +4783,15 @@ function bindSettingsEvents(settings, callbacks) {
         });
 
     // Custom extraction prompt textarea — pre-fill with default if nothing saved.
+    for (const [key, fallback] of [['eventbase_cast_sticky_messages', 30], ['eventbase_cast_max_characters', 3], ['eventbase_cast_token_budget', 700]]) {
+        $(`#VectFox_${key}`).val(settings[key] ?? fallback).on('change', function() {
+            const value = Number($(this).val());
+            settings[key] = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
+            $(this).val(settings[key]);
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+    }
     for (const [key, fallback] of [['eventbase_lead_share_threshold', 0.25], ['eventbase_lead_min_events', 20]]) {
         $(`#VectFox_${key}`).val(settings[key] ?? fallback).on('change', function() {
             const value = Number($(this).val());

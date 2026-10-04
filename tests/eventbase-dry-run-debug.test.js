@@ -14,7 +14,7 @@ vi.mock('../core/collection-ids.js', () => ({
 vi.mock('../core/collection-loader.js', () => ({ getCollectionRegistry: vi.fn() }));
 vi.mock('../core/core-vector-api.js', () => ({ queryCollection: vi.fn(), getSavedHashes: vi.fn() }));
 vi.mock('../core/constants.js', () => ({ EXTENSION_PROMPT_TAG: '3_vectfox' }));
-vi.mock('../core/eventbase-schema.js', () => ({ EventBaseFatalError: class {}, EventBaseExtractionError: class {} }));
+vi.mock('../core/eventbase-schema.js', () => ({ EventBaseFatalError: class {}, EventBaseExtractionError: class {}, parseEmbedText: () => ({}) }));
 vi.mock('../core/eventbase-extractor.js', () => ({ extractEvents: vi.fn() }));
 vi.mock('../core/generation-rate-limiter.js', () => ({ generationRateLimiter: {}, generationRateLimitSettings: {} }));
 vi.mock('../core/eventbase-store.js', () => ({
@@ -25,7 +25,8 @@ vi.mock('../core/eventbase-store.js', () => ({
 }));
 vi.mock('../core/eventbase-retrieval.js', () => ({ retrieveEvents: vi.fn() }));
 vi.mock('../core/agentic-retrieval.js', () => ({ retrieveEventsWithAgent: vi.fn() }));
-vi.mock('../core/eventbase-injection.js', () => ({ formatEventsForInjectionDetailed: vi.fn() }));
+vi.mock('../core/eventbase-injection.js', async importOriginal => ({ ...await importOriginal(), formatEventsForInjectionDetailed: vi.fn() }));
+vi.mock('../core/text-cleaning.js', () => ({ stripReasoningBlocks: text => text, stripGameSystemBlocks: text => text }));
 vi.mock('../core/collection-metadata.js', () => ({
     isCollectionEnabled: () => true, isCollectionActiveForContextAnyKey: () => true,
     setCollectionLock: vi.fn(), setCollectionMeta: vi.fn(),
@@ -42,6 +43,8 @@ import { retrieveEvents } from '../core/eventbase-retrieval.js';
 import { retrieveEventsWithAgent } from '../core/agentic-retrieval.js';
 import { formatEventsForInjectionDetailed } from '../core/eventbase-injection.js';
 import { setExtensionPrompt } from '../../../../../script.js';
+import { ensureCharacterIndex, invalidateCharacterIndex } from '../core/character-roster.js';
+import { formatRetrievalDiagnostics } from '../core/eventbase-retrieval-debug.js';
 
 const params = { chat: [], searchText: 'scene', settings: {}, dryRun: true, testMessage: 'scene' };
 const debug = {
@@ -51,6 +54,7 @@ const debug = {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    invalidateCharacterIndex('VectFox_eventbase_uuid');
     getCollectionRegistry.mockReturnValue(['qdrant:VectFox_eventbase_uuid']);
     retrieveEvents.mockResolvedValue({ events: [{ event_id: 'event' }], debug });
     retrieveEventsWithAgent.mockResolvedValue({ events: [{ event_id: 'event' }], debug });
@@ -58,6 +62,41 @@ beforeEach(() => {
 });
 
 describe('EventBase dry-run diagnostic contract', () => {
+    it.each([false, true])('recalls the LLC via cast history even with an empty main lane (Agent Mode=%s)', async agentic => {
+        const event = { event_id: 'llc', summary: 'Drafted and filed the LLC formation and operating agreement.',
+            characters: ['Howard Brennan'], DateTime: '2026-06-03', importance: 1, source_window_end: 1 };
+        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: event }] }) }));
+        const mainDebug = { candidateOutcomes: { llc: { outcome: 'failed_importance_filter', summary: event.summary } },
+            plannerQuerySummary: [{ queryText: 'LLC', hitsReturned: 1, uniqueHits: 1, survivedCount: 0 }] };
+        retrieveEvents.mockResolvedValue({ events: [], debug: mainDebug });
+        retrieveEventsWithAgent.mockResolvedValue({ events: [], debug: { ...mainDebug, plannerCharacters: ['Howard Brennan'] } });
+        const result = await runEventBaseRetrieval({ ...params, testMessage: 'We visit Howard Brennan about the wire payment.',
+            settings: { agentic_retrieval_enabled: agentic } });
+        expect(result.injectionText).toContain('Known history with Howard Brennan');
+        expect(result.injectionText).toContain('[June 3, 2026] Drafted and filed the LLC');
+        expect(result.eventCount).toBe(1);
+        expect(result.debug.zeroInjectionCharacters).toEqual([]);
+        expect(result.debug.candidateOutcomes.llc.outcome).toBe('failed_importance_filter');
+        expect(result.debug.finalInjectedEventIds).toEqual(['llc']);
+        expect(result.debug.castInjectedEventIds).toEqual(['llc']);
+        const diagnostics = formatRetrievalDiagnostics(result.debug);
+        expect(diagnostics.cutCount).toBe(0);
+        expect(diagnostics.cutText).not.toContain('failed importance filter');
+        expect(diagnostics.castText).toContain('Rescued by cast history: llc');
+        expect(diagnostics.queryText).toContain('0 injected in main lane');
+        expect(setExtensionPrompt).not.toHaveBeenCalled();
+    });
+
+    it('appends cast history after the main block inside the global wrapper', async () => {
+        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: {
+            event_id: 'llc', summary: 'Filed the LLC.', characters: ['Brennan'],
+        } }] }) }));
+        const result = await runEventBaseRetrieval({ ...params, testMessage: 'Brennan', settings: { rag_context: 'Background', rag_xml_tag: 'memory' } });
+        expect(result.injectionText).toMatch(/^<memory>\nBackground\n\nmemory\n\nKnown history with Brennan/);
+        expect(result.eventCount).toBe(2);
+        expect(result.injectionText).toMatch(/<\/memory>$/);
+    });
+
     it.each([false, true])('carries outcomes and query summaries (Agent Mode=%s) without injecting', async agentic => {
         const result = await runEventBaseRetrieval({ ...params, settings: { agentic_retrieval_enabled: agentic } });
         expect(result).toMatchObject({ injectionText: 'memory', eventCount: 1, debug });

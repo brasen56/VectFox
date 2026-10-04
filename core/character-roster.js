@@ -237,7 +237,8 @@ export function getCharacterRoster(collectionIds, settings = {}) {
         if (!entry?.ready) { pendingCollections.push(id); continue; }
         const ignored = new Set(getIgnoredCharacterTags(id, settings));
         for (const event of entry.events.values()) {
-            if (!events.has(event.event_id)) events.set(event.event_id, event);
+            if (!events.has(event.event_id)) events.set(event.event_id, { ...event, _collectionIds: [] });
+            events.get(event.event_id)._collectionIds.push(id);
             // Project each collection separately: a tag ignored in one lock may
             // still be valid in another, even on a duplicate event ID. Keep the
             // cached and returned event records intact so restoration is lossless.

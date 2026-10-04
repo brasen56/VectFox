@@ -41,13 +41,23 @@ export function summarizePlannerQueries(queries, results, finalEvents) {
 
 /** Plain text for the tester; render using .text(), never as HTML. */
 export function formatRetrievalDiagnostics(debug = {}) {
+    const finalIds = new Set(debug.finalInjectedEventIds || []);
     const cuts = Object.entries(debug.candidateOutcomes || {})
-        .filter(([, entry]) => entry.outcome !== 'injected');
+        .filter(([id, entry]) => debug.finalInjectedEventIds
+            ? !finalIds.has(id) : entry.outcome !== 'injected');
+    const rescues = (debug.castInjectedEventIds || []).filter(id =>
+        debug.candidateOutcomes?.[id] && debug.candidateOutcomes[id].outcome !== 'injected');
     const cutText = cuts.map(([id, entry]) =>
         `${id} — ${entry.outcome.replace(/_/g, ' ')}\n  ${entry.summary}`).join('\n\n');
     const queryText = (debug.plannerQuerySummary || []).map(query =>
-        `${query.queryText}\n  ${query.hitsReturned} hit(s) returned (${query.uniqueHits} unique); ${query.survivedCount} injected`
+        `${query.queryText}\n  ${query.hitsReturned} hit(s) returned (${query.uniqueHits} unique); ${query.survivedCount} injected in main lane`
         + (query.failedCalls ? `; ${query.failedCalls} failed call(s)` : '')
         + (query.timedOutCalls ? `; ${query.timedOutCalls} timed-out call(s)` : '')).join('\n\n');
-    return { cutCount: cuts.length, cutText: cutText || 'No returned candidates were cut.', queryText };
+    let castText = debug.castIndexReady === false
+        ? `Scene-cast history skipped: roster still warming (${(debug.castPendingCollections || []).join(', ')}).`
+        : debug.zeroInjectionCharacters
+            ? `In play with zero events injected: ${debug.zeroInjectionCharacters.map(c => `${c.name} (${c.signals.join(' + ')})`).join(', ') || 'none'}.`
+            : '';
+    if (rescues.length) castText = [castText, `Rescued by cast history: ${rescues.join(', ')}.`].filter(Boolean).join('\n');
+    return { cutCount: cuts.length, cutText: cutText || 'No returned candidates were cut.', queryText, ...(castText ? { castText } : {}) };
 }

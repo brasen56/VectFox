@@ -1,3 +1,4 @@
+vi.mock('../core/text-cleaning.js', () => ({ stripReasoningBlocks: text => text, stripGameSystemBlocks: text => text }));
 /**
  * eventbase-settle-lag.test.js — unit tests for the auto-sync settle/commit lag.
  *

@@ -1,3 +1,4 @@
+vi.mock('../core/text-cleaning.js', () => ({ stripReasoningBlocks: text => text, stripGameSystemBlocks: text => text }));
 /**
  * Unit tests for countUnfinishedWindows — the answer both run-reporting callers
  * need, and both used to skip.
