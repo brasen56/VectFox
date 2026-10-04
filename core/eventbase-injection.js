@@ -378,6 +378,17 @@ export function selectHistorySpine(events, budget, renderLine) {
 
 const CARD_NEWER_HEADER = 'Newer events not yet in the card (oldest → newest):\n';
 
+/** Never strip citations from a synthesized fact: all evidence must be eligible. */
+function eligibleCardFacts(card, eligibleIds) {
+    return (card?.facts || []).filter(f => typeof f.fact === 'string' && f.fact.trim()
+        && Array.isArray(f.source_ids) && f.source_ids.length
+        && f.source_ids.every(id => eligibleIds.has(id)));
+}
+
+function renderCardFacts(name, facts) {
+    return facts.length ? `Known history with ${name.replace(/\s+/g, ' ')} (NPC card):\n${facts.map(f => `- ${f.fact}`).join('\n')}` : '';
+}
+
 /** Compact cast lane, allocated smallest history first, after main selection. */
 export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast, mainEvents = [], settings = {}, chatLength = 0, currentCollectionId = '', currentCollectionIds = [currentCollectionId], cards = new Map() }) {
     const mainIds = new Set(mainEvents.map(e => e.event_id));
@@ -402,12 +413,10 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
         events.forEach(line);
         const cachedCard = cards.get(entry.group.name);
         const eligibleIds = new Set(events.map(e => e.event_id));
-        // Do not let a synthesized card bypass visible-context or main-lane
-        // exclusions. If any cited evidence is excluded, use the eligible spine.
-        const card = cachedCard?.sourceEventIds?.length && cachedCard.sourceEventIds.every(id => eligibleIds.has(id)) ? cachedCard : null;
-        // Cards are atomic. Oversized cards fall back to the source-event spine.
-        const cardText = card ? `Known history with ${entry.group.name.replace(/\s+/g, ' ')} (NPC card):\n${card.text}` : '';
-        return { ...entry, events, header, card, cardText, cost: cardText ? estimateCastTokens(cardText + '\n') : estimateCastTokens(header) + events.reduce((sum, e) => sum + costs.get(e), 0) };
+        // Filter facts, not the entire card, against main and visible context.
+        const facts = eligibleCardFacts(cachedCard, eligibleIds);
+        const cardText = renderCardFacts(entry.group.name, facts);
+        return { ...entry, events, header, card: cachedCard, facts, cost: cardText ? estimateCastTokens(cardText + '\n') : estimateCastTokens(header) + events.reduce((sum, e) => sum + costs.get(e), 0) };
     }).sort((a, b) => a.cost - b.cost || b.lastMention - a.lastMention);
     let remaining = resolveCastSetting(settings, 'eventbase_cast_token_budget');
     const blocks = [], included = [], skipped = [], cardCharacters = [];
@@ -415,18 +424,22 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
         const events = history.events.filter(e => !claimed.has(e.event_id));
         if (!events.length) return true;
         const limit = Math.min(slice, remaining);
-        const cardCost = history.cardText ? estimateCastTokens(history.cardText + '\n') : Infinity;
-        if (cardCost <= limit && history.card.sourceEventIds.every(id => !claimed.has(id))) {
+        // Earlier histories may have claimed evidence since the initial sort.
+        const facts = history.facts.filter(f => f.source_ids.every(id => !claimed.has(id)));
+        const cardText = renderCardFacts(history.group.name, facts);
+        const cardCost = cardText ? estimateCastTokens(cardText + '\n') : Infinity;
+        if (cardCost <= limit) {
             // Events the card has not absorbed yet follow it as source lines,
             // under the same exclusions and within the same slice.
             const unread = new Set(history.card.pendingEventIds || []);
-            const newer = selectHistorySpine(events.filter(e => unread.has(e.event_id)),
+            const cited = new Set(facts.flatMap(f => f.source_ids));
+            const newer = selectHistorySpine(events.filter(e => unread.has(e.event_id) && !cited.has(e.event_id)),
                 limit - cardCost - estimateCastTokens(CARD_NEWER_HEADER), line);
-            const block = newer.length ? `${history.cardText}\n${CARD_NEWER_HEADER}${newer.map(line).join('')}`.trimEnd() : history.cardText;
+            const block = newer.length ? `${cardText}\n${CARD_NEWER_HEADER}${newer.map(line).join('')}`.trimEnd() : cardText;
             remaining -= estimateCastTokens(block + '\n');
             blocks.push(block);
             cardCharacters.push(history.group.name);
-            const sources = [...events.filter(e => history.card.sourceEventIds.includes(e.event_id)), ...newer];
+            const sources = [...events.filter(e => cited.has(e.event_id)), ...newer];
             included.push(...sources);
             sources.forEach(e => claimed.add(e.event_id));
             return true;

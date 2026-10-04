@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatBudgetedEventBase } from '../core/eventbase-token-budget.js';
-import { estimateCastTokens, formatEventsForInjectionDetailed } from '../core/eventbase-injection.js';
+import { estimateCastTokens, formatEventsForInjectionDetailed, formatCastHistoryDetailed } from '../core/eventbase-injection.js';
 
 const events = Array.from({ length: 10 }, (_, i) => ({ event_id: `e${i}`, summary: `Fact ${i}`,
     text: `[event] Fact ${i}`, cause: 'detail '.repeat(100), source_window_end: i,
@@ -8,6 +8,7 @@ const events = Array.from({ length: 10 }, (_, i) => ({ event_id: `e${i}`, summar
 const group = { name: 'Brennan', aliases: ['Brennan'], eventIds: new Set(events.map(e => e.event_id)) };
 const roster = { ready: true, events, groups: [group] };
 const cast = [{ group, lastMention: 10, signals: ['text'] }];
+const card = (fact, source_ids, extra = {}) => ({ facts: [{ fact, source_ids }], ...extra });
 
 describe('shared EventBase token envelope', () => {
     it('keeps full detail for the best hit and compacts lower-ranked hits', () => {
@@ -33,17 +34,17 @@ describe('shared EventBase token envelope', () => {
         expect(formatBudgetedEventBase({ roster, cast, settings: {} }).text).toContain('Known history');
         expect(formatBudgetedEventBase({ events, settings: { eventbase_token_budget: 50 }, globalContext: 'x'.repeat(1000) }).text).toBe('');
     });
-    it('uses atomic cards and falls back to the spine when they do not fit', () => {
-        const cards = new Map([['Brennan', { text: '- Filed the LLC.', sourceEventIds: ['e0'] }]]);
+    it('uses surviving cards and falls back to the spine when they do not fit', () => {
+        const cards = new Map([['Brennan', card('Filed the LLC.', ['e0'])]]);
         const options = { roster, cast, cards, settings: { eventbase_token_budget: 300 } };
         expect(formatBudgetedEventBase(options).cast.cardCharacters).toEqual(['Brennan']);
-        cards.get('Brennan').text = 'x'.repeat(5000);
+        cards.get('Brennan').facts[0].fact = 'x'.repeat(5000);
         const result = formatBudgetedEventBase(options);
         expect(result.cast.cardCharacters).toEqual([]);
         expect(result.text).toContain('Fact');
     });
     it('lists events the card has not absorbed after it, under the same exclusions', () => {
-        const cards = new Map([['Brennan', { text: '- Filed the LLC.', sourceEventIds: ['e0'], pendingEventIds: ['e8', 'e9'] }]]);
+        const cards = new Map([['Brennan', card('Filed the LLC.', ['e0'], { pendingEventIds: ['e8', 'e9'] })]]);
         const result = formatBudgetedEventBase({ roster, cast, cards, settings: { eventbase_token_budget: 400 } });
         expect(result.cast.cardCharacters).toEqual(['Brennan']);
         expect(result.text).toContain('Newer events not yet in the card');
@@ -54,10 +55,82 @@ describe('shared EventBase token envelope', () => {
     });
     it('does not let card facts bypass current-chat visible-context exclusions', () => {
         const visibleEvents = events.map(e => ({ ...e, _collectionIds: ['live'], source_window_end: 99 }));
-        const cards = new Map([['Brennan', { text: '- Filed LLC.', sourceEventIds: ['e0'] }]]);
+        const cards = new Map([['Brennan', card('Filed LLC.', ['e0'])]]);
         const result = formatBudgetedEventBase({ roster: { ...roster, events: visibleEvents }, cast, cards,
             settings: { deduplication_depth: 10 }, chatLength: 100, currentCollectionIds: ['live'] });
         expect(result.text).toBe('');
         expect(result.cast.cardCharacters).toEqual([]);
+    });
+    it('keeps unrelated facts when main evidence excludes a meeting, without changing the cache', () => {
+        const cached = { facts: [
+            { fact: 'Attended the shared meeting.', source_ids: ['e0'] },
+            { fact: 'Filed the LLC.', source_ids: ['e1'] },
+            { fact: 'Synthesized both events.', source_ids: ['e0', 'e2'] },
+        ] };
+        const cards = new Map([['Brennan', cached]]);
+        const result = formatCastHistoryDetailed({ roster, cast, cards, mainEvents: [events[0]] });
+        expect(result.cardCharacters).toEqual(['Brennan']);
+        expect(result.text).toContain('Filed the LLC.');
+        expect(result.text).not.toContain('meeting');
+        expect(result.text).not.toContain('Synthesized');
+        expect(result.events.map(e => e.event_id)).toEqual(['e1']);
+        expect(cached.facts).toHaveLength(3);
+        expect(cached.facts[2].source_ids).toEqual(['e0', 'e2']);
+    });
+    it('filters visible-context facts but retains cross-chat evidence', () => {
+        const local = events.map(e => ({ ...e, _collectionIds: [e.event_id === 'e0' ? 'live' : 'archive'], source_window_end: 99 }));
+        const cards = new Map([['Brennan', { facts: [
+            { fact: 'Visible meeting.', source_ids: ['e0'] },
+            { fact: 'Archive filing.', source_ids: ['e1'] },
+            { fact: 'Combined claim.', source_ids: ['e0', 'e1'] },
+        ] }]]);
+        const result = formatCastHistoryDetailed({ roster: { ...roster, events: local }, cast, cards,
+            settings: { deduplication_depth: 10 }, chatLength: 100, currentCollectionIds: ['live'] });
+        expect(result.text).toContain('Archive filing.');
+        expect(result.text).not.toContain('Visible meeting.');
+        expect(result.text).not.toContain('Combined claim.');
+        expect(result.events.map(e => e.event_id)).toEqual(['e1']);
+    });
+    it('re-gates facts after earlier NPC claims and claims only surviving citations', () => {
+        const earlier = { name: 'Ada', eventIds: new Set(['e0']) };
+        const later = { name: 'Zoe', eventIds: new Set(['e2']) };
+        const cards = new Map([
+            ['Ada', card('Meeting.', ['e0'])],
+            ['Brennan', { facts: [
+                { fact: 'Shared meeting also attended.', source_ids: ['e0'] },
+                { fact: 'Filed the LLC.', source_ids: ['e1'] },
+                { fact: 'Multi-source excluded claim.', source_ids: ['e0', 'e2'] },
+            ] }],
+            ['Zoe', card('Independent evidence still available. ' + 'Additional grounded detail. '.repeat(10), ['e2'])],
+        ]);
+        const result = formatCastHistoryDetailed({ roster, cards, cast: [
+            { group: earlier, lastMention: 30 }, cast[0], { group: later, lastMention: 0 },
+        ] });
+        expect(result.cardCharacters).toContain('Brennan');
+        expect(result.cardCharacters).toEqual(['Ada', 'Brennan', 'Zoe']);
+        expect(result.text).toContain('Filed the LLC.');
+        expect(result.text).not.toContain('Shared meeting also attended.');
+        expect(result.text).not.toContain('Multi-source excluded claim.');
+        expect(result.text).toContain('Independent evidence still available.');
+        expect(result.events.map(e => e.event_id).sort()).toEqual(['e0', 'e1', 'e2']);
+    });
+    it('falls back to the eligible spine when no facts survive', () => {
+        const cards = new Map([['Brennan', card('Combined claim.', ['e0', 'e1'])]]);
+        const result = formatCastHistoryDetailed({ roster, cast, cards, mainEvents: [events[0]] });
+        expect(result.cardCharacters).toEqual([]);
+        expect(result.text).toContain('Fact 1');
+        expect(result.events.some(e => e.event_id === 'e0')).toBe(false);
+    });
+    it('budgets only surviving facts across the shared-envelope main reallocation', () => {
+        const cards = new Map([['Brennan', { facts: [
+            { fact: 'excluded '.repeat(1000), source_ids: ['e0'] },
+            { fact: 'Filed the LLC.', source_ids: ['e1'] },
+        ] }]]);
+        const result = formatBudgetedEventBase({ events: [events[0]], roster, cast, cards,
+            settings: { eventbase_token_budget: 300, eventbase_cast_token_budget: 100, eventbase_injection_format: 'summaryonly' } });
+        expect(result.main.events.map(e => e.event_id)).toEqual(['e0']);
+        expect(result.cast.cardCharacters).toEqual(['Brennan']);
+        expect(result.text).toContain('Filed the LLC.');
+        expect(estimateCastTokens(result.text)).toBeLessThanOrEqual(300);
     });
 });

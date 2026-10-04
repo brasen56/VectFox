@@ -57,7 +57,8 @@ describe('source-grounded NPC cards', () => {
         getNpcCards(options); getNpcCards(options);
         await saved;
         expect(complete).toHaveBeenCalledTimes(1);
-        expect(getNpcCards({ ...options, dryRun: true }).get('Brennan').text).toContain('Filed LLC');
+        expect(getNpcCards({ ...options, dryRun: true }).get('Brennan')).toEqual({
+            facts: [{ fact: 'Filed LLC', source_ids: ['e0'] }], pendingEventIds: [] });
         f.roster.events[0].summary = 'Changed';
         expect(getNpcCards({ ...options, dryRun: true }).size).toBe(0);
     });

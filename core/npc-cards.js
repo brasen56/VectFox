@@ -164,11 +164,8 @@ export function getNpcCards({ roster, cast, settings, dryRun = false, complete, 
         if (group.eventIds.size < npcCardSetting(settings, 'eventbase_npc_card_min_events')) continue;
         const snapshot = npcCardSnapshot(roster, group);
         const view = readNpcCard(settings.eventbase_npc_cards?.[snapshot.key], snapshot, budget);
-        if (view?.facts.length) {
-            cards.set(group.name, { facts: view.facts, text: view.facts.map(f => `- ${f.fact}`).join('\n'),
-                sourceEventIds: [...new Set(view.facts.flatMap(f => f.source_ids))],
-                pendingEventIds: [...view.uncovered, ...view.planned].map(e => e.event_id) });
-        }
+        // Injection gates and renders individual facts, so no text is prebuilt.
+        if (view?.facts.length) cards.set(group.name, { facts: view.facts, pendingEventIds: [...view.uncovered, ...view.planned].map(e => e.event_id) });
         const due = !view || !view.facts.length || view.planned.length > 0 || view.uncovered.length >= NPC_CARD_REFRESH_MIN_NEW_EVENTS;
         if (!due || dryRun || !complete || !injectable || pending.has(snapshot.key)
             || (failures.get(snapshot.key)?.until || 0) > Date.now()) continue;

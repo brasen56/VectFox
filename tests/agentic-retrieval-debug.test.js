@@ -23,6 +23,8 @@ import { retrieveEvents } from '../core/eventbase-retrieval.js';
 import { queryCollection, supportsCollectionFilters } from '../core/core-vector-api.js';
 import { postChatCompletion } from '../core/llm-provider-call.js';
 import { warnUnsupportedFilters } from '../core/search-filter-support.js';
+import { generationRateLimiter } from '../core/generation-rate-limiter.js';
+import { log } from '../core/log.js';
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.useRealTimers());
@@ -39,6 +41,31 @@ describe('Agent Mode recall diagnostics', () => {
             { query: 'broad query', characters_any: ['Other'] },
             { query: 'unscoped query', characters_any: [] },
         ]);
+    });
+
+    it('takes slot wait out of the planner timeout and falls back when no slot opens in time', async () => {
+        const preSearch = { events: [], candidates: [], debug: {} };
+        retrieveEvents.mockResolvedValue(preSearch);
+        postChatCompletion.mockResolvedValue({ content: JSON.stringify({ queries: [] }) });
+        const settings = { agentic_retrieval_enabled: true, vector_backend: 'qdrant', agent_model: 'model', agentic_retrieval_timeout_ms: 20000 };
+        const original = generationRateLimiter.execute;
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(0);
+        try {
+            let options;
+            generationRateLimiter.execute = (fn, _settings, _label, opts) => { options = opts; vi.setSystemTime(4000); return fn(); };
+            await retrieveEventsWithAgent({ liveCollectionIds: ['qdrant:one'], settings });
+            expect(options).toEqual({ deadline: 10000 });
+            expect(postChatCompletion.mock.calls[0][0].timeoutMs).toBe(16000);
+
+            postChatCompletion.mockClear();
+            generationRateLimiter.execute = async () => { throw Object.assign(new Error('dropped'), { name: 'GenerationQueueTimeoutError' }); };
+            expect(await retrieveEventsWithAgent({ liveCollectionIds: ['qdrant:one'], settings })).toBe(preSearch);
+            expect(postChatCompletion).not.toHaveBeenCalled();
+            expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('no free slot'));
+        } finally {
+            generationRateLimiter.execute = original;
+        }
     });
 
     it('scopes objects independently, preserves legacy filters, and tags hits', async () => {

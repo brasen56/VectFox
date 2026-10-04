@@ -122,19 +122,25 @@ export async function retrieveEventsWithAgent(params) {
     const tLlmStart = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     try {
         // Throttle the planner LLM call. Shares one budget with EventBase
-        // extraction via generationRateLimiter (same chat-completions provider).
-        // 0 = off. The gate sleeps BEFORE _callPlanner runs, so the per-request
-        // AbortSignal.timeout (created inside _callPlanner) is unaffected.
+        // extraction and NPC cards via generationRateLimiter (same
+        // chat-completions provider). 0 = off. The outer retrieval bound allots
+        // this stage one planner timeout, so time spent waiting for a slot comes
+        // out of the call's timeout. A planner that cannot start with at least
+        // half of it left is dropped unsent and falls back to pre-search, rather
+        // than overrunning the bound (which would drop EventBase injection) or
+        // spending quota on a result nobody waits for.
+        const stageEnd = Date.now() + timeoutMs;
         plan = await generationRateLimiter.execute(
             () => _callPlanner({
                 systemPrompt: getAgenticPlannerPrompt(settings?.cjk_tokenizer_mode),
                 userMessage,
                 llmCfg,
-                timeoutMs,
+                timeoutMs: Math.max(1, stageEnd - Date.now()),
                 maxTokens: resolveAgenticMaxTokens(settings),
             }),
             generationRateLimitSettings(settings),
             'agent',
+            { deadline: stageEnd - timeoutMs / 2 },
         );
     } catch (err) {
         const tLlmMs = Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tLlmStart));
@@ -144,6 +150,11 @@ export async function retrieveEventsWithAgent(params) {
         const { isInvalidModelConfigError, notifyInvalidModel } = await import('./model-config-notifier.js');
         if (isInvalidModelConfigError(err)) {
             notifyInvalidModel(err.message);
+        }
+        // Matched by name: several tests mock the limiter module without the class.
+        if (err?.name === 'GenerationQueueTimeoutError') {
+            log.warn(`[VectFox-Agentic] Planner not sent: the shared generation rate limit had no free slot within ${tLlmMs}ms. Using pre-search only. Raise the generation rate limit if this repeats.`);
+            return preSearch;
         }
         // AbortSignal.timeout() throws either a TimeoutError or a generic
         // "user aborted a request" message depending on the runtime. Detect both
