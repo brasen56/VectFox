@@ -23,7 +23,7 @@ import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { EventBaseFatalError, EventBaseExtractionError } from './eventbase-schema.js';
 import { extractEvents } from './eventbase-extractor.js';
 import { generationRateLimiter, generationRateLimitSettings } from './generation-rate-limiter.js';
-import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtractionCachesForChat, buildEventBaseCollectionId, isLastWindowExtracted, setVectorizationTip, getVectorizationTip, ensureVectorizationTip, shouldUseTipFallback, resolveActiveEventBaseCollection, repairAutoSyncCoordinatesAfterShrink } from './eventbase-store.js';
+import { insertEvents, isWindowAlreadyExtracted, markWindowExtracted, clearExtractionCachesForChat, buildEventBaseCollectionId, isLastWindowExtracted, setVectorizationTip, getVectorizationTip, ensureVectorizationTip, shouldUseTipFallback, resolveActiveEventBaseCollection, repairAutoSyncCoordinatesAfterShrink, getAutoSyncMarker, hasPendingAutoSyncRecheck, clearAutoSyncRecheck, getStoredWindowFingerprints, windowFingerprint } from './eventbase-store.js';
 import { getSavedHashes } from './core-vector-api.js';
 import { retrieveEvents } from './eventbase-retrieval.js';
 import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
@@ -251,14 +251,17 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // the active turn. See plans/autosync-settle-lag.md.
     const commitBoundary = isAutoSync ? getCommitBoundary(messages, settings) : messages.length;
     const committedMessages = commitBoundary < messages.length ? messages.slice(0, commitBoundary) : messages;
+    const recheckPending = isAutoSync && hasPendingAutoSyncRecheck(uuid);
+    const recheckFrom = recheckPending ? getAutoSyncMarker(uuid) : undefined;
 
     const _msgHash = m => { const t = (m.mes || '').trim(); return m.hash ?? _djb2(`${m.name || ''}:${t}`); };
-    if (isLastWindowExtracted(committedMessages, windowSize, step, uuid, _msgHash)) {
+    // A cached tail says nothing about historical gaps selected for repair.
+    if (!recheckPending && !skipTipFallback && isLastWindowExtracted(committedMessages, windowSize, step, uuid, _msgHash)) {
         log.lifecycle(`[EventBase] Quick-exit: last committed window already extracted, nothing new`);
         return { eventsExtracted: 0, windowsProcessed: 0, windowsSkipped: 0 };
     }
 
-    // Past the quick-exit: at least the last window is new, so real work will happen.
+    // Past the quick-exit: check new windows or the requested historical range.
     // Fire the auto-sync popup here so it shows once per ingestion call regardless of
     // whether older windows turn out to be dedup-skipped in the loop below.
     // suppressAutoSyncPopup is set by synchronizeChat when the trigger was MESSAGE_SENT
@@ -303,7 +306,6 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // so the next legitimate window starts exactly AT marker. `>` would
     // skip the first new window (extraction gap).
     if (isAutoSync) {
-        const { getAutoSyncMarker } = await import('./eventbase-store.js');
         const marker = getAutoSyncMarker(uuid);
         if (typeof marker === 'number') {
             const before = windows.length;
@@ -315,6 +317,25 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     }
 
     log.lifecycle(`[EventBase] Ingestion: ${messages.length} messages → ${windows.length} windows (size=${windowSize}, overlap=${windowOverlap})`);
+
+    let storedFingerprints = null;
+    if (recheckPending && windows.length > 0) {
+        try {
+            storedFingerprints = await getStoredWindowFingerprints(collectionId, settings);
+        } catch (err) {
+            try {
+                toastr.error('Auto-sync could not verify stored windows. The selected start point is still pending; retry when the database is available.', 'VectFox');
+            } catch (_) { /* toastr unavailable (e.g. unit tests) */ }
+            throw err;
+        }
+    }
+    const isWindowDone = hashes => {
+        if (!storedFingerprints) return isWindowAlreadyExtracted(hashes, null, settings, uuid);
+        const done = storedFingerprints.has(windowFingerprint(hashes));
+        // Unlike a positional skip, a stored content match is safe to cache.
+        if (done) markWindowExtracted(hashes, uuid);
+        return done;
+    };
 
     const showProgressModal = !isAutoSync || settings.autosync_show_progress_modal === true;
     if (showProgressModal) {
@@ -367,7 +388,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
             const text = (m.mes || '').trim();
             return m.hash ?? _djb2(`${m.name || ''}:${text}`);
         });
-        const isDone = await isWindowAlreadyExtracted(hashes, null, settings, uuid);
+        const isDone = await isWindowDone(hashes);
         if (!isDone) break;
         fastForwardSkipped++;
     }
@@ -382,12 +403,12 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // from callers inlining incompatible "should I bypass the fallback?" logic. Now
     // there's one source of truth in eventbase-store.js.
     const useTipFallback = shouldUseTipFallback({
-        skipTipFallback,
+        skipTipFallback: skipTipFallback || recheckPending,
         fastForwardSkipped,
         hasCollection: !!collectionId,
     });
-    if (!useTipFallback && skipTipFallback) {
-        log.lifecycle('[EventBase] shouldUseTipFallback=false — caller explicitly opted out (skipTipFallback=true)');
+    if (!useTipFallback && (skipTipFallback || recheckPending)) {
+        log.lifecycle('[EventBase] Tip fast-forward disabled for this extraction/re-check');
     }
     if (useTipFallback) {
         try {
@@ -402,9 +423,8 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
             } else if (typeof tip === 'number' && tip > 0) {
                 let i = 0;
                 while (i < windows.length && windows[i].end < tip) {
-                    const win = windows[i];
-                    const hashes = win.msgs.map(_msgHash);
-                    markWindowExtracted(hashes, uuid);
+                    // Position is only an assumption of coverage. Never cache it
+                    // as proof that these exact message contents were extracted.
                     i++;
                 }
                 if (i > 0) {
@@ -486,12 +506,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                 });
 
                 // Skip if already extracted
-                const alreadyDone = await isWindowAlreadyExtracted(
-                    sourceHashes,
-                    win.msgs.map((_, i) => win.start + i),
-                    settings,
-                    uuid,
-                );
+                const alreadyDone = await isWindowDone(sourceHashes);
                 if (alreadyDone) {
                     // Per-window skip log removed — the "Ingestion complete: skipped=N"
                     // summary at the end already conveys this. For a 720-message chat
@@ -690,6 +705,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
         if (!abortSignal?.aborted) {
             for (const winHashes of hashesToMark) {
                 markWindowExtracted(winHashes, uuid);
+                storedFingerprints?.add(windowFingerprint(winHashes));
             }
             for (const end of endsExtracted) {
                 setVectorizationTip(uuid, end + 1);
@@ -985,7 +1001,17 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
             `EventBase: ${windowsFailed} window(s) failed — ${eventsExtracted} event(s) extracted.`
             + (firstFailureDetail ? ` First error: ${firstFailureDetail}` : ' See the console for details.'));
     } else {
-        progressTracker.complete(true, `EventBase: extracted ${eventsExtracted} event(s) from ${windowsProcessed} window(s)`);
+        progressTracker.complete(true, `EventBase: extracted ${eventsExtracted} event(s) from ${windowsProcessed} window(s)`
+            + (windowsSkipped > 0 ? `; ${windowsSkipped} already-covered window(s) skipped` : ''));
+    }
+
+    // Retire only the restart this run actually walked. A failed/cancelled run,
+    // or a new start point selected while extraction was in flight, must survive.
+    if (recheckPending && windows.length > 0 && !abortSignal?.aborted
+        && !windowsFailed && !windowsTimedOut
+        && windowsProcessed + windowsSkipped === windows.length
+        && getAutoSyncMarker(uuid) === recheckFrom && hasPendingAutoSyncRecheck(uuid)) {
+        clearAutoSyncRecheck(uuid);
     }
 
     log.lifecycle(`[EventBase] Ingestion complete: extracted=${eventsExtracted}, processed=${windowsProcessed}, skipped=${windowsSkipped}, timedOut=${windowsTimedOut}, failed=${windowsFailed}`);
@@ -1482,7 +1508,8 @@ export async function getChatAutoSyncStatus(settings) {
     // both modes stay consistent. See plans/autosync-settle-lag.md.
     const commitBoundary = getCommitBoundary(messages, settings);
     const committedMessages = commitBoundary < messages.length ? messages.slice(0, commitBoundary) : messages;
-    const fullyVectorized = isChatFullyVectorized(committedMessages, settings, uuid, getAutoSyncWindowSize(settings), 0);
+    const fullyVectorized = !hasPendingAutoSyncRecheck(uuid)
+        && isChatFullyVectorized(committedMessages, settings, uuid, getAutoSyncWindowSize(settings), 0);
 
     // Cache-first read; one-time probe on cold cache populates from Qdrant.
     // After first session-warmup, the ingestion loop keeps this up-to-date

@@ -536,7 +536,8 @@ export function getAutoSyncMarker(chatUUID) {
  * the restart point does not change what is vectorized. Instead the start point
  * is recorded as a pending re-check (see hasPendingAutoSyncRecheck), which makes
  * auto-sync bypass the positional tip fast-forward so windows from here are
- * checked by content fingerprint rather than skipped by position.
+ * checked against stored source hashes rather than skipped by position or by
+ * legacy fingerprints that may themselves have been inferred from position.
  * No backend writes or extraction are performed here.
  */
 export function setAutoSyncStartPoint(chatUUID, startIndex, settings) {
@@ -851,6 +852,28 @@ export function windowFingerprint(sourceHashes) {
 }
 
 /**
+ * Verify a manual restart against stored source content. Older versions also
+ * cached windows skipped by position, so their local fingerprints alone cannot
+ * prove that the current messages were extracted. Read the active collection
+ * once per repair run; missing source hashes cannot establish a duplicate.
+ * Let read errors propagate so a failed verification leaves the restart pending.
+ */
+export async function getStoredWindowFingerprints(collectionId, settings) {
+    const { getBackend } = await import('../backends/backend-manager.js');
+    const backend = await getBackend(settings);
+    const result = await backend.listChunks(collectionId, settings, { limit: Number.MAX_SAFE_INTEGER });
+    if (!Array.isArray(result?.items)) {
+        throw new Error('Could not verify stored windows for the auto-sync restart. Please try again.');
+    }
+    const fingerprints = new Set();
+    for (const item of result.items) {
+        const hashes = item?.metadata?.source_message_hashes;
+        if (Array.isArray(hashes) && hashes.length) fingerprints.add(windowFingerprint(hashes));
+    }
+    return fingerprints;
+}
+
+/**
  * Marks a window as extracted. Stored in extension_settings so it survives
  * page reloads without requiring a chat save.
  * @param {number[]} sourceHashes
@@ -1003,8 +1026,8 @@ export function clearExtractionCachesForChat(chatUUID) {
 
 /**
  * Quick-exit check: returns true if the LAST complete window in the message list
- * is already extracted. When true, all prior windows are also done (windows are
- * always processed in-order from the tail). Avoids building O(n) window objects.
+ * is already extracted. This assumes earlier windows are done; callers repairing
+ * historical gaps must bypass it. Avoids building O(n) window objects.
  *
  * @param {object[]} messages  - Filtered message array (same as passed to runEventBaseIngestion)
  * @param {number}   windowSize

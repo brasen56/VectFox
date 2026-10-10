@@ -298,7 +298,7 @@ export async function synchronizeChat(settings, batchSize = 5, triggerEvent = nu
     }
 
     // Find EventBase collections registered for this chat and check the per-collection auto-sync flag
-    const { findEventBaseCollectionsForChat, resolveActiveEventBaseCollection, hasPendingAutoSyncRecheck, clearAutoSyncRecheck } = await import('./eventbase-store.js');
+    const { findEventBaseCollectionsForChat, resolveActiveEventBaseCollection } = await import('./eventbase-store.js');
     const { isCollectionAutoSyncEnabled } = await import('./collection-metadata.js');
     const backend = getRegistryBackend(settings?.vector_backend);
     const eventbaseCollections = findEventBaseCollectionsForChat(uuid, backend);
@@ -339,11 +339,9 @@ export async function synchronizeChat(settings, batchSize = 5, triggerEvent = nu
             + `(${prepared.visibleCount} visible -> ${messages.length} effective)`,
         );
     }
-    // A manual start point asks auto-sync to re-check from there; the positional
-    // tip fast-forward would skip straight back past it, so bypass it until a run
-    // has walked those windows (they are fingerprinted afterwards).
-    const recheckPending = hasPendingAutoSyncRecheck(uuid);
-    log.lifecycle(`[AutoSync] calling runEventBaseIngestion: messages=${messages.length}, manualRecheck=${recheckPending}`);
+    // The ingestion workflow owns manual-restart verification and completion,
+    // including direct auto-sync callers and retries after partial failures.
+    log.lifecycle(`[AutoSync] calling runEventBaseIngestion: messages=${messages.length}`);
     let result;
     try {
         result = await runEventBaseIngestion({
@@ -351,7 +349,6 @@ export async function synchronizeChat(settings, batchSize = 5, triggerEvent = nu
             chatUUID: uuid,
             settings,
             isAutoSync: true,
-            skipTipFallback: recheckPending,
             // Pin the write target to the collection we already resolved for the
             // gate above. Without this, runEventBaseIngestion recomputes the ID via
             // buildEventBaseCollectionId(uuid), whose char segment comes from the
@@ -388,12 +385,6 @@ export async function synchronizeChat(settings, batchSize = 5, triggerEvent = nu
         throw err;
     }
     log.lifecycle(`[AutoSync] runEventBaseIngestion result:`, result);
-    // Quick-exit runs return all-zero counts and walked nothing, so keep waiting.
-    if (recheckPending && (result?.windowsProcessed || result?.windowsSkipped)
-        && !result.windowsFailed && !result.windowsTimedOut) {
-        clearAutoSyncRecheck(uuid);
-    }
-
     return {
         remaining: 0,
         messagesProcessed: result.eventsExtracted,

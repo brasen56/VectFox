@@ -964,7 +964,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <button id="VectFox_autosync_set_start" type="button" class="vectfox-btn vectfox-btn-secondary">Set start point</button>
                                 </div>
                                 <small id="VectFox_autosync_start_hint" class="VectFox_hint"></small>
-                                <small class="VectFox_hint">Use this to repair drift after InlineSummary flattening or message deletion. Indices are zero-based in the expanded history (stored originals count, not just visible messages). The containing auto-sync window is included. Existing events and duplicate checks are preserved; this does not force re-extraction. Sync resumes on the next normal trigger if enabled. Re-enabling auto-sync or changing its window size recalculates this position.</small>
+                                <small class="VectFox_hint">Use this to repair drift after InlineSummary flattening or message deletion. Indices are zero-based in the expanded history (stored originals count, not just visible messages). The containing auto-sync window is included. Existing events are kept; windows with matching stored source hashes are skipped. Windows without that evidence may be extracted again. Sync resumes on the next normal trigger if enabled, once full windows are eligible after the settle delay. The selected start stays pending until the check succeeds; changing the window size re-aligns it.</small>
                             </div>
 
                             <div class="vectfox-form-group" style="margin-top: 12px;">
