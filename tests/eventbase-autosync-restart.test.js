@@ -106,6 +106,74 @@ beforeEach(() => {
 });
 
 describe('manual auto-sync restart', () => {
+    const use663MessageChat = () => {
+        fixture.messages.push(...Array.from({ length: 39 }, (_, i) => ({
+            mes: `New message ${i}`, name: 'AI', hash: 3000 + i,
+        })));
+        // A pre-flattening event leaves the backend high-water mark outside
+        // this chat. Current content still has exact stored matches through 599.
+        fixture.items = [
+            { metadata: { source_window_end: 9329, source_message_hashes: [-1] } },
+            ...[480, 520, 560].map(start => ({ metadata: eventFor(start) })),
+        ];
+        extension_settings.vectfox.eventbase_vectorization_tip[UUID] = 9330;
+        extension_settings.vectfox.eventbase_autosync_start_marker[UUID] = 520;
+    };
+
+    it('advances a rebased 520 tip to verified coverage at 600 without duplicate extraction', async () => {
+        use663MessageChat();
+        expect((await getChatAutoSyncStatus(extension_settings.vectfox)).vectorizationTip).toBe(520);
+        setAutoSyncStartPoint(UUID, 520, extension_settings.vectfox);
+        expect(await run()).toMatchObject({ windowsProcessed: 0, windowsSkipped: 2 });
+        expect(extractEvents).not.toHaveBeenCalled();
+        expect((await getChatAutoSyncStatus(extension_settings.vectfox))).toMatchObject({
+            vectorizationTip: 600, state: 'fully-vectorized', settlePending: true,
+            eligibleEnd: 600, settlingMessages: 40, awaitingWindowMessages: 23, nextWindowAt: 680,
+        });
+        // Keep the backend's historical coordinates separate from the session.
+        expect(extension_settings.vectfox.eventbase_vectorization_tip[UUID]).toBe(9330);
+        listChunks.mockClear();
+        expect(await run()).toMatchObject({ windowsProcessed: 0, windowsSkipped: 0 });
+        expect(listChunks).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false])('reconciles a cached tail on ordinary auto-sync (status read first: %s)', async (readStatusFirst) => {
+        use663MessageChat();
+        for (const start of [520, 560]) markWindowExtracted(sourceHashes(start), UUID);
+        if (readStatusFirst) await getChatAutoSyncStatus(extension_settings.vectfox);
+        expect(await run()).toMatchObject({ windowsProcessed: 0, windowsSkipped: 2 });
+        expect(getVectorizationTip(UUID)).toBe(600);
+        expect(extractEvents).not.toHaveBeenCalled();
+    });
+
+    it('extracts the next new 40-message window at 680, after the settle delay', async () => {
+        use663MessageChat();
+        setAutoSyncStartPoint(UUID, 520, extension_settings.vectfox);
+        await run();
+        extractEvents.mockClear();
+        fixture.messages.push(...Array.from({ length: 17 }, (_, i) => ({
+            mes: `Next message ${i}`, name: 'AI', hash: 4000 + i,
+        })));
+        expect(await run()).toMatchObject({ windowsProcessed: 1, windowsSkipped: 2 });
+        expect(extractedStarts()).toEqual([600]);
+        expect(getVectorizationTip(UUID)).toBe(640);
+    });
+
+    it('does not label a 663-message chat with a 520 tip as pending settle', async () => {
+        fixture.messages.push(...Array.from({ length: 39 }, (_, i) => ({
+            mes: `New message ${i}`, name: 'AI', hash: 3000 + i,
+        })));
+        fixture.items = [{ metadata: { source_window_end: 519 } }];
+        extension_settings.vectfox.eventbase_vectorization_tip[UUID] = 520;
+        extension_settings.vectfox.eventbase_autosync_start_marker[UUID] = 520;
+        markWindowExtracted(sourceHashes(560), UUID);
+        const status = await getChatAutoSyncStatus(extension_settings.vectfox);
+        expect(status).toMatchObject({
+            chatMessageCount: 663, vectorizationTip: 520,
+            state: 'partial', settlePending: false,
+        });
+    });
+
     it.each([
         [20, true, [400, 440, 480, 520]],
         [20, false, [400, 440, 480, 520, 560]],
@@ -174,7 +242,7 @@ describe('manual auto-sync restart', () => {
 
     it('keeps the restart pending if stored-window verification fails', async () => {
         setAutoSyncStartPoint(UUID, 400, extension_settings.vectfox);
-        listChunks.mockRejectedValueOnce(new Error('Backend unavailable'));
+        listChunks.mockRejectedValue(new Error('Backend unavailable'));
         await expect(run()).rejects.toThrow('Backend unavailable');
         expect(extractEvents).not.toHaveBeenCalled();
         expect(hasPendingAutoSyncRecheck(UUID)).toBe(true);

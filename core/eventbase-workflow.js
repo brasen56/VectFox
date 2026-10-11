@@ -255,8 +255,18 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     const recheckFrom = recheckPending ? getAutoSyncMarker(uuid) : undefined;
 
     const _msgHash = m => { const t = (m.mes || '').trim(); return m.hash ?? _djb2(`${m.name || ''}:${t}`); };
+    const tailCached = isLastWindowExtracted(committedMessages, windowSize, step, uuid, _msgHash);
+    const eligibleEnd = commitBoundary < windowSize ? 0
+        : Math.floor((commitBoundary - windowSize) / step) * step + windowSize;
+    const knownTip = getVectorizationTip(uuid);
+    // Shrink recovery rebases the session tip conservatively. A content-cached
+    // tail can be ahead of that tip; verify it instead of exiting forever with
+    // an obsolete counter (e.g. tip 520 although windows through 599 are stored).
+    const reconcileCoverage = isAutoSync && tailCached
+        && (typeof knownTip !== 'number' || knownTip < eligibleEnd || knownTip > messages.length);
+    const verifyStoredCoverage = recheckPending || reconcileCoverage;
     // A cached tail says nothing about historical gaps selected for repair.
-    if (!recheckPending && !skipTipFallback && isLastWindowExtracted(committedMessages, windowSize, step, uuid, _msgHash)) {
+    if (!verifyStoredCoverage && !skipTipFallback && tailCached) {
         log.lifecycle(`[EventBase] Quick-exit: last committed window already extracted, nothing new`);
         return { eventsExtracted: 0, windowsProcessed: 0, windowsSkipped: 0 };
     }
@@ -319,8 +329,15 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     log.lifecycle(`[EventBase] Ingestion: ${messages.length} messages → ${windows.length} windows (size=${windowSize}, overlap=${windowOverlap})`);
 
     let storedFingerprints = null;
-    if (recheckPending && windows.length > 0) {
+    if (verifyStoredCoverage && windows.length > 0) {
         try {
+            // Warm/verify the session before recording current-coordinate
+            // matches, so the next status read cannot replace them with an old
+            // backend high-water mark and rebase the counter backwards again.
+            const tip = await ensureVectorizationTip(uuid, collectionId, settings);
+            if (typeof tip === 'number' && tip > messages.length) {
+                repairAutoSyncCoordinatesAfterShrink(uuid, messages.length, settings);
+            }
             storedFingerprints = await getStoredWindowFingerprints(collectionId, settings);
         } catch (err) {
             try {
@@ -329,11 +346,17 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
             throw err;
         }
     }
-    const isWindowDone = hashes => {
+    const isWindowDone = (hashes, windowEnd) => {
         if (!storedFingerprints) return isWindowAlreadyExtracted(hashes, null, settings, uuid);
         const done = storedFingerprints.has(windowFingerprint(hashes));
         // Unlike a positional skip, a stored content match is safe to cache.
-        if (done) markWindowExtracted(hashes, uuid);
+        if (done) {
+            markWindowExtracted(hashes, uuid);
+            // This is verified coverage in the current expanded history, even
+            // when no new events need inserting. A manual marker alone never
+            // advances the tip; this stored-content proof does.
+            setVectorizationTip(uuid, windowEnd + 1);
+        }
         return done;
     };
 
@@ -388,7 +411,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
             const text = (m.mes || '').trim();
             return m.hash ?? _djb2(`${m.name || ''}:${text}`);
         });
-        const isDone = await isWindowDone(hashes);
+        const isDone = await isWindowDone(hashes, win.end);
         if (!isDone) break;
         fastForwardSkipped++;
     }
@@ -403,11 +426,11 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
     // from callers inlining incompatible "should I bypass the fallback?" logic. Now
     // there's one source of truth in eventbase-store.js.
     const useTipFallback = shouldUseTipFallback({
-        skipTipFallback: skipTipFallback || recheckPending,
+        skipTipFallback: skipTipFallback || verifyStoredCoverage,
         fastForwardSkipped,
         hasCollection: !!collectionId,
     });
-    if (!useTipFallback && (skipTipFallback || recheckPending)) {
+    if (!useTipFallback && (skipTipFallback || verifyStoredCoverage)) {
         log.lifecycle('[EventBase] Tip fast-forward disabled for this extraction/re-check');
     }
     if (useTipFallback) {
@@ -506,7 +529,7 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                 });
 
                 // Skip if already extracted
-                const alreadyDone = await isWindowDone(sourceHashes);
+                const alreadyDone = await isWindowDone(sourceHashes, win.end);
                 if (alreadyDone) {
                     // Per-window skip log removed — the "Ingestion complete: skipped=N"
                     // summary at the end already conveys this. For a 720-message chat
@@ -1508,7 +1531,7 @@ export async function getChatAutoSyncStatus(settings) {
     // both modes stay consistent. See plans/autosync-settle-lag.md.
     const commitBoundary = getCommitBoundary(messages, settings);
     const committedMessages = commitBoundary < messages.length ? messages.slice(0, commitBoundary) : messages;
-    const fullyVectorized = !hasPendingAutoSyncRecheck(uuid)
+    const tailCached = !hasPendingAutoSyncRecheck(uuid)
         && isChatFullyVectorized(committedMessages, settings, uuid, getAutoSyncWindowSize(settings), 0);
 
     // Cache-first read; one-time probe on cold cache populates from Qdrant.
@@ -1523,12 +1546,32 @@ export async function getChatAutoSyncStatus(settings) {
         vectorizationTip = getVectorizationTip(uuid);
     }
 
+    // A cached tail is not enough when the coverage tip contradicts it. With
+    // 663 messages and 40-message windows, coverage must reach 600 before the
+    // remaining 63 messages can be attributed to settle lag + an incomplete tail.
+    const windowSize = getAutoSyncWindowSize(settings);
+    const eligibleEnd = Math.floor(commitBoundary / windowSize) * windowSize;
+    const coverageBehind = typeof vectorizationTip === 'number' && vectorizationTip < eligibleEnd;
+    const fullyVectorized = tailCached && !coverageBehind;
+    const settlingMessages = typeof vectorizationTip === 'number'
+        ? Math.max(0, chatMessageCount - Math.max(commitBoundary, vectorizationTip)) : 0;
+    const awaitingWindowMessages = typeof vectorizationTip === 'number'
+        ? Math.max(0, commitBoundary - Math.max(eligibleEnd, vectorizationTip)) : 0;
+    const settlePending = fullyVectorized && settlingMessages > 0;
+    const nextWindowAt = eligibleEnd + windowSize
+        + (settings?.eventbase_autosync_settle_lag === false ? 0 : windowSize);
+
     return {
         state: fullyVectorized ? 'fully-vectorized' : 'partial',
         collectionId: match.collectionId,
         registryKey: match.registryKey,
         chatMessageCount,
         commitBoundary,
+        eligibleEnd,
+        settlePending,
+        settlingMessages,
+        awaitingWindowMessages,
+        nextWindowAt,
         markerValue: typeof markerValue === 'number' ? markerValue : undefined,
         vectorizationTip: typeof vectorizationTip === 'number' ? vectorizationTip : undefined,
     };

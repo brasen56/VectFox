@@ -2174,18 +2174,17 @@ export async function refreshAutoSyncCheckbox(settings) {
     const vectorizedCount = (typeof status.vectorizationTip === 'number')
         ? status.vectorizationTip
         : (typeof status.markerValue === 'number' ? status.markerValue : null);
-    // Settle/commit lag: when fully synced, the active last turn is intentionally
-    // held back (it's already in live context), so "vectorization" can sit one
-    // turn behind "chat" without being a backlog. Label that gap so green + a
-    // small delta reads as intentional, not "behind". See plans/autosync-settle-lag.md.
-    const settleGap = (typeof status.chatMessageCount === 'number' && vectorizedCount !== null)
-        ? status.chatMessageCount - vectorizedCount
-        : 0;
-    const showSettleNote = status.state === 'fully-vectorized' && settleGap > 0;
+    // Settle lag holds one configured window; a further partial window can also
+    // be waiting. Show each count and the next eligible chat length, rather than
+    // describing every gap (including stale coverage) as "latest turn pending".
+    const showSettleNote = status.settlePending === true;
+    const showWindowNote = status.state === 'fully-vectorized' && status.awaitingWindowMessages > 0;
     const counts = (typeof status.chatMessageCount === 'number')
         ? `<div style="margin-top:4px;font-size:0.85em;opacity:0.8;">chat: ${status.chatMessageCount} msgs` +
           (vectorizedCount !== null ? ` · vectorization: ${vectorizedCount} msgs` : '') +
-          (showSettleNote ? ` · latest turn pending settle` : '') +
+          (showSettleNote ? ` · ${status.settlingMessages} msgs pending settle` : '') +
+          (showWindowNote ? ` · ${status.awaitingWindowMessages} msgs awaiting a full window` : '') +
+          ((showSettleNote || showWindowNote) ? ` · next window at ${status.nextWindowAt} msgs` : '') +
           `</div>`
         : '';
 
