@@ -1,7 +1,7 @@
 /** Session-local EventBase index. Stored events are never rewritten. */
 import { parseEmbedText } from './eventbase-schema.js';
 import { log } from './log.js';
-import { buildResolvedBy } from './continuity.js';
+import { buildResolvedBy, isActiveDuplicate } from './continuity.js';
 
 export const CHARACTER_ROSTER_DEFAULTS = Object.freeze({
     eventbase_lead_share_threshold: 0.25,
@@ -48,6 +48,10 @@ function slimEvent(item) {
         should_persist: event.should_persist,
         event_type: event.event_type,
         source_window_end: event.source_window_end,
+        source_window_start: event.source_window_start,
+        created_at: event.created_at,
+        inserted_at: event.inserted_at,
+        result: event.result || parsed.result || '',
         open_threads: Array.isArray(event.open_threads) ? [...event.open_threads] : [],
         continuity: event.continuity,
         timeline_sort_key: event.timeline_sort_key,
@@ -240,6 +244,7 @@ export function buildCharacterRoster(events, overrides = [], settings = {}) {
 /** Sync read of the current lock union; never waits for an index on the turn path. */
 export function getCharacterRoster(collectionIds, settings = {}) {
     const events = new Map();
+    const duplicateIds = new Set();
     const rosterEvents = [];
     const overrides = [];
     const pendingCollections = [];
@@ -250,6 +255,7 @@ export function getCharacterRoster(collectionIds, settings = {}) {
         if (entry.continuitySupported === false) unsupportedCollections.push(id);
         const ignored = new Set(getIgnoredCharacterTags(id, settings));
         for (const event of entry.events.values()) {
+            if (isActiveDuplicate(event)) { duplicateIds.add(event.event_id); continue; }
             if (!events.has(event.event_id)) events.set(event.event_id, { ...event, _collectionIds: [] });
             events.get(event.event_id)._collectionIds.push(id);
             // Project each collection separately: a tag ignored in one lock may
@@ -260,7 +266,7 @@ export function getCharacterRoster(collectionIds, settings = {}) {
         overrides.push(...(settings.eventbase_character_alias_overrides?.[id] || []));
     }
     return { ...buildCharacterRoster(rosterEvents, overrides, settings), events: [...events.values()], eventById: events,
-        resolvedBy: buildResolvedBy(events.values()), pendingCollections, unsupportedCollections,
+        resolvedBy: buildResolvedBy(events.values()), duplicateIds, pendingCollections, unsupportedCollections,
         continuitySupported: unsupportedCollections.length === 0, ready: pendingCollections.length === 0 };
 }
 

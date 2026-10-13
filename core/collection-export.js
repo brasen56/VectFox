@@ -76,7 +76,7 @@ const EXPORT_BATCH_SIZE = 100;
  * @param {object} settings - VectFox settings
  * @returns {Promise<Array>} Chunks with vectors
  */
-async function fetchChunksWithVectors(collectionId, settings) {
+export async function fetchChunksWithVectors(collectionId, settings) {
     const backendName = settings.vector_backend || 'standard';
     const response = await fetch('/api/plugins/similharity/chunks/list', {
         method: 'POST',

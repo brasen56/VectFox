@@ -20,7 +20,7 @@ import { parseEmbedText } from './eventbase-schema.js';
 import { checkPluginAvailable } from './collection-loader.js';
 import { buildStoryRecencyCtx, storyRecencyBonus } from './story-time.js';
 import { log } from './log.js';
-import { annotateContinuity, resolvedDownrank } from './continuity.js';
+import { annotateContinuity, resolvedDownrank, isActiveDuplicate } from './continuity.js';
 import { createCandidateOutcomes, recordCandidateOutcome } from './eventbase-retrieval-debug.js';
 import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
 import { rerankEventCandidates } from './cross-encoder-reranker.js';
@@ -535,6 +535,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     // still get results. Plugin/Qdrant data always carries the field.
     const candidateOutcomes = createCandidateOutcomes(allCandidates);
     const importanceFiltered = allCandidates.filter(m => {
+        if (isActiveDuplicate(m, continuityRoster)) return false;
         if (m._rerankApplied) return true;
         const imp = m.importance ?? m.metadata?.importance;
         if (imp == null) return true;   // missing importance → pass (native backend)

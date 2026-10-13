@@ -2,7 +2,7 @@
 import { estimateCastTokens, selectHistorySpine, compareCastChronology } from './eventbase-injection.js';
 import { resolveEventBaseTokenBudget } from './eventbase-token-budget.js';
 import { resolveCastSetting } from './scene-cast-settings.js';
-import { annotateContinuity, getContinuityView, renderResolution } from './continuity.js';
+import { annotateContinuity, getContinuityView, renderResolution, isActiveDuplicate } from './continuity.js';
 
 export const NPC_CARD_DEFAULTS = Object.freeze({
     eventbase_npc_cards_enabled: false,
@@ -52,7 +52,7 @@ export function npcCardSnapshot(roster, group) {
     // summary nor text can never be an eligible history line, so offering it
     // as evidence would let the model cite an event that permanently rejects
     // the card at injection.
-    const events = roster.events.filter(e => group.eventIds.has(e.event_id) && (e.summary || e.text))
+    const events = roster.events.filter(e => !isActiveDuplicate(e) && group.eventIds.has(e.event_id) && (e.summary || e.text))
         .map(e => annotateContinuity(e, roster));
     const collections = [...new Set(events.flatMap(e => e._collectionIds || []))].sort();
     const key = JSON.stringify([collections, group.name, [...group.aliases].sort()]);
@@ -127,7 +127,14 @@ export async function advanceNpcCard(stored, snapshot, group, settings, complete
     let planned = view?.planned.length ? view.planned : [];
     if (!planned.length) {
         const unread = snapshot.events.filter(e => !coverage.has(digest(e)));
-        if (!unread.length) return null;
+        if (!unread.length) {
+            // Facts were gated out (removed/duplicate evidence, smaller budget) with nothing
+            // new to read: persist the pruned card so the refresh is not requeued every turn.
+            if (!view || view.facts.length >= (stored?.facts || []).length) return null;
+            return { v: 2, facts: view.facts,
+                cited: Object.fromEntries(view.facts.flatMap(f => f.source_ids).map(id => [id, snapshot.digests.get(id)])),
+                coverage: packDigests(coverage), planned: '', updatedAt: new Date().toISOString() };
+        }
         const fits = unread.filter(e => cost(e) <= NPC_CARD_BATCH_TOKENS);
         // Greedy batching leaves less than one record unused per call, so this
         // budget keeps the whole plan within NPC_CARD_MAX_PLAN_BATCHES calls.
@@ -197,7 +204,8 @@ export function getNpcCards({ roster, cast, settings, dryRun = false, complete, 
         const view = readNpcCard(storedCard, snapshot, budget);
         // Injection gates and renders individual facts, so no text is prebuilt.
         if (view?.facts.length) cards.set(group.name, { facts: view.facts, pendingEventIds: [...view.uncovered, ...view.planned].map(e => e.event_id) });
-        const due = !view || !view.facts.length || view.planned.length > 0 || view.uncovered.length >= NPC_CARD_REFRESH_MIN_NEW_EVENTS;
+        const evidenceChanged = Boolean(storedCard && view && view.facts.length < (storedCard.facts || []).length);
+        const due = evidenceChanged || !view || !view.facts.length || view.planned.length > 0 || view.uncovered.length >= NPC_CARD_REFRESH_MIN_NEW_EVENTS;
         if (due && !dryRun && complete && injectable && !pending.has(snapshot.key)
             && !((failures.get(snapshot.key)?.until || 0) > Date.now())) {
             // Snapshot both evidence and generation settings before queueing.

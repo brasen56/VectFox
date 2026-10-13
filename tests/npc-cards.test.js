@@ -31,6 +31,29 @@ const nextSave = () => { let done; const saved = new Promise(resolve => { done =
 afterEach(() => vi.useRealTimers());
 
 describe('source-grounded NPC cards', () => {
+    it('gates facts citing active duplicates without changing unrelated evidence', async () => {
+        const f = fixture('Alex', 3);
+        const initial = npcCardSnapshot(f.roster, f.group);
+        const complete = vi.fn(async () => [{ fact: 'Duplicate fact', source_ids: ['e0'] }, { fact: 'Intact fact', source_ids: ['e1'] }]);
+        const card = await advanceNpcCard(undefined, initial, f.group, f.settings, complete);
+        f.roster.events[0].continuity = { v: 1, duplicate_of: { event_id: 'e1', status: 'active' } };
+        const updated = npcCardSnapshot(f.roster, f.group);
+        expect(updated.digests.has('e0')).toBe(false);
+        expect(updated.digests.get('e1')).toBe(initial.digests.get('e1'));
+        expect(readNpcCard(card, updated, 350).facts).toEqual([{ fact: 'Intact fact', source_ids: ['e1'] }]);
+    });
+    it('saves the pruned card once when gated facts leave nothing new to read', async () => {
+        const f = fixture('Alex', 3);
+        const complete = vi.fn(async () => [{ fact: 'Duplicate fact', source_ids: ['e0'] }, { fact: 'Intact fact', source_ids: ['e1'] }]);
+        const card = await advanceNpcCard(undefined, npcCardSnapshot(f.roster, f.group), f.group, f.settings, complete);
+        f.roster.events[0].continuity = { v: 1, duplicate_of: { event_id: 'e1', status: 'active' } };
+        const updated = npcCardSnapshot(f.roster, f.group);
+        const pruned = await advanceNpcCard(card, updated, f.group, f.settings, complete);
+        expect(complete).toHaveBeenCalledTimes(1);
+        expect(pruned.facts).toEqual([{ fact: 'Intact fact', source_ids: ['e1'] }]);
+        expect(readNpcCard(pruned, updated, 350).facts).toEqual(pruned.facts);
+        expect(await advanceNpcCard(pruned, updated, f.group, f.settings, complete)).toBeNull();
+    });
     it('shows partial thread closure and invalidates cited facts when the same resolver closes all threads', async () => {
         const f = fixture('Alex', 3);
         const [target, resolver, unrelated] = f.roster.events;

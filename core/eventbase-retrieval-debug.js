@@ -120,7 +120,7 @@ export function formatRetrievalDiagnostics(debug = {}) {
     if (debug.crossEncoder?.enabled) {
         const ce = debug.crossEncoder;
         const status = ce.used ? 'used' : ce.deferred ? 'deferred' : ce.skippedReason ? 'skipped' : 'original order';
-        castText = [castText, `Cross-encoder: ${status}; ${ce.documentsSent || 0} document(s); ${ce.durationMs || 0}ms${ce.skippedReason ? `; ${ce.skippedReason}` : ''}${ce.error ? `; ${ce.error}` : ''}.`].filter(Boolean).join('\n');
+        castText = [castText, `Cross-encoder: ${status}; ${ce.documentsSent || 0} document(s); ${ce.durationMs || 0}ms${ce.continuityDownranked ? `; ${ce.continuityDownranked} resolved conflict(s) downranked after reranking` : ''}${ce.skippedReason ? `; ${ce.skippedReason}` : ''}${ce.error ? `; ${ce.error}` : ''}.`].filter(Boolean).join('\n');
     }
     if (debug.continuity?.length) castText = [castText, 'Continuity:', ...debug.continuity.map(e =>
         `  ${e.event_id}: closed threads [${e.closedThreads.join(', ')}]; downranked: ${e.downranked ? 'yes' : 'no'}; `

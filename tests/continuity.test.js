@@ -23,6 +23,16 @@ function fixture(threads = [0, 1]) {
 }
 
 describe('derived continuity', () => {
+    it('invalidates self closure when the archived result changes', () => {
+        const f = fixture();
+        f.conflict.result = 'Debt paid';
+        const digest = threadsDigest(f.conflict);
+        f.conflict.continuity = { v: 1, closed_threads: { threads: 'all', threads_digest: digest, status: 'active' } };
+        expect(getContinuityView(f.conflict, f.roster).fullyResolved).toBe(true);
+        f.conflict.result = 'Debt remains outstanding';
+        expect(threadsDigest(f.conflict)).not.toBe(digest);
+        expect(getContinuityView(f.conflict, f.roster).fullyResolved).toBe(false);
+    });
     it('unions incoming and local closure without changing the archive', () => {
         const f = fixture([0]);
         const original = JSON.stringify(f.conflict);
@@ -82,9 +92,35 @@ describe('derived continuity', () => {
         expect(issues.text).toContain('(1) Will the debt be paid?');
         expect(issues.text).not.toContain('(0)');
         expect(issues.refMap.get('I1')).toBe(f.conflict);
-        expect(selectOpenIssues({ roster: f.roster, windowStart: 5, text: 'Alex' }).text).toBe('(none)');
+        // Only this window's own records are excluded; positions are not a clock across chat files.
+        expect(selectOpenIssues({ roster: f.roster, windowStart: 8, windowEnd: 12, text: 'Alex' }).text).toBe('(none)');
         expect(selectOpenIssues({ roster: f.roster, windowStart: 50, text: 'Alexandra' }).text).toBe('(none)');
         expect(selectOpenIssues({ roster: f.roster, windowStart: 50, text: 'Alex', settings: { eventbase_open_issues_max: 0 } }).text).toBe('(none)');
+    });
+    it('orders open issues by story time, not message position, and ignores misdated outliers', () => {
+        const events = Array.from({ length: 12 }, (_, i) => ({ event_id: `e${i}`, summary: `Issue ${i}.`, event_type: 'relationship_change',
+            importance: 6, characters: ['Alex'], open_threads: [`Thread ${i}`], DateTime: `2000-05-${String(i + 1).padStart(2, '0')}T12:00:00Z`,
+            source_window_end: (i * 7919) % 1000 }));
+        events.push({ event_id: 'misdated', summary: 'Misdated.', event_type: 'relationship_change', importance: 6, characters: ['Alex'],
+            open_threads: ['Outlier'], DateTime: '2024-07-24T10:50:00Z', source_window_end: 999 });
+        const group = { name: 'Alex', aliases: [], eventIds: new Set(events.map(e => e.event_id)) };
+        const roster = { ready: true, events, groups: [group], resolvedBy: new Map() };
+        const issues = selectOpenIssues({ roster, windowStart: 6000, windowEnd: 6010, text: 'Alex', settings: { eventbase_open_issues_max: 3 } });
+        expect([...issues.refMap.values()].map(e => e.event_id)).toEqual(['e11', 'e10', 'e9']);
+        expect(issues.text).toContain('I1: [story time 2000-05-12T12:00:00Z, importance 6]');
+    });
+    it('rejects an extraction link whose resolution precedes the issue', () => {
+        const f = fixture();
+        const issue = { ...f.conflict, DateTime: '2000-08-16T09:00:00Z' };
+        const refMap = new Map([['I1', issue]]);
+        const resolves = [{ ref: 'I1', threads: [0], how: 'Alex stays.' }];
+        const warn = vi.fn();
+        expect(mapResolutionRefs(resolves, refMap, warn, { resolver: { DateTime: '2000-05-25T17:00:00Z' }, windowStart: 50 })).toBeUndefined();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('later than its resolution'));
+        expect(mapResolutionRefs(resolves, refMap, warn, { resolver: { DateTime: '2000-08-18T10:00:00Z' }, windowStart: 5 })).toBeDefined();
+        // Undated: the issue must sit before this window in the same conversation.
+        expect(mapResolutionRefs(resolves, new Map([['I1', f.conflict]]), warn, { resolver: {}, windowStart: 5 })).toBeUndefined();
+        expect(mapResolutionRefs(resolves, new Map([['I1', f.conflict]]), warn, { resolver: {}, windowStart: 50 })).toBeDefined();
     });
     it('validates and maps refs, dropping unknown and out-of-range threads without embedding changes', () => {
         const f = fixture();

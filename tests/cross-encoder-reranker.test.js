@@ -72,6 +72,21 @@ describe('cross-encoder reranker', () => {
         expect(result.events.map(e => e.event_id)).toEqual(['e1', 'e2', 'e0']);
     });
 
+    it('reapplies the resolved-conflict downrank to the reranked order on a batch-normalized scale', async () => {
+        const pool = [{ event_id: 'resolved', summary: 'old fight', _continuityDownranked: true },
+            { event_id: 'open', summary: 'nearby scene' }, { event_id: 'far', summary: 'unrelated' }];
+        // Raw logits, including negatives: multiplying them directly would raise a negative score.
+        fetch.mockResolvedValue({ ok: true, json: async () => [4.0, 3.8, -2.0] });
+        const downranked = await rerankEventCandidates(pool, 'query', settings);
+        expect(downranked.events.map(e => e.event_id)).toEqual(['open', 'resolved', 'far']);
+        expect(downranked.meta.continuityDownranked).toBe(1);
+        const disabled = await rerankEventCandidates(pool, 'query', { ...settings, eventbase_resolved_downrank: 1 });
+        expect(disabled.events.map(e => e.event_id)).toEqual(['resolved', 'open', 'far']);
+        const recall = await rerankEventCandidates(pool.map(e => ({ ...e, _continuityDownranked: false })), 'query', settings);
+        expect(recall.events.map(e => e.event_id)).toEqual(['resolved', 'open', 'far']);
+        expect(recall.meta.continuityDownranked).toBeUndefined();
+    });
+
     it('preserves omitted and empty-text events with correct explicit index mapping', async () => {
         fetch.mockResolvedValue({ ok: true, json: async () => ({ data: [{ document_index: 1, score: -3 }] }) });
         const pool = [events[0], { event_id: 'empty' }, events[1], events[2]];

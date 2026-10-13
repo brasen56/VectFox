@@ -92,6 +92,16 @@ describe('collection event index', () => {
     beforeEach(() => {
         for (const id of ['one', 'two', 'three']) invalidateCharacterIndex(id);
     });
+    it('retains duplicate metadata for repair but removes active copies from roster and cast evidence', async () => {
+        const copy = item('1', ['Kai'], { continuity: { v: 1, duplicate_of: { event_id: '2', status: 'active' } } });
+        const canonical = item('2', ['Kai']);
+        const entry = await ensureCharacterIndex('one', {}, async () => ({ listChunks: async () => ({ items: [copy, canonical] }) }));
+        expect(entry.events.size).toBe(2);
+        const roster = getCharacterRoster(['one']);
+        expect(roster.events.map(e => e.event_id)).toEqual(['2']);
+        expect(roster.groups[0].eventIds).toEqual(new Set(['2']));
+        expect(roster.duplicateIds).toEqual(new Set(['1']));
+    });
 
     it('handles capped pages, coalesces builds and routes prefixed IDs to a bare collection ID', async () => {
         const first = Array.from({ length: 500 }, (_, i) => item(String(i), ['Brennan']));

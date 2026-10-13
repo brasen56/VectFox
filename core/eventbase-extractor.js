@@ -311,8 +311,8 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
     const customPrompt = settings.eventbase_custom_prompt || '';
     const issueContextEnabled = extractionRoster.continuitySupported !== false && (!customPrompt.trim() || customPrompt.includes('{{openIssues}}'));
     const sceneText = messages.map(m => `${m.name || ''}: ${cleanText(String(m.mes || ''))}`).join('\n');
-    const openIssues = issueContextEnabled ? selectOpenIssues({ roster: extractionRoster, windowStart, text: sceneText, settings })
-        : { text: '(none)', refMap: new Map() };
+    const openIssues = issueContextEnabled ? selectOpenIssues({ roster: extractionRoster, windowStart, windowEnd, text: sceneText, settings })
+        : { text: '(none)', refMap: new Map(), range: null };
     log.lifecycle(`[EventBase] open-issue context: ${extractionRoster.continuitySupported === false
         ? 'unsupported (native Vectra does not store metadata)' : issueContextEnabled ? 'on' : 'off (custom prompt has no {{openIssues}})'}`);
     let basePrompt = buildExtractionPrompt(
@@ -425,7 +425,8 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         }
 
         // Attach ingestion metadata (event_id, source info, timestamps)
-        const continuity = mapResolutionRefs(event.resolves, openIssues.refMap, warning => log.warn(`[EventBase] ${warning}`));
+        const continuity = mapResolutionRefs(event.resolves, openIssues.refMap, warning => log.warn(`[EventBase] ${warning}`),
+            { resolver: event, windowStart, range: openIssues.range });
         delete event.resolves;
         if (continuity) event.continuity = continuity;
         const eventId = `eb_${Date.now()}_${windowStart}_${i}_${Math.random().toString(36).slice(2, 7)}`;

@@ -1,13 +1,21 @@
 /** Derived continuity only. Never rewrite archive fields or embedding text. */
 import { matchesSceneCharacter } from './scene-cast-matcher.js';
+import { plausibleStoryTimeRange, storyTimeMs, compareRecencyDesc } from './event-chronology.js';
 
 export const CONTINUITY_DEFAULTS = Object.freeze({ eventbase_resolved_downrank: 0.85, eventbase_open_issues_max: 6 });
 const INTERPERSONAL = new Set(['relationship_change', 'dialogue_significant', 'betrayal', 'promise_or_oath', 'character_state_change']);
 const summary = event => String(event.summary || event.text?.split('\n')[0]?.replace(/^\[[^\]]+\]\s*/, '') || '');
 
-/** Includes summary edits as well as thread edits; deterministic across sessions. */
+export function isActiveDuplicate(event, roster = null) {
+    if (roster?.duplicateIds?.has(event.event_id || event.metadata?.event_id)) return true;
+    const stored = roster?.eventById?.get(event.event_id || event.metadata?.event_id);
+    const continuity = stored?.continuity ?? event.continuity ?? event.metadata?.continuity;
+    return continuity?.v === 1 && continuity.duplicate_of?.status === 'active';
+}
+
+/** Includes the archived evidence used to judge closure; deterministic across sessions. */
 export function threadsDigest(event) {
-    const text = JSON.stringify([summary(event), event.open_threads || []]);
+    const text = JSON.stringify([summary(event), event.open_threads || [], event.result || '']);
     let hash = 2166136261;
     for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
     return (hash >>> 0).toString(36);
@@ -39,6 +47,7 @@ export function getContinuityView(event, rosterIndex = null) {
         if (!reason && rosterIndex && (!stored || (resolver && !(rosterIndex.eventById
             ? rosterIndex.eventById.has(resolver.event_id) : events.some(e => e.event_id === resolver.event_id))))) reason = 'ineligible_collection';
         if (!reason && link.threads_digest !== threadsDigest(target)) reason = 'digest_mismatch';
+        if (!reason && resolver && link.resolver_digest && link.resolver_digest !== threadsDigest(resolver)) reason = 'resolver_digest_mismatch';
         if (!reason && link.threads !== 'all' && (!Array.isArray(link.threads) || !link.threads.length
             || link.threads.some(i => !Number.isInteger(i) || i < 0 || i >= threads.length))) reason = 'invalid_threads';
         if (reason) { inactiveLinks.push({ event_id: resolver?.event_id || target.event_id, origin: link.origin, reason }); return; }
@@ -70,23 +79,34 @@ export function annotateContinuity(event, roster, settings = {}, recallPastEvent
     return { ...event, _continuityView: view, _resolvedDownrankEnabled: !recallPastEvent && resolvedDownrank(settings) < 1 };
 }
 
-/** Window-local refs. Original thread indices are retained after partial closure. */
-export function selectOpenIssues({ roster, windowStart, text, settings = {} }) {
+const overlapsWindow = (event, start, end) => {
+    const last = Number(event.source_window_end), first = Number.isFinite(Number(event.source_window_start)) ? Number(event.source_window_start) : last;
+    return Number.isFinite(last) && first <= end && last >= start;
+};
+
+/** Window-local refs. Original thread indices are retained after partial closure.
+ * Recency is story time (ingestion order when undated), not message position: a
+ * collection can mix sibling chat files and slimmed chats with different numbering.
+ * Only records from this same window are excluded; mapResolutionRefs rejects a
+ * resolution that precedes its issue. */
+export function selectOpenIssues({ roster, windowStart, windowEnd = windowStart, text, settings = {} }) {
     const refMap = new Map(), lines = [];
-    if (!roster?.ready) return { text: '(none)', refMap };
+    if (!roster?.ready) return { text: '(none)', refMap, range: null };
+    const range = plausibleStoryTimeRange(roster.events);
     const groups = roster.groups.filter(group => matchesSceneCharacter(group, text));
     const cap = Math.max(0, Math.floor(Number(settings.eventbase_open_issues_max ?? 6) || 0));
-    const candidates = roster.events.filter(e => e.source_window_end < windowStart
+    const candidates = roster.events.filter(e => !overlapsWindow(e, windowStart, windowEnd)
         && groups.some(g => g.eventIds.has(e.event_id)))
         .sort((a, b) => Number(INTERPERSONAL.has(b.event_type)) - Number(INTERPERSONAL.has(a.event_type))
-            || b.source_window_end - a.source_window_end);
+            || compareRecencyDesc(a, b, range));
     let cost = 0;
     for (const event of candidates) {
         if (refMap.size >= cap) break;
         const view = getContinuityView(event, roster);
         if (!view.remainingThreads.length) continue;
         const ref = `I${refMap.size + 1}`;
-        const line = `${ref}: [message ${event.source_window_end}, importance ${event.importance ?? 5}] ${summary(event).slice(0, 200)} | threads: ${(event.open_threads || []).map((t, i) => view.closedThreads.includes(i) ? '' : `(${i}) ${t}`).filter(Boolean).join(' ')}`;
+        const when = storyTimeMs(event, range) != null ? `story time ${event.DateTime}` : event.scene_time ? `scene time ${event.scene_time}` : `message ${event.source_window_end}`;
+        const line = `${ref}: [${when}, importance ${event.importance ?? 5}] ${summary(event).slice(0, 200)} | threads: ${(event.open_threads || []).map((t, i) => view.closedThreads.includes(i) ? '' : `(${i}) ${t}`).filter(Boolean).join(' ')}`;
         // Same conservative ASCII/CJK estimate as injection; roughly 600 tokens.
         const tokens = [...line].reduce((n, c) => n + (c.codePointAt(0) > 127 ? 1 : 0.25), 1);
         if (cost + tokens > 600) continue;
@@ -94,14 +114,23 @@ export function selectOpenIssues({ roster, windowStart, text, settings = {} }) {
         refMap.set(ref, event);
         lines.push(line);
     }
-    return { text: lines.join('\n') || '(none)', refMap };
+    return { text: lines.join('\n') || '(none)', refMap, range };
 }
 
-export function mapResolutionRefs(resolves, refMap, warn = () => {}) {
+/** A resolution cannot precede its issue: story time when both are dated, otherwise
+ * the issue's position must fall before this window (one conversation). */
+function precedes(issue, resolver, windowStart, range) {
+    const issueTime = storyTimeMs(issue, range), resolverTime = storyTimeMs(resolver, range);
+    if (issueTime != null && resolverTime != null) return issueTime <= resolverTime;
+    return windowStart == null || !(Number(issue.source_window_end) >= windowStart);
+}
+
+export function mapResolutionRefs(resolves, refMap, warn = () => {}, { resolver = null, windowStart = null, range = null } = {}) {
     const links = [];
     for (const resolution of resolves || []) {
         const target = refMap.get(resolution.ref);
         if (!target) { warn(`Unknown open-issue ref ${resolution.ref} — dropped`); continue; }
+        if (resolver && !precedes(target, resolver, windowStart, range)) { warn(`Open issue ${resolution.ref} is later than its resolution — dropped`); continue; }
         const threads = resolution.threads.filter(i => i < (target.open_threads || []).length);
         if (threads.length !== resolution.threads.length) warn(`Out-of-range threads for ${resolution.ref} — dropped`);
         if (!threads.length) continue;

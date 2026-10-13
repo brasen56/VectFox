@@ -8,7 +8,8 @@
  */
 
 import { resolveCastSetting } from './scene-cast-settings.js';
-import { getContinuityView, renderResolution } from './continuity.js';
+import { getContinuityView, renderResolution, isActiveDuplicate } from './continuity.js';
+import { castOrderKey, compareCastKeys, compareCastChronology } from './event-chronology.js';
 
 // ---------------------------------------------------------------------------
 // JSON format
@@ -314,30 +315,8 @@ function castTime(event) {
     return _formatStoryTime(event.DateTime) || event.scene_time || 'story time unknown';
 }
 
-// Unknown story times follow all dated events. Source positions are comparable
-// only within one frame, never across conversations. For coalesced events use
-// the lexically first collection as their canonical frame; untagged events share
-// the empty frame. This is a total ordering, not a pair-dependent date fallback.
-function castOrderKey(event) {
-    const time = event.DateTime ? Date.parse(event.DateTime) : NaN;
-    const frame = event._sortFrame ?? (event._collectionIds || []).reduce((first, id) =>
-        first === null || String(id) < first ? String(id) : first, null) ?? '';
-    return { time: Number.isFinite(time) ? time : Infinity, frame: String(frame),
-        position: Number.isFinite(event.source_window_end) ? event.source_window_end : Infinity,
-        id: String(event.event_id) };
-}
-
-function compareCastKeys(a, b) {
-    return (a.time === b.time ? 0 : a.time - b.time)
-        || a.frame.localeCompare(b.frame)
-        || (a.position === b.position ? 0 : a.position - b.position)
-        || a.id.localeCompare(b.id);
-}
-
-/** The cast lane's total chronological order, shared with NPC card input batching. */
-export function compareCastChronology(a, b) {
-    return compareCastKeys(castOrderKey(a), castOrderKey(b));
-}
+// The cast lane's chronology lives in event-chronology.js so continuity can share it.
+export { compareCastChronology };
 
 /** Earliest, latest, persistent/important, then farthest timeline gaps. */
 export function selectHistorySpine(events, budget, renderLine) {
@@ -413,7 +392,7 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
         return lines.get(e);
     };
     const histories = cast.map(entry => {
-        const events = roster.events.filter(e => entry.group.eventIds.has(e.event_id) && !mainIds.has(e.event_id)
+        const events = roster.events.filter(e => !isActiveDuplicate(e, roster) && entry.group.eventIds.has(e.event_id) && !mainIds.has(e.event_id)
             && !(depth > 0 && e._collectionIds?.some(id => currentCollectionIds.includes(id)) && (e.source_window_end ?? -1) >= chatLength - depth)
             && (e.summary || e.text));
         const orderLabel = events.some(e => !Number.isFinite(castOrderKey(e).time))

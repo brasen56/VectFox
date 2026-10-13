@@ -3,6 +3,7 @@
  */
 import { log } from './log.js';
 import { resolveCrossEncoderTimeoutMs, resolveCrossEncoderMaxDocuments } from './cross-encoder-settings.js';
+import { resolvedDownrank } from './continuity.js';
 
 const warnedFailures = new Set();
 
@@ -38,6 +39,19 @@ export function parseCrossEncoderResults(payload, count) {
     });
     if (!ranked.length) throw new Error('Reranker returned no results');
     return ranked.sort((a, b) => b.score - a.score);
+}
+
+/** Cross-encoder order replaces the weighted order, which carried the resolved-conflict
+ * factor; reapply it. Raw scores can be negative logits, so scale within the batch. */
+function applyResolvedDownrank(rankedEvents, factor, meta) {
+    const affected = rankedEvents.filter(event => event._continuityDownranked).length;
+    if (!affected || factor >= 1) return rankedEvents;
+    const scores = rankedEvents.map(event => event._crossEncoderScore);
+    const min = Math.min(...scores), max = Math.max(...scores);
+    meta.continuityDownranked = affected;
+    return rankedEvents.map((event, order) => ({ event, order,
+        score: (max > min ? (event._crossEncoderScore - min) / (max - min) : 1) * (event._continuityDownranked ? factor : 1) }))
+        .sort((a, b) => b.score - a.score || a.order - b.order).map(({ event }) => event);
 }
 
 function documentText(event) {
@@ -103,7 +117,8 @@ export async function rerankEventCandidates(events, query, settings = {}) {
         })();
         const ranked = await Promise.race([request, timeout]);
         const positions = new Set(ranked.map(row => candidates[row.index].position));
-        const ordered = ranked.map(row => ({ ...candidates[row.index].event, _crossEncoderScore: row.score }));
+        const ordered = applyResolvedDownrank(ranked.map(row => ({ ...candidates[row.index].event, _crossEncoderScore: row.score })),
+            resolvedDownrank(settings), meta);
         ordered.push(...events.filter((_, position) => !positions.has(position)));
         meta.used = true;
         meta.resultsReturned = ranked.length;

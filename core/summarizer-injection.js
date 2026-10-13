@@ -23,7 +23,7 @@ import { getWorldInfoSettings, getSortedEntries } from '../../../../world-info.j
 import { getBackend } from '../backends/backend-manager.js';
 import { getChatUUID } from './collection-ids.js';
 import { parseEmbedText } from './eventbase-schema.js';
-import { buildResolvedBy, getContinuityView, renderResolution } from './continuity.js';
+import { buildResolvedBy, getContinuityView, renderResolution, isActiveDuplicate } from './continuity.js';
 import { resolveActiveEventBaseCollection, getVectorizationTip } from './eventbase-store.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { log } from './log.js';
@@ -299,11 +299,11 @@ export async function buildSummarizerInjection(settings) {
         return { text: '', count: 0, reason: 'listchunks-error', error: err?.message, collectionId: active.collectionId, requested: n };
     }
 
-    const eligible = items.filter(it => it?.metadata?.eventbase === true).map(it => ({ ...parseEmbedText(it.text || ''), ...it.metadata,
+    const eligible = items.filter(it => it?.metadata?.eventbase === true && !isActiveDuplicate(it)).map(it => ({ ...parseEmbedText(it.text || ''), ...it.metadata,
         summary: it.metadata?.summary || parseEmbedText(it.text || '').summary }));
     const roster = { events: eligible, eventById: new Map(eligible.map(e => [e.event_id, e])), resolvedBy: buildResolvedBy(eligible) };
     const events = items
-        .filter(it => it?.metadata?.eventbase === true)
+        .filter(it => it?.metadata?.eventbase === true && !isActiveDuplicate(it))
         .sort((a, b) => (b.metadata.source_window_end ?? 0) - (a.metadata.source_window_end ?? 0))
         .slice(0, n);
     for (const item of events) item.metadata = { ...item.metadata,

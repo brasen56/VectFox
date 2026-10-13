@@ -28,7 +28,7 @@ export class GenerationQueueTimeoutError extends Error {
     }
 }
 
-/** One quota, with planner > extraction > background cards at dispatch time.
+/** One quota, with planner > extraction > background cards > repair at dispatch time.
  * In-flight calls are not preempted. Equal-priority work remains FIFO, and
  * requests do not hold the dispatch queue while awaiting their LLM response.
  * Background cards never take a window's last slot, and a request with a
@@ -43,7 +43,7 @@ export class GenerationRateLimiter {
 
     execute(fn, settings, label = '', { deadline = Infinity } = {}) {
         return new Promise((resolve, reject) => {
-            const priority = label === 'agent' ? 2 : label === 'npc-card' ? 0 : 1;
+            const priority = label === 'agent' ? 2 : label === 'repair' ? -1 : label === 'npc-card' ? 0 : 1;
             this.queue.push({ fn, settings, label, priority, deadline, queuedAt: Date.now(), resolve, reject });
             this.queue.sort((a, b) => b.priority - a.priority);
             this._drain();
@@ -70,7 +70,7 @@ export class GenerationRateLimiter {
                 this.timestamps = this.timestamps.filter(t => now - t < intervalMs);
                 // Leave the last slot for foreground work, so a planner that
                 // arrives just after a card does not wait a full interval.
-                const usable = request.priority === 0 && maxCalls > 1 ? maxCalls - 1 : maxCalls;
+                const usable = request.priority <= 0 && maxCalls > 1 ? maxCalls - 1 : maxCalls;
                 if (this.timestamps.length >= usable) {
                     const waitTime = this.timestamps[this.timestamps.length - usable] + intervalMs - now + 100;
                     // Also wake for the earliest deadline, so its caller hears back promptly.

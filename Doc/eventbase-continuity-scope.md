@@ -1,6 +1,6 @@
 # EventBase continuity: phased scope
 
-**Status:** Scope proposal, revision 1, 2026-10-12. Nothing is implemented yet.
+**Status:** Scope proposal, revision 1, 2026-10-12. Phases 0–2 are implemented; Phase 2 still needs live-collection precision and cost validation (see Validation below).
 **Responds to:** [eventbase-continuity-design.md](eventbase-continuity-design.md), the co-author's proposal. This document turns it into phases, and adds measurements taken from a real long-running collection.
 
 **Already decided:**
@@ -13,7 +13,7 @@
 |---|---|---|---|
 | 0 | Revised community notice | Gives users a mitigation that actually works today | None |
 | 1 | Shared continuity renderer for all routes, plus downranking of resolved conflicts, plus resolution-aware extraction | New events link to what they resolve, and every route shows outcomes | No extra calls; about 300–700 more input tokens per extraction call |
-| 2 | Repair of existing collections: resolution links, duplicate marking, manual "mark resolved" | Existing collections get links without being rebuilt | Bounded and resumable, with an estimate shown first (about 1.3–2M input tokens for the measured collection) |
+| 2 | Repair of existing collections: resolution links, duplicate marking, manual "mark resolved" | Existing collections get links without being rebuilt | Bounded and resumable, with an estimate shown first (about 1.5–2.2M input tokens for the measured collection) |
 | 3 | Slice-of-life extraction profile (opt-in) | Quiet continuity gets stored: routines, agreements, preferences | None beyond normal extraction |
 | 4 | Deferred design-doc items | Relationship state, episodes, cooldown, backfill | To be measured |
 
@@ -41,7 +41,7 @@ These numbers come from a read-only analysis of the primary maintainer's live co
 | 88% of events (4,864) carry `open_threads`, 9,649 threads in total. None are ever closed, and every route shows them as current. | The cheapest broad fix is rendering threads as "open at the time". Closing threads is the repair's job. |
 | `should_persist` is true on 96% of events. | The persistence weight is almost a constant. Lowering it barely changes ranking. The cast spine's "persistent or importance ≥ 7" stage admits nearly every event. |
 | About 200 (cosine ≥ 0.92) to 320 (≥ 0.90) events are re-extraction copies of a window already stored. Real paraphrased copies measure ≥ 0.91. About half of the copy pairs escape the retrieval dedup because their type or name spelling differs. | A cheap cleanup fits in the repair pass, which reads the same vectors anyway. Copies are not skewed toward conflicts (18% of copies vs 19% of all events), so this is a quality fix, not the cause of the conflict problem. Copies dropped to 2 in September and 9 in October, so the cause appears mostly fixed. |
-| Repair scope on this collection: every event with open threads is 4,864 events (about 1,216 calls, about 5.7M input tokens). Conflict-type events with open threads and importance ≥ 6 are 1,660 (about 415 calls, about 2.0M). The same with importance ≥ 7 is 1,094 (about 274 calls, about 1.3M). | The repair needs a selectable scope and an up-front estimate. The default should be conflicts-only. |
+| Repair scope on this collection: every event with open threads is 4,864 events (about 1,216 calls, about 5.7M input tokens). Measured at the time with three conflict types: 1,660 events at importance ≥ 6 (about 2.0M) and 1,094 at ≥ 7 (about 1.3M). The implemented scope uses five interpersonal types: see Phase 2A step 1 for its current numbers. | The repair needs a selectable scope and an up-front estimate. The default should be conflicts-only. |
 
 ## Data model: the `continuity` payload key
 
@@ -115,6 +115,7 @@ Release condition: a fixture conflict with an active link shows its outcome in d
 - In [eventbase-retrieval.js](../core/eventbase-retrieval.js), after `_finalScore` is computed on both paths (JS weighted sum and native formula, around lines 578–606) and before duplicate suppression: multiply by `eventbase_resolved_downrank`. Proposed default is 0.85. 1 turns it off.
 - The factor is multiplicative, so it behaves the same on the native path, where scores sit around 0.8–1.5, and on the JS path, where they sit around 0.2–0.6.
 - The native path returns an overfetched pool before the JS trim. Downranking only lowers scores, so that pool is enough.
+- **The cross-encoder replaces that order** (up to 50 documents, by its own score), so the factor is reapplied after reranking, in `rerankEventCandidates`. Raw cross-encoder scores can be negative logits, so they are min-max scaled within the batch first. The dry-run cross-encoder line reports how many resolved conflicts were downranked.
 - **Recall bypass (Agent Mode):**
   - The planner prompt gets an optional `recall_past_event: true` for messages that explicitly ask about a past event. This goes in the [prompts-i18n.js](../core/prompts-i18n.js) planner header, all language variants, with parsing in [agentic-retrieval.js](../core/agentic-retrieval.js).
   - When it is set, the factor is skipped for that turn.
@@ -127,10 +128,13 @@ Release condition: a fixture conflict with an active link shows its outcome in d
 **Placeholder.** Add `{{openIssues}}` to the built-in prompt for all six language variants. It sits next to `{{knownCharacters}}`, with a localized intro line in `getEventBaseExtractionPrompt` ([prompts-i18n.js:928](../core/prompts-i18n.js)). `buildExtractionPrompt` ([eventbase-schema.js:333](../core/eventbase-schema.js)) substitutes it. It renders "(none)" when the roster isn't ready or nothing qualifies.
 
 **Selection** (`selectOpenIssues` in `core/continuity.js`):
-- Draw from the target collection's roster events that come before the window (`source_window_end < windowStart`), still have open threads, and share an alias group with a character named in the window. Use the scene-cast matcher for that.
-- Prefer interpersonal types (`relationship_change`, `dialogue_significant`, `betrayal`, `promise_or_oath`, `character_state_change`), then the most recent.
+- Draw from the target collection's roster events that still have open threads and share an alias group with a character named in the window. Use the scene-cast matcher for that. Skip records from this same window.
+- Prefer interpersonal types (`relationship_change`, `dialogue_significant`, `betrayal`, `promise_or_oath`, `character_state_change`), then the most recent by story time. Undated events follow, by ingestion time.
+- **Message position is not a clock.** Revision 1 filtered on `source_window_end < windowStart`; that is withdrawn. In the measured collection, sibling chat files and a slimmed chat share one collection, and the newest events (Oct 11, story Aug 18) sit at message 719 while 1,160 older events sit above 3615. For events within three story days of each other, position gets the order wrong 21.5% of the time; ingestion time, 4%.
+- Story dates outside a robust range (quartiles ± max(3 × IQR, one year)) count as undated, so a misdated event (five events in the measured collection are dated 2024 in a 2000 story) can't stay "latest".
+- `mapResolutionRefs` rejects a link whose resolution precedes its issue: by story time when both are dated, otherwise the issue must sit before the window.
 - Cap the list with `eventbase_open_issues_max` (default 6), at about 600 tokens.
-- Each line: `I3: [message 6674, importance 7] Alex packs a suitcase… | threads: (0) Will Alex actually leave the loft? (1) …`.
+- Each line: `I3: [story time 2000-08-16T09:19:00Z, importance 7] Alex packs a suitcase… | threads: (0) Will Alex actually leave the loft? (1) …`. Undated events show scene time, or failing that the message number.
 - When the leads appear in every event, this becomes "most recent unresolved". That's acceptable, because the model decides.
 
 **Prompt rules.** Add a new rule after Rule 4, plus adjustments to the gates:
@@ -153,6 +157,21 @@ Release condition: a fixture conflict with an active link shows its outcome in d
 
 ## Phase 2: repair existing collections
 
+Implementation notes (2026-10-13): the EventBase tab now offers **Review and repair memory** with inventory/estimate, scopes, model override, durable proposals, paginated review, pause/resume/cancel, and run undo. Database-browser event details offer manual closure and incoming-link removal. Active duplicates are excluded from memory routes; nothing is purged or re-embedded.
+
+To make frozen scope resumable without storing thousands of IDs in settings, a version-1 run manifest lives in `continuity.repair_runs` on the lexically first event. While a run is pending it records the plan: target IDs, their digests, and offered candidate IDs. Settings contain only the run checkpoint. Do not delete that event while a run is pending. When a run completes or is cancelled, its manifest is compacted to its identity (run, model, endpoint, created, status), so plans never accumulate in one payload.
+
+Revision 2 changes (2026-10-13):
+- **Repeat runs.** A completed or cancelled run blocks a new start only while its proposals await review. Undo takes a run ID, so earlier runs can be undone from the panel's run selector.
+- **Failing batches.** A batch whose paid response is unusable (truncated or malformed) twice is skipped and recorded in the checkpoint's `skipped` list, instead of blocking the run and being re-billed on every resume. A pause while a call is queued ends as a pause, not an error.
+- **Scope.** Conflicts whose threads are all closed (extraction links, earlier runs, manual marks) are not judged again. The judge sees only the remaining threads, labelled `(index) text`.
+- **Prompt.** Short per-batch refs (`C1`, `R1`), with candidates shared between conflicts listed once. Story time instead of message numbers. Copied event IDs are still accepted.
+- **Chronology.** "Later" and the look-ahead use story time when both events are dated (7 story days), otherwise message position (300 messages). A sorted index limits each conflict's scan to that window. On the measured collection the default plan builds in about 3 seconds instead of 14, with identical candidates.
+- **Duplicates only (no LLM)** is a scope of its own.
+- **Memory.** Stored vectors are kept as `Float32Array`. Undo removes the manifest and annotations for that run. Previously occupied singleton closure/duplicate fields are never overwritten by repair, so undo preserves earlier annotations. When undo leaves no annotations, the payload key is reset to `null` (set-payload cannot remove the key); this is semantically equivalent to absent continuity. Manual Unmark restores any closure displaced by a user mark.
+
+Pause/cancel are cooperative: the in-flight batch can finish and persist before stopping; queued calls check the pause flag before contacting the provider. A cross-tab warning is advisory, not a database lock. Use only one writer. Calls/tokens are recorded in checkpoints; token estimates are conservative approximations, not dollar-price quotes. The existing export inventory limit is 50,000 chunks; incomplete vector inventories fail closed. Duplicate selection avoids hiding events that own or receive continuity links, and uses direct canonical comparisons rather than transitive similarity clusters.
+
 All repair runs from an EventBase-tab action, "Review and repair memory". It is for one collection at a time and needs a backend that can write metadata.
 
 ### 2A. Resolution links
@@ -161,9 +180,9 @@ All repair runs from an EventBase-tab action, "Review and repair memory". It is 
    - **Conflicts only (default).** Interpersonal types, with open threads, at importance ≥ 6. The importance floor is adjustable. This filter doesn't depend on story language.
    - **Every event with open threads.**
    - Either scope can be narrowed to a character pair or a message range.
-   - For the measured collection the default scope is 1,660 events, about 415 calls and about 2.0M input tokens.
+   - For the measured collection the default scope (five interpersonal types, importance ≥ 6) is 2,364 events, about 591 calls and about 2.2M input tokens with the revision 2 prompt. At importance ≥ 7 it is 1,575 events, about 394 calls and about 1.5M.
 2. **Inventory.** Use the roster index, which already lists every event, with the Phase 1A fields. Fetch the stored vectors once through the export path's `fetchChunksWithVectors` ([collection-export.js](../core/collection-export.js)). That avoids embedding calls; 5,500 vectors of 1,024 dimensions is about 22MB. Freeze the scope as a set of event IDs.
-3. **Candidates (no LLM).** For each conflict, take later events in timeline order within the same collection and a look-ahead of 300 messages. Keep those that share a character group and have similarity ≥ 0.6, and take the top 5.
+3. **Candidates (no LLM).** For each conflict, take later events within the same collection and the look-ahead: 7 story days when both events are dated, otherwise 300 messages. Keep those that share a character group and have similarity ≥ 0.6, and take the top 5.
 4. **Judge.** Batch 4 conflicts per call, each with up to 5 candidates (summary, result, threads). For each conflict the model returns either the resolving refs plus the threads closed and a short `how`, or `self_closed` when the conflict's own result already settles it, or nothing. Refs are validated against the offered set.
 5. **Store proposals.** Each batch writes its proposals right away as `status: "proposed"` with the run ID. Qdrant is the durable store, so the repair can resume. Settings hold only a small checkpoint: `eventbase_continuity_repair[collectionId] = { run, cursor, counts, model }`.
 6. **Preview.** A paginated list showing both summaries, filterable by character, with accept or reject per link and "accept all".
@@ -263,7 +282,7 @@ Release condition: an interrupted repair resumes without duplicating proposals, 
 2. **Judge precision.** The judge works from summaries, which can overstate. Mitigations: preview, closing individual threads, visibility in the dry-run, undo, and the manual controls.
 3. **No compare-and-set on payload writes.** Two sessions writing the same event means the last write wins. The repair UI should warn when a second tab has the repair open.
 4. **Export.** Single-collection export spreads the full metadata and keeps `continuity`. Multi-collection export maps a fixed list of fields ([collection-export.js:280](../core/collection-export.js)) and drops `continuity`. It seems to drop other EventBase fields as well, which is worth checking separately.
-5. **Defaults to settle:** downrank factor 0.85, the open-issues cap of 6, the 300-message look-ahead, similarity ≥ 0.6 for candidates, and ≥ 0.92 for duplicates. Tune each with dry-runs on the measured collection once Phase 2 has produced links.
+5. **Defaults to settle:** downrank factor 0.85, the open-issues cap of 6, the look-ahead (7 story days, or 300 messages when undated), similarity ≥ 0.6 for candidates, and ≥ 0.92 for duplicates. Tune each with dry-runs on the measured collection once Phase 2 has produced links.
 
 **Decisions for the co-author:**
 1. Downrank default factor (0.85 proposed), and whether resolved events skip the spine's importance stage by default.

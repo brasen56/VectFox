@@ -57,6 +57,14 @@ beforeEach(() => {
 });
 
 describe('runSummarizerInjection', () => {
+    it('skips active duplicates before the recent-event cap but retains proposed copies', async () => {
+        const copy = ev(50, '[discovery] Active copy', { event_id: 'copy', continuity: { v: 1, duplicate_of: { event_id: 'canonical', status: 'active' } } });
+        const proposed = ev(40, '[discovery] Proposed copy', { event_id: 'proposed', continuity: { v: 1, duplicate_of: { event_id: 'canonical', status: 'proposed' } } });
+        mocks.listChunks.mockResolvedValue({ items: [copy, proposed, ev(10, '[discovery] Canonical')] });
+        await runSummarizerInjection(SETTINGS({ summarizer_injection_count: 1 }));
+        expect(lastInjected()[1]).toContain('Proposed copy');
+        expect(lastInjected()[1]).not.toContain('Active copy');
+    });
     it.each([true, false])('includes linked outcome in fullDetail=%s without resurrecting closed threads', async fullDetail => {
         const conflict = ev(10, '[relationship_change] Alex threatens to leave.', { event_id: 'conflict', open_threads: ['Stay?', 'Debt?'] });
         const target = { ...conflict.metadata, summary: 'Alex threatens to leave.' };

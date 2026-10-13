@@ -969,6 +969,13 @@ function renderDetailPanel() {
     `);
 
     bindDetailEvents();
+    if (chunk.metadata?.event_id) {
+        const continuityHost = $('<div>').appendTo(panel);
+        import('./continuity-controls.js').then(({ mountContinuityControls }) =>
+            mountContinuityControls(continuityHost, currentCollectionId, chunk.metadata.event_id, currentSettings,
+                continuity => { chunk.metadata.continuity = continuity; }))
+            .catch(error => continuityHost.text(`Continuity unavailable: ${error.message}`));
+    }
 }
 
 function formatConditionRule(rule) {

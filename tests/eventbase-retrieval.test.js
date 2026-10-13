@@ -98,6 +98,13 @@ beforeEach(() => {
 });
 
 describe('retrieveEvents', () => {
+    it.each([false, true])('skips active duplicates after native=%s query even when only the roster knows the marking', async native => {
+        const copy = makeEvent(1, { _rerankApplied: native });
+        const proposed = makeEvent(2, { continuity: { v: 1, duplicate_of: { event_id: 'canonical', status: 'proposed' } } });
+        const result = await retrieveEvents({ searchText: 'scene', keywordQuery: '', chatLength: 100, skipLiveQuery: true,
+            additionalCandidates: [copy, proposed], settings: baseSettings, continuityRoster: { events: [], duplicateIds: new Set([copy.event_id]) } });
+        expect(result.events.map(e => e.event_id)).toEqual([proposed.event_id]);
+    });
     it.each([false, true])('applies resolved factor once on scoring path native=%s, with recall and partial exemptions', async native => {
         const conflict = makeEvent(1, { open_threads: ['Stay?', 'Debt?'], _rerankApplied: native });
         const resolver = makeEvent(2, { continuity: { v: 1, resolves: [{ event_id: conflict.event_id,
