@@ -1342,12 +1342,19 @@ export function renderSettings(containerId, settings, callbacks) {
                                 <small class="VectFox_hint">Full prompt sent to the LLM for each window. Use <code>{{text}}</code> where the excerpt goes, <code>{{maxCount}}</code> for the event cap, and <code>{{knownCharacters}}</code> for the bounded roster with grouped aliases. Custom prompts without that placeholder are unchanged. Leave empty to use the built-in default.</small>
                                 <div style="display:flex; gap:6px; width:100%; margin-bottom:4px;">
                                     <button id="VectFox_eventbase_prompt_reset" class="vectfox-action-btn vectfox-btn-secondary" style="font-size:11px; padding:3px 10px;">Reset to Default</button>
+                                    <button id="VectFox_eventbase_prompt_compare" class="vectfox-action-btn vectfox-btn-secondary" style="font-size:11px; padding:3px 10px;">Compare Current Default</button>
                                 </div>
                                 <textarea id="VectFox_eventbase_custom_prompt"
                                     class="vectfox-input"
                                     rows="12"
                                     style="width:100%; font-family:monospace; font-size:11px; resize:vertical;"
                                     placeholder="Leave empty to use the built-in default prompt…"></textarea>
+                                <small id="VectFox_eventbase_continuity_status" class="VectFox_hint"></small>
+                                <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                                    <label>Resolved score factor <input id="VectFox_eventbase_resolved_downrank" type="number" min="0" max="1" step="0.05" class="vectfox-input" style="width:80px;" /></label>
+                                    <label>Open issues per window <input id="VectFox_eventbase_open_issues_max" type="number" min="0" max="20" step="1" class="vectfox-input" style="width:80px;" /></label>
+                                </div>
+                                <small class="VectFox_hint">Use {{openIssues}} for resolution-aware extraction. Factor 1 disables resolved downranking. Existing collections need resolution links before ranking changes.</small>
                             </div>
 
                         </div>
@@ -4721,12 +4728,42 @@ function bindSettingsEvents(settings, callbacks) {
         Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
     });
+    const updateContinuityStatus = async () => {
+        const { checkPluginAvailable } = await import('../core/collection-loader.js');
+        const supported = settings.vector_backend === 'qdrant' || await checkPluginAvailable();
+        const custom = settings.eventbase_custom_prompt || '';
+        $('#VectFox_eventbase_continuity_status').text(!supported ? 'Continuity unsupported: native Vectra does not store metadata.'
+            : custom.trim() && !custom.includes('{{openIssues}}') ? 'Open-issue context: off (custom prompt has no {{openIssues}}).' : 'Open-issue context: on.');
+    };
+    updateContinuityStatus();
+    $('#VectFox_eventbase_custom_prompt').on('input.continuity', updateContinuityStatus);
+    $('#VectFox_vector_backend').on('change.continuity', updateContinuityStatus);
+    for (const [key, fallback, maximum] of [['eventbase_resolved_downrank', 0.85, 1], ['eventbase_open_issues_max', 6, 20]]) {
+        $(`#VectFox_${key}`).val(settings[key] ?? fallback).on('change', function() {
+            const value = Number($(this).val());
+            settings[key] = Number.isFinite(value) ? Math.max(0, Math.min(maximum, key === 'eventbase_open_issues_max' ? Math.floor(value) : value)) : fallback;
+            $(this).val(settings[key]);
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+    }
+    $('#VectFox_eventbase_prompt_compare').on('click', async () => {
+        const { callGenericPopup, POPUP_TYPE } = await import('../../../../popup.js');
+        const { getEventBaseExtractionPrompt } = await import('../core/prompts-i18n.js');
+        const panel = $('<div>').append($('<p>').text('Your saved prompt is unchanged. Compare it with the current built-in default below.'));
+        for (const [label, value] of [['Current prompt', settings.eventbase_custom_prompt || getEventBaseExtractionPrompt(settings.cjk_tokenizer_mode)],
+            ['Current default', getEventBaseExtractionPrompt(settings.cjk_tokenizer_mode)]]) {
+            panel.append($('<h4>').text(label), $('<textarea readonly rows="12" style="width:100%;">').val(value));
+        }
+        await callGenericPopup(panel, POPUP_TYPE.TEXT);
+    });
 
     // Reset prompt to built-in default for the current CJK Tokenizer Mode.
     $('#VectFox_eventbase_prompt_reset').on('click', async function() {
         const { getEventBaseExtractionPrompt } = await import('../core/prompts-i18n.js');
         const mode = settings.cjk_tokenizer_mode || 'intl';
         settings.eventbase_custom_prompt = '';
+        updateContinuityStatus();
         $('#VectFox_eventbase_custom_prompt').val(getEventBaseExtractionPrompt(mode));
         Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();

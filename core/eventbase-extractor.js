@@ -27,6 +27,7 @@ import { cleanText } from './text-cleaning.js';
 import StringUtils from '../utils/string-utils.js';
 import { log } from './log.js';
 import { getCharacterRoster, renderKnownCharacters } from './character-roster.js';
+import { selectOpenIssues, mapResolutionRefs } from './continuity.js';
 
 // Cap each message's reasoning (chain-of-thought) fed to the extractor as a
 // date/time/location fallback. Tunable — raise if a game places the scene recap
@@ -306,12 +307,21 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
     // Detect dominant script BEFORE building prompt so we can inject an explicit language hint
     const excerptScript = _detectScript(excerptText);
     const languageHint = _inferLanguageHint(excerptText);
+    const extractionRoster = getCharacterRoster(collectionIds.slice(0, 1), settings);
+    const customPrompt = settings.eventbase_custom_prompt || '';
+    const issueContextEnabled = extractionRoster.continuitySupported !== false && (!customPrompt.trim() || customPrompt.includes('{{openIssues}}'));
+    const sceneText = messages.map(m => `${m.name || ''}: ${cleanText(String(m.mes || ''))}`).join('\n');
+    const openIssues = issueContextEnabled ? selectOpenIssues({ roster: extractionRoster, windowStart, text: sceneText, settings })
+        : { text: '(none)', refMap: new Map() };
+    log.lifecycle(`[EventBase] open-issue context: ${extractionRoster.continuitySupported === false
+        ? 'unsupported (native Vectra does not store metadata)' : issueContextEnabled ? 'on' : 'off (custom prompt has no {{openIssues}})'}`);
     let basePrompt = buildExtractionPrompt(
         excerptText,
         maxCount,
         settings.eventbase_custom_prompt || '',
         settings.cjk_tokenizer_mode || 'intl',
         renderKnownCharacters(getCharacterRoster(collectionIds, settings), settings),
+        openIssues.text,
     );
     if (languageHint) {
         basePrompt = `DETECTED EXCERPT LANGUAGE: ${languageHint}. You MUST write ALL string fields in that language — no exceptions.\n\n${basePrompt}`;
@@ -415,6 +425,9 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         }
 
         // Attach ingestion metadata (event_id, source info, timestamps)
+        const continuity = mapResolutionRefs(event.resolves, openIssues.refMap, warning => log.warn(`[EventBase] ${warning}`));
+        delete event.resolves;
+        if (continuity) event.continuity = continuity;
         const eventId = `eb_${Date.now()}_${windowStart}_${i}_${Math.random().toString(36).slice(2, 7)}`;
         const sourceHashes = messages.map(m => {
             // Use the message's hash if stored, otherwise hash the text

@@ -486,7 +486,8 @@ const _PLANNER_PROMPTS = {
  * @returns {string}
  */
 export function getAgenticPlannerPrompt(mode) {
-    return _PLANNER_PROMPTS[mode] ?? _PLANNER_PROMPTS.intl;
+    return (_PLANNER_PROMPTS[mode] ?? _PLANNER_PROMPTS.intl)
+        + '\nOptional JSON field: "recall_past_event": true only when the user explicitly asks to recall a past event. Otherwise omit it or use false. Resolved candidates remain valid historical evidence, not current concerns.';
 }
 
 
@@ -934,7 +935,22 @@ export function getEventBaseExtractionPrompt(mode) {
         korean: '알려진 인물(괄호 안 별칭은 동일 인물). 발췌문이 뒷받침할 때 이 이름을 사용하고 목록에서 사건을 지어내지 마세요:',
         others: 'Known characters (aliases in parentheses refer to the same person). Prefer these names when supported by the excerpt; do not invent events from this list:',
     };
-    return `${rosterInstructions[mode] ?? rosterInstructions.intl}\n{{knownCharacters}}\n\n${_EXTRACTION_PROMPTS[mode] ?? _EXTRACTION_PROMPTS.intl}`;
+    const issueIntro = {
+        intl: 'Earlier open issues (context only; cite only these refs):',
+        jieba: '先前未解决的问题（仅作背景；只引用列出的编号）：',
+        jieba_tw: '先前未解決的問題（僅作背景；只引用列出的編號）：',
+        tiny_segmenter: '以前の未解決事項（背景情報のみ。この参照番号のみ引用）：',
+        korean: '이전 미해결 문제(맥락 전용; 나열된 참조만 인용):',
+        others: 'Earlier open issues (context only; cite only these refs):',
+    };
+    const rules = `5. RESOLUTION OF LISTED ISSUES:
+   - If the excerpt clearly settles, answers, or reverses a listed open issue, add optional resolves: [{"ref":"I3","threads":[0],"how":"short outcome"}] to the event that does so. Cite only listed refs and original integer thread indices, naming only threads actually settled. Keep how under 200 characters, in the excerpt's language.
+   - Affection, time passing or a calm scene is NOT a resolution unless the excerpt shows the issue was addressed. A planned reconciliation in a reasoning block is NOT a resolution; retain Rule 4.
+   - Gate 1 exception: an event that resolves a listed issue passes Gate 1, even when reconciliation returns the story to an earlier state.
+   - Importance: score a resolution within 1 of the listed issue it closes.
+   - If the same excerpt contains both conflict and outcome, extract one event with the outcome in result and keep only questions still open in open_threads.\n`;
+    const base = _EXTRACTION_PROMPTS[mode] ?? _EXTRACTION_PROMPTS.intl;
+    return `${rosterInstructions[mode] ?? rosterInstructions.intl}\n{{knownCharacters}}\n\n${issueIntro[mode] ?? issueIntro.intl}\n{{openIssues}}\n\n${base.replace('=========================\nOUTPUT SCHEMA', `${rules}\n=========================\nOUTPUT SCHEMA`)}`;
 }
 
 
@@ -1009,5 +1025,5 @@ function _formatCandidateLine(ev, idx) {
         `importance: ${importance}`,
     ].filter(Boolean).join(' | ');
 
-    return `  E${idx} [${score}] ${type} — ${text}\n      ${meta}`;
+    return `  E${idx} [${score}] ${ev._continuityView?.fullyResolved ? '[resolved] ' : ''}${type} — ${text}\n      ${meta}`;
 }

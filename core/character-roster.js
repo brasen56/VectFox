@@ -1,6 +1,7 @@
 /** Session-local EventBase index. Stored events are never rewritten. */
 import { parseEmbedText } from './eventbase-schema.js';
 import { log } from './log.js';
+import { buildResolvedBy } from './continuity.js';
 
 export const CHARACTER_ROSTER_DEFAULTS = Object.freeze({
     eventbase_lead_share_threshold: 0.25,
@@ -47,6 +48,9 @@ function slimEvent(item) {
         should_persist: event.should_persist,
         event_type: event.event_type,
         source_window_end: event.source_window_end,
+        open_threads: Array.isArray(event.open_threads) ? [...event.open_threads] : [],
+        continuity: event.continuity,
+        timeline_sort_key: event.timeline_sort_key,
         characters: Array.isArray(event.characters)
             ? [...new Set(event.characters.filter(n => typeof n === 'string' && n.trim()).map(n => n.trim()))] : [],
     };
@@ -70,6 +74,7 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null)
                 const resolved = resolveBackendForCollection(collectionId);
                 backend = resolved.backend ? await getBackendForCollection(resolved.backend, settings) : await getBackend(settings);
             }
+            entry.continuitySupported = backend.pluginAvailable !== false;
             let revision = entry.revision;
             for (let offset = 0; ; ) {
                 const result = await backend.listChunks(id, settings, { offset, limit: LIST_LIMIT });
@@ -101,6 +106,7 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null)
                 if (event) entry.events.set(event.event_id, event);
             }
             entry.mutations.clear();
+            entry.resolvedBy = buildResolvedBy(entry.events.values());
             entry.ready = true;
             return entry;
         } catch (err) {
@@ -129,6 +135,7 @@ export function upsertCharacterEvents(collectionId, items) {
         for (const [key, old] of entry.events) if (old.hash === item.hash) entry.events.delete(key);
         entry.events.set(event.event_id, event);
     }
+    entry.resolvedBy = buildResolvedBy(entry.events.values());
 }
 
 export function pruneCharacterEvents(collectionId, hashes) {
@@ -140,6 +147,7 @@ export function pruneCharacterEvents(collectionId, hashes) {
         entry.revision++;
     }
     for (const [key, event] of entry.events) if (removed.has(event.hash)) entry.events.delete(key);
+    entry.resolvedBy = buildResolvedBy(entry.events.values());
 }
 
 /** Overrides are explicit groups, including singleton groups to prevent auto-merging. */
@@ -235,9 +243,11 @@ export function getCharacterRoster(collectionIds, settings = {}) {
     const rosterEvents = [];
     const overrides = [];
     const pendingCollections = [];
+    const unsupportedCollections = [];
     for (const id of new Set(collectionIds.map(rosterCollectionId))) {
         const entry = indexes.get(id);
         if (!entry?.ready) { pendingCollections.push(id); continue; }
+        if (entry.continuitySupported === false) unsupportedCollections.push(id);
         const ignored = new Set(getIgnoredCharacterTags(id, settings));
         for (const event of entry.events.values()) {
             if (!events.has(event.event_id)) events.set(event.event_id, { ...event, _collectionIds: [] });
@@ -249,7 +259,9 @@ export function getCharacterRoster(collectionIds, settings = {}) {
         }
         overrides.push(...(settings.eventbase_character_alias_overrides?.[id] || []));
     }
-    return { ...buildCharacterRoster(rosterEvents, overrides, settings), events: [...events.values()], pendingCollections, ready: pendingCollections.length === 0 };
+    return { ...buildCharacterRoster(rosterEvents, overrides, settings), events: [...events.values()], eventById: events,
+        resolvedBy: buildResolvedBy(events.values()), pendingCollections, unsupportedCollections,
+        continuitySupported: unsupportedCollections.length === 0, ready: pendingCollections.length === 0 };
 }
 
 export function renderKnownCharacters(roster, settings = {}) {

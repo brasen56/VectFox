@@ -22,6 +22,8 @@ import { getContext } from '../../../../extensions.js';
 import { getWorldInfoSettings, getSortedEntries } from '../../../../world-info.js';
 import { getBackend } from '../backends/backend-manager.js';
 import { getChatUUID } from './collection-ids.js';
+import { parseEmbedText } from './eventbase-schema.js';
+import { buildResolvedBy, getContinuityView, renderResolution } from './continuity.js';
 import { resolveActiveEventBaseCollection, getVectorizationTip } from './eventbase-store.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { log } from './log.js';
@@ -297,10 +299,16 @@ export async function buildSummarizerInjection(settings) {
         return { text: '', count: 0, reason: 'listchunks-error', error: err?.message, collectionId: active.collectionId, requested: n };
     }
 
+    const eligible = items.filter(it => it?.metadata?.eventbase === true).map(it => ({ ...parseEmbedText(it.text || ''), ...it.metadata,
+        summary: it.metadata?.summary || parseEmbedText(it.text || '').summary }));
+    const roster = { events: eligible, eventById: new Map(eligible.map(e => [e.event_id, e])), resolvedBy: buildResolvedBy(eligible) };
     const events = items
         .filter(it => it?.metadata?.eventbase === true)
         .sort((a, b) => (b.metadata.source_window_end ?? 0) - (a.metadata.source_window_end ?? 0))
         .slice(0, n);
+    for (const item of events) item.metadata = { ...item.metadata,
+        _continuityView: getContinuityView({ ...parseEmbedText(item.text || ''), ...item.metadata,
+            summary: item.metadata.summary || parseEmbedText(item.text || '').summary }, roster) };
 
     if (!events.length) return { text: '', count: 0, reason: 'no-events', collectionId: active.collectionId, requested: n };
 
@@ -348,6 +356,8 @@ function _format(events, fullDetail = false, maxChars = 0) {
         const r = rankByEvent.get(evt);
         const label = r === 1 ? 'latest turn' : `${r} turns ago`;
         const blockLines = [`(${label}) ${summary}`];
+        const resolution = renderResolution(evt.metadata?._continuityView || getContinuityView(evt.metadata || {}));
+        if (resolution) blockLines.push(`  resolution: ${resolution}`);
         if (fullDetail) {
             for (const d of _detailLines(evt.metadata || {})) blockLines.push(`  ${d}`);
         }
@@ -388,7 +398,8 @@ function _detailLines(meta) {
     }
     if (arr(meta.concepts).length) out.push(`Concepts: ${arr(meta.concepts).join(', ')}`);
     if (arr(meta.keywords).length) out.push(`Keywords: ${arr(meta.keywords).join(', ')}`);
-    if (arr(meta.open_threads).length) out.push(`Open threads: ${arr(meta.open_threads).join(', ')}`);
+    const view = meta._continuityView || getContinuityView(meta);
+    if (view.remainingThreads.length) out.push(`open_threads_at_the_time: ${view.remainingThreads.join(', ')}`);
     if (meta.source_window_end != null) out.push(`Message index: ${meta.source_window_end}`);
     return out;
 }

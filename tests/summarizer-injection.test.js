@@ -8,7 +8,8 @@
  * All host/sibling modules are mocked (same pattern as backend-manager.test.js).
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { threadsDigest } from '../core/continuity.js';
 
 // vi.hoisted lifts these so the (also-hoisted) vi.mock factories can reference them.
 const mocks = vi.hoisted(() => ({
@@ -56,6 +57,18 @@ beforeEach(() => {
 });
 
 describe('runSummarizerInjection', () => {
+    it.each([true, false])('includes linked outcome in fullDetail=%s without resurrecting closed threads', async fullDetail => {
+        const conflict = ev(10, '[relationship_change] Alex threatens to leave.', { event_id: 'conflict', open_threads: ['Stay?', 'Debt?'] });
+        const target = { ...conflict.metadata, summary: 'Alex threatens to leave.' };
+        const resolver = ev(40, '[relationship_change] Alex stays.', { event_id: 'resolver', continuity: { v: 1, resolves: [
+            { event_id: 'conflict', threads: [0], threads_digest: threadsDigest(target), how: 'Alex stays.', origin: 'extraction', status: 'active' },
+        ] } });
+        mocks.listChunks.mockResolvedValue({ items: [conflict, resolver] });
+        await runSummarizerInjection(SETTINGS({ summarizer_injection_count: 2, summarizer_injection_full_detail: fullDetail }));
+        expect(lastInjected()[1]).toContain('resolution: Alex stays. (message 40)');
+        expect(lastInjected()[1]).not.toContain('Stay?');
+        if (fullDetail) expect(lastInjected()[1]).toContain('open_threads_at_the_time: Debt?');
+    });
     it('clears the slot and no-ops when disabled', async () => {
         const r = await runSummarizerInjection(SETTINGS({ summarizer_injection_enabled: false }));
         expect(r.injected).toBe(0);
@@ -215,7 +228,7 @@ describe('buildSummarizerInjection (Debug Summarizer preview path)', () => {
             '  When: 2026-01-02T03:04:00.000Z',
             '  Concepts: accord',
             '  Keywords: pact, accord',
-            '  Open threads: who funds it?',
+            '  open_threads_at_the_time: who funds it?',
             '  Message index: 8',
             '</VectFoxSummarizer>',
         ].join('\n'));

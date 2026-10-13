@@ -20,6 +20,7 @@ import { parseEmbedText } from './eventbase-schema.js';
 import { checkPluginAvailable } from './collection-loader.js';
 import { buildStoryRecencyCtx, storyRecencyBonus } from './story-time.js';
 import { log } from './log.js';
+import { annotateContinuity, resolvedDownrank } from './continuity.js';
 import { createCandidateOutcomes, recordCandidateOutcome } from './eventbase-retrieval-debug.js';
 import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
 import { rerankEventCandidates } from './cross-encoder-reranker.js';
@@ -370,7 +371,7 @@ function _tagFrame(events, frame) {
     return events.map(e => (e && typeof e === 'object') ? { ...e, _sortFrame: frame } : e);
 }
 
-export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false, skipCrossEncoder = false, recentMessageTexts }) {
+export async function retrieveEvents({ searchText, keywordQuery, chatLength, settings, liveCollectionIds, additionalCandidates, skipLiveQuery, skipContextDedup = false, skipCrossEncoder = false, recentMessageTexts, continuityRoster = null, recallPastEvent = false }) {
     const topK = resolveEventBaseOverfetch(settings);
     const minImportance = settings.eventbase_retrieval_min_importance || 1;
 
@@ -608,6 +609,12 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
         return { ...meta, _finalScore: finalScore };
     });
 
+    for (let i = 0; i < scored.length; i++) {
+        scored[i] = annotateContinuity(scored[i], continuityRoster, settings, recallPastEvent);
+        const event = scored[i];
+        event._continuityDownranked = event._resolvedDownrankEnabled && event._continuityView.fullyResolved;
+        if (event._continuityDownranked) event._finalScore *= resolvedDownrank(settings);
+    }
     scored.sort((a, b) => b._finalScore - a._finalScore);
 
     // 5. Duplicate suppression — same event_type + character overlap >= 60%

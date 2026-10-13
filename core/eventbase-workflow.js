@@ -30,6 +30,7 @@ import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
 import { eventDebugKey } from './eventbase-retrieval-debug.js';
 import { getCharacterRoster } from './character-roster.js';
+import { getContinuityView } from './continuity.js';
 import { detectSceneCast } from './scene-cast.js';
 import { resolveCastSetting } from './scene-cast-settings.js';
 import { isCollectionEnabled, isCollectionActiveForContextAnyKey, setCollectionLock, setCollectionMeta } from './collection-metadata.js';
@@ -1275,7 +1276,9 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         .slice(0, 4)
         .map(m => m.mes);
 
+    const continuityRoster = getCharacterRoster([...lockedLiveCollections, ...archiveCollections].map(c => c.collectionId), settings);
     const { events, debug } = await retrieveFn({
+        continuityRoster,
         searchText: effectiveSearchText,
         keywordQuery,
         // EventBase source_window_end is stamped in InlineSummary-expanded
@@ -1299,7 +1302,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
 
     // Return diagnostics even when every candidate was cut.
     const dryRunDebug = { candidateOutcomes: {}, plannerQuerySummary: [], ...debug };
-    const roster = getCharacterRoster([...lockedLiveCollections, ...archiveCollections].map(c => c.collectionId), settings);
+    const roster = continuityRoster;
     const inPlay = roster.ready ? detectSceneCast({ roster, chat: chat || liveChat,
         plannerCharacters: debug?.plannerCharacters, chatId: `${currentChatId}:${uuid}`, settings, dryRun, testMessage, includeAll: true }) : [];
     const cast = inPlay.slice(0, resolveCastSetting(settings, 'eventbase_cast_max_characters'));
@@ -1309,13 +1312,15 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         onError: error => log.warn('[NPC card] Refresh failed; using history spine:', error.message),
         report: npcCardStatus });
     const budgeted = formatBudgetedEventBase({ events: events || [], roster, cast, diagnosticCast: inPlay, cards,
-        settings, chatLength: effectiveChatLength,
+        settings, chatLength: effectiveChatLength, recallPastEvent: debug?.recallPastEvent === true,
         globalContext: settings.rag_context ? substituteParams(settings.rag_context) : '', xmlTag: settings.rag_xml_tag || '',
         currentCollectionIds: lockedLiveCollections.filter(c => c.collectionId.endsWith(`_${uuid}`)).map(c => c.collectionId) });
     const mainResult = budgeted.main, castResult = budgeted.cast;
     const mainInjectedEvents = mainResult.events || [];
     const castInjectedEventIds = (castResult.events || []).map(eventDebugKey);
     Object.assign(dryRunDebug, { castIndexReady: roster.ready, castPendingCollections: roster.pendingCollections,
+        continuity: [...mainInjectedEvents, ...(castResult.events || [])].map(e => ({ event_id: e.event_id,
+            ...(e._continuityView || getContinuityView(e, roster)), downranked: !!e._continuityDownranked })),
         mainInjectedEventIds: mainInjectedEvents.map(eventDebugKey),
         finalInjectedEventIds: [...new Set([...mainInjectedEvents.map(eventDebugKey), ...castInjectedEventIds])],
         castInjectedEventIds,

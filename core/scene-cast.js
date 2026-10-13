@@ -3,6 +3,7 @@ import { normalizeCharacterName } from './character-roster.js';
 import { stripReasoningBlocks, stripGameSystemBlocks } from './text-cleaning.js';
 
 import { resolveCastSetting } from './scene-cast-settings.js';
+import { matchesSceneCharacter } from './scene-cast-matcher.js';
 const plannerMemory = new Map();
 
 /** Prefix validation invalidates planner observations after edits, swipes or shrink. */
@@ -22,14 +23,8 @@ export function detectSceneCast({ roster, chat = [], plannerCharacters = [], cha
         detected.set(group, entry);
     };
     for (const group of groups) {
-        const patterns = [...new Set([group.name, ...group.aliases].map(normalizeCharacterName))].filter(Boolean).map(name => {
-            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-            // Unicode boundaries avoid Ann matching Anna; CJK names match literally.
-            return /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(name)
-                ? new RegExp(escaped, 'u') : new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'u');
-        });
         for (let i = start; i < texts.length; i++) {
-            if (patterns.some(pattern => pattern.test(texts[i]))) add(group, i, 'text');
+            if (matchesSceneCharacter(group, texts[i])) add(group, i, 'text');
         }
     }
     let remembered = (plannerMemory.get(chatId) || []).filter(entry =>

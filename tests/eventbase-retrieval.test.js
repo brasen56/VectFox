@@ -69,6 +69,7 @@ vi.mock('../core/log.js', () => ({
 }));
 
 import { retrieveEvents, finalizeDeferredCrossEncoder } from '../core/eventbase-retrieval.js';
+import { threadsDigest, buildResolvedBy } from '../core/continuity.js';
 
 const baseSettings = {
     vector_backend: 'standard',
@@ -97,6 +98,24 @@ beforeEach(() => {
 });
 
 describe('retrieveEvents', () => {
+    it.each([false, true])('applies resolved factor once on scoring path native=%s, with recall and partial exemptions', async native => {
+        const conflict = makeEvent(1, { open_threads: ['Stay?', 'Debt?'], _rerankApplied: native });
+        const resolver = makeEvent(2, { continuity: { v: 1, resolves: [{ event_id: conflict.event_id,
+            threads: 'all', threads_digest: threadsDigest(conflict), how: 'Settled.', status: 'active', origin: 'extraction' }] } });
+        const roster = { events: [conflict, resolver], resolvedBy: buildResolvedBy([conflict, resolver]) };
+        const params = { searchText: 'scene', keywordQuery: '', chatLength: 100, skipLiveQuery: true,
+            additionalCandidates: [conflict], continuityRoster: roster, settings: { ...baseSettings, eventbase_resolved_downrank: 0.85 } };
+        const normal = await retrieveEvents(params);
+        const recall = await retrieveEvents({ ...params, recallPastEvent: true });
+        expect(normal.events[0]._finalScore).toBeCloseTo(recall.events[0]._finalScore * 0.85);
+        expect(normal.events[0]._continuityDownranked).toBe(true);
+        const repeat = await retrieveEvents({ ...params, additionalCandidates: normal.candidates });
+        expect(repeat.events[0]._finalScore).toBeCloseTo(normal.events[0]._finalScore);
+        resolver.continuity.resolves[0].threads = [0];
+        const partial = await retrieveEvents(params);
+        expect(partial.events[0]._finalScore).toBeCloseTo(recall.events[0]._finalScore);
+        expect(partial.events[0]._continuityDownranked).toBe(false);
+    });
     it('reranks only surviving candidates before coverage trim and supports deferred fallback', async () => {
         const config = { ...baseSettings, eventbase_retrieval_top_k: 2, eventbase_retrieval_min_importance: 3,
             eventbase_cross_encoder_enabled: true, eventbase_cross_encoder_api_url: 'http://localhost:8000/rerank', deduplication_depth: 5 };

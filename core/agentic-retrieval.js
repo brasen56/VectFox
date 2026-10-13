@@ -201,6 +201,17 @@ export async function retrieveEventsWithAgent(params) {
     // Validate planner output.
     const maxQueries = Math.max(1, Math.min(6, settings.agentic_retrieval_max_queries || 6));
     const validatedQueries = _validateAndTrimQueries(plan?.queries, maxQueries, plan?.filters);
+    if (plan?.recall_past_event === true) {
+        // Even a planner with no useful queries can request explicit historical recall.
+        // Re-score the existing overfetched pool rather than undoing the factor on
+        // already trimmed events (which could not restore displaced candidates).
+        const recalled = await retrieveEvents({ ...params, liveCollectionIds: [], skipLiveQuery: true,
+            additionalCandidates: preSearch.candidates ?? preSearch.events, recallPastEvent: true,
+            skipCrossEncoder: deferCrossEncoder });
+        preSearch.events = recalled.events;
+        preSearch.candidates = recalled.candidates;
+        preSearch.debug = { ...preSearch.debug, ...recalled.debug, recallPastEvent: true };
+    }
     if (validatedQueries.length === 0) {
         if (agenticDebug) {
             log.domain('agent', 'lifecycle', '[VectFox-Agentic] Planner returned 0 valid queries — falling back to pre-search only');
@@ -329,6 +340,7 @@ export async function retrieveEventsWithAgent(params) {
         liveCollectionIds: [],          // already searched; skip live query in stage 5
         additionalCandidates: mergedAdditional,
         skipLiveQuery: true,
+        recallPastEvent: plan?.recall_past_event === true,
     });
 
     const tTotalMs = Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tAgentStart));
@@ -356,6 +368,7 @@ export async function retrieveEventsWithAgent(params) {
             agenticQueries: validatedQueries.map(query => query.query),
             agenticQueryFilters: queryFilters,
             agenticRationale: typeof plan?.rationale === 'string' ? plan.rationale : null,
+            recallPastEvent: plan?.recall_past_event === true,
             agenticLLMMs: tLlmMs,
             agenticFanoutMs: tFanoutMs,
             agenticTotalMs: tTotalMs,

@@ -122,5 +122,9 @@ export function formatRetrievalDiagnostics(debug = {}) {
         const status = ce.used ? 'used' : ce.deferred ? 'deferred' : ce.skippedReason ? 'skipped' : 'original order';
         castText = [castText, `Cross-encoder: ${status}; ${ce.documentsSent || 0} document(s); ${ce.durationMs || 0}ms${ce.skippedReason ? `; ${ce.skippedReason}` : ''}${ce.error ? `; ${ce.error}` : ''}.`].filter(Boolean).join('\n');
     }
+    if (debug.continuity?.length) castText = [castText, 'Continuity:', ...debug.continuity.map(e =>
+        `  ${e.event_id}: closed threads [${e.closedThreads.join(', ')}]; downranked: ${e.downranked ? 'yes' : 'no'}; `
+        + `resolutions: ${e.resolutions.map(r => `${r.event_id} (${r.origin}): ${r.text}`).join('; ') || 'none'}; `
+        + `inactive links: ${e.inactiveLinks.map(l => `${l.event_id} (${l.origin}): ${l.reason}`).join('; ') || 'none'}`)].filter(Boolean).join('\n');
     return { cutCount: cuts.length, cutText: cutText || 'No returned candidates were cut.', queryText, ...(castText ? { castText } : {}) };
 }

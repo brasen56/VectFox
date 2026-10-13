@@ -8,6 +8,7 @@
  */
 
 import { resolveCastSetting } from './scene-cast-settings.js';
+import { getContinuityView, renderResolution } from './continuity.js';
 
 // ---------------------------------------------------------------------------
 // JSON format
@@ -65,6 +66,7 @@ function _formatStoryTime(iso) {
  * @returns {object}
  */
 function _cleanEventForInjection(event) {
+    const view = event._continuityView || getContinuityView(event);
     return {
         event_type: event.event_type,
         // Relative retrieval-relevance rank within this injected batch (1 = closest
@@ -87,7 +89,8 @@ function _cleanEventForInjection(event) {
         items: event.items || [],
         concepts: event.concepts || [],
         keywords: event.keywords || [],
-        open_threads: event.open_threads || [],
+        open_threads_at_the_time: view.remainingThreads,
+        resolution: renderResolution(view) || undefined,
         should_persist: event.should_persist === true,
     };
 }
@@ -139,7 +142,8 @@ function _formatAsDenseText(events) {
             `items: ${_stringifyList(event.items)}`,
             `concepts: ${_stringifyList(event.concepts)}`,
             `keywords: ${_stringifyList(event.keywords)}`,
-            `open_threads: ${_stringifyList(event.open_threads)}`,
+            `open_threads_at_the_time: ${_stringifyList(event.open_threads_at_the_time)}`,
+            ...(event.resolution ? [`resolution: ${event.resolution}`] : []),
             `should_persist: ${event.should_persist ? 'true' : 'false'}`,
         ].join('\n');
     }).join('\n\n');
@@ -160,6 +164,7 @@ function _formatAsSummaryOnly(events) {
             `summary: ${event.summary || '-'}`,
             `In-story time: ${event.DateTime || '-'}`,
             `scene_time: ${event.scene_time || '-'}`,
+            ...(event.resolution ? [`resolution: ${event.resolution}`] : []),
         ].join('\n');
     }).join('\n\n');
 }
@@ -178,7 +183,8 @@ const INJECTION_HEADER =
     + "Use each event's in-story time (DateTime)/scene_time to place it on the story timeline. "
     + 'context_relevance_rank shows how closely each event matches the current moment '
     + '(1 = closest match) — this is retrieval relevance, NOT story importance '
-    + '(see the separate importance field for how significant the event is).';
+    + '(see the separate importance field for how significant the event is). '
+    + 'Threads were open at the time of the event; a resolution line means they were subsequently settled.';
 
 /**
  * Re-order retrieved events for presentation: chronological, oldest → newest.
@@ -274,7 +280,7 @@ export function formatEventsForInjectionDetailed(events, _settings, tokenBudget 
         const parts = [];
         if (selected.length) parts.push(renderFull(_orderEventsForPresentation(selected)));
         if (compact.length) parts.push(`Compact recalled events:\n${_orderEventsForPresentation(compact).map(e =>
-            `- [${castTime(e)}] (relevance ${e._contextRelevanceRank}/${total}) ${e.summary || _summaryFromText(e.text)}`).join('\n')}`);
+            `- [${castTime(e)}] (relevance ${e._contextRelevanceRank}/${total}) ${e.summary || _summaryFromText(e.text)}${renderResolution(e._continuityView || getContinuityView(e)) ? ` — later resolved: ${renderResolution(e._continuityView || getContinuityView(e))}` : ''}`).join('\n')}`);
         return parts.length ? `${INJECTION_HEADER}\n${parts.join('\n\n')}` : '';
     };
     // Spend on full detail in score order, then try an atomic compact summary.
@@ -351,7 +357,9 @@ export function selectHistorySpine(events, budget, renderLine) {
     take(ordered.at(-1));
     for (const event of [...ordered].sort((a, b) => Number(b.should_persist === true) - Number(a.should_persist === true)
         || (b.importance ?? 0) - (a.importance ?? 0) || chronology(a, b))) {
-        if (event.should_persist === true || (event.importance ?? 0) >= 7) take(event);
+        if (!(event._resolvedDownrankEnabled !== false && (event._continuityView?.fullyResolved
+            || (event.continuity && getContinuityView(event).fullyResolved)))
+            && (event.should_persist === true || (event.importance ?? 0) >= 7)) take(event);
     }
     const positions = new Map(ordered.map((e, i) => [e, i]));
     let candidates = ordered.filter(e => !selected.has(e) && costs.get(e) <= remaining);
@@ -397,7 +405,8 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
     const lines = new Map(), costs = new Map();
     const line = e => {
         if (!lines.has(e)) {
-            const text = `- [${String(castTime(e)).replace(/\s+/g, ' ')}] ${String(e.summary || _summaryFromText(e.text)).replace(/\s+/g, ' ').trim()}\n`;
+            const resolution = renderResolution(e._continuityView || getContinuityView(e, roster));
+            const text = `- [${String(castTime(e)).replace(/\s+/g, ' ')}] ${String(e.summary || _summaryFromText(e.text)).replace(/\s+/g, ' ').trim()}${resolution ? ` — later resolved: ${resolution}` : ''}\n`;
             lines.set(e, text);
             costs.set(e, estimateCastTokens(text));
         }

@@ -1,6 +1,7 @@
 /** One estimated-token envelope for the retrieval main lane and cast lane. */
 import { estimateCastTokens, formatEventsForInjectionDetailed, formatCastHistoryDetailed } from './eventbase-injection.js';
 import { resolveCastSetting } from './scene-cast-settings.js';
+import { annotateContinuity } from './continuity.js';
 
 export const EVENTBASE_TOKEN_BUDGET_DEFAULT = 4000;
 
@@ -10,6 +11,9 @@ export function resolveEventBaseTokenBudget(settings = {}) {
 }
 
 export function formatBudgetedEventBase({ events = [], settings = {}, globalContext = '', xmlTag = '', ...castOptions }) {
+    for (const event of events) Object.assign(event, annotateContinuity(event, castOptions.roster, settings, castOptions.recallPastEvent));
+    if (castOptions.roster) castOptions.roster = { ...castOptions.roster,
+        events: castOptions.roster.events.map(e => annotateContinuity(e, castOptions.roster, settings, castOptions.recallPastEvent)) };
     const budget = resolveEventBaseTokenBudget(settings);
     const wrap = text => {
         if (!text) return '';

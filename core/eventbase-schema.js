@@ -222,6 +222,12 @@ export function validateEvent(raw) {
         open_threads: ensureArray((/** @type {any} */ (raw)).open_threads),
         should_persist: (/** @type {any} */ (raw)).should_persist === true,
     };
+    if (Array.isArray(raw.resolves)) {
+        event.resolves = raw.resolves.filter(r => r && /^I[1-9]\d*$/.test(r.ref) && Array.isArray(r.threads))
+            .map(r => ({ ref: r.ref, threads: [...new Set(r.threads.filter(i => Number.isInteger(i) && i >= 0))],
+                how: typeof r.how === 'string' ? StringUtils.truncateCodePoints(r.how.replace(/\s+/g, ' ').trim(), 200) : '' }))
+            .filter(r => r.threads.length && r.how);
+    }
 
     return { ok: true, errors, event };
 }
@@ -319,7 +325,7 @@ export const DEFAULT_EXTRACTION_PROMPT = getEventBaseExtractionPrompt('intl');
  *      user's CJK Tokenizer Mode (defaults to 'intl' / English when mode is
  *      unset or unrecognized)
  *
- * Then `{{text}}`, `{{maxCount}}`, and `{{knownCharacters}}` are substituted.
+ * Then `{{text}}`, `{{maxCount}}`, `{{knownCharacters}}`, and `{{openIssues}}` are substituted.
  *
  * @param {string} text  - The chat excerpt (already joined messages)
  * @param {number} maxCount - Max events to return (eventbase_max_events_per_window)
@@ -328,16 +334,18 @@ export const DEFAULT_EXTRACTION_PROMPT = getEventBaseExtractionPrompt('intl');
  *                          tiny_segmenter / korean / others). Ignored when
  *                          customPrompt is provided.
  * @param {string} [knownCharacters] - Bounded grouped roster, empty while indexing
+ * @param {string} [openIssues] - Bounded window-local issue refs, or (none)
  * @returns {string}
  */
-export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl', knownCharacters = '') {
+export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl', knownCharacters = '', openIssues = '(none)') {
     const template = (customPrompt && customPrompt.trim())
         ? customPrompt
         : getEventBaseExtractionPrompt(mode);
     return template
-        .replace(/\{\{maxCount\}\}|\{\{knownCharacters\}\}|\{\{text\}\}/g, placeholder => {
+        .replace(/\{\{maxCount\}\}|\{\{knownCharacters\}\}|\{\{openIssues\}\}|\{\{text\}\}/g, placeholder => {
             if (placeholder === '{{maxCount}}') return String(maxCount);
             if (placeholder === '{{knownCharacters}}') return knownCharacters;
+            if (placeholder === '{{openIssues}}') return openIssues || '(none)';
             return text;
         });
 }
