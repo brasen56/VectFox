@@ -27,9 +27,13 @@ export function npcCardSetting(settings, key) {
 }
 
 function sourceRecord(event) {
+    const view = event._continuityView || getContinuityView(event);
     return { event_id: event.event_id, summary: event.summary, DateTime: event.DateTime,
         importance: event.importance, should_persist: event.should_persist,
-        resolution: renderResolution(event._continuityView || getContinuityView(event)) || undefined };
+        resolution: renderResolution(view) || undefined,
+        // Keep unlinked evidence byte-for-byte compatible with existing digests.
+        ...(view.resolutions.length ? { remaining_threads: view.remainingThreads,
+            closed_threads: view.closedThreads, fully_resolved: view.fullyResolved } : {}) };
 }
 
 /** 32-bit FNV-1a over exactly what the model is shown, so unrelated fields never force work. */

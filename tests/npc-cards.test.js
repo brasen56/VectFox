@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { advanceNpcCard, getNpcCards, npcCardSnapshot, readNpcCard, validateNpcFacts,
     NPC_CARD_MAX_PLAN_BATCHES, NPC_CARD_REFRESH_MIN_NEW_EVENTS } from '../core/npc-cards.js';
+import { threadsDigest, buildResolvedBy } from '../core/continuity.js';
 
 function fixture(name = 'Brennan', count = 35, summary = i => `Fact ${i}`) {
     const events = Array.from({ length: count }, (_, i) => ({ event_id: `e${i}`, summary: summary(i), source_window_end: i, _collectionIds: ['collection'] }));
@@ -30,6 +31,36 @@ const nextSave = () => { let done; const saved = new Promise(resolve => { done =
 afterEach(() => vi.useRealTimers());
 
 describe('source-grounded NPC cards', () => {
+    it('shows partial thread closure and invalidates cited facts when the same resolver closes all threads', async () => {
+        const f = fixture('Alex', 3);
+        const [target, resolver, unrelated] = f.roster.events;
+        target.open_threads = ['Will Alex stay?', 'Will the debt be paid?'];
+        resolver.continuity = { v: 1, resolves: [{ event_id: target.event_id, threads: [0],
+            threads_digest: threadsDigest(target), status: 'active' }] };
+        f.roster.resolvedBy = buildResolvedBy(f.roster.events);
+        const complete = vi.fn(async () => [{ fact: 'The debt remains open.', source_ids: [target.event_id] },
+            { fact: 'Unrelated fact.', source_ids: [unrelated.event_id] }]);
+        const initial = npcCardSnapshot(f.roster, f.group);
+        const card = await advanceNpcCard(undefined, initial, f.group, f.settings, complete);
+        const partial = evidence(complete.mock.calls[0][0]).find(e => e.event_id === target.event_id);
+        expect(partial).toMatchObject({ remaining_threads: ['Will the debt be paid?'], closed_threads: [0], fully_resolved: false });
+        const plain = evidence(complete.mock.calls[0][0]).find(e => e.event_id === unrelated.event_id);
+        expect(plain).not.toHaveProperty('remaining_threads');
+        expect(plain).not.toHaveProperty('closed_threads');
+        expect(plain).not.toHaveProperty('fully_resolved');
+
+        resolver.continuity.resolves[0].threads = [0, 1];
+        const updated = npcCardSnapshot(f.roster, f.group);
+        expect(updated.digests.get(target.event_id)).not.toBe(initial.digests.get(target.event_id));
+        expect(updated.digests.get(resolver.event_id)).toBe(initial.digests.get(resolver.event_id));
+        expect(updated.digests.get(unrelated.event_id)).toBe(initial.digests.get(unrelated.event_id));
+        const view = readNpcCard(card, updated, 350);
+        expect(view.facts.map(fact => fact.fact)).toEqual(['Unrelated fact.']);
+        expect(view.uncovered.map(e => e.event_id)).toEqual([target.event_id]);
+        await advanceNpcCard(card, updated, f.group, f.settings, complete);
+        expect(evidence(complete.mock.calls[1][0])[0]).toMatchObject({ remaining_threads: [], closed_threads: [0, 1], fully_resolved: true });
+    });
+
     it('rejects invented citations, uncited facts and over-budget lines', () => {
         expect(() => validateNpcFacts([{ fact: 'Invented', source_ids: ['missing'] }], new Set(['e0']), 100)).toThrow();
         expect(validateNpcFacts([{ fact: 'LLC filed', source_ids: ['e0'] }, { fact: 'x'.repeat(1000), source_ids: ['e0'] }], new Set(['e0']), 50)).toHaveLength(1);

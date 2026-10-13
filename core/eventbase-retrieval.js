@@ -353,8 +353,10 @@ function _logRerankComparison(colId, queryText, native, js, nativeMs, jsMs, sett
  * @param {string[]} [params.recentMessageTexts] - Newest-first raw texts of the last few chat
  *        messages. Story-time recency (eventbase_recency_source = 'story_time') parses the
  *        first in-story timestamp found in them to anchor "now"; unused in index mode.
- * @returns {Promise<{ events: object[], candidates: object[], debug: object }>}
+ * @returns {Promise<{ events: object[], candidates: object[], recallCandidates: object[], debug: object }>}
  *        candidates is the post-dedup, pre-trim pool for the agent merge.
+ *        recallCandidates retains importance-eligible inputs before scoring and
+ *        deduplication so explicit recall can rerun both without downranking.
  */
 /**
  * Stamp each event with its source conversation frame (collection id) so the
@@ -774,6 +776,7 @@ export async function retrieveEvents({ searchText, keywordQuery, chatLength, set
     return {
         events: finalEvents,
         candidates: contextDedupedEvents,
+        recallCandidates: importanceFiltered,
         debug: {
             crossEncoder: crossEncoder.meta,
             candidateOutcomes,

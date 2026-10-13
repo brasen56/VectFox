@@ -203,10 +203,10 @@ export async function retrieveEventsWithAgent(params) {
     const validatedQueries = _validateAndTrimQueries(plan?.queries, maxQueries, plan?.filters);
     if (plan?.recall_past_event === true) {
         // Even a planner with no useful queries can request explicit historical recall.
-        // Re-score the existing overfetched pool rather than undoing the factor on
-        // already trimmed events (which could not restore displaced candidates).
+        // Re-score before duplicate suppression, which may have discarded a
+        // resolved event in favor of its unresolved neighbor after downranking.
         const recalled = await retrieveEvents({ ...params, liveCollectionIds: [], skipLiveQuery: true,
-            additionalCandidates: preSearch.candidates ?? preSearch.events, recallPastEvent: true,
+            additionalCandidates: preSearch.recallCandidates ?? preSearch.candidates ?? preSearch.events, recallPastEvent: true,
             skipCrossEncoder: deferCrossEncoder });
         preSearch.events = recalled.events;
         preSearch.candidates = recalled.candidates;
@@ -329,9 +329,12 @@ export async function retrieveEventsWithAgent(params) {
     // STAGE 5 — re-feed merged candidates through retrieveEvents for canonical rerank.
     // Keep the post-dedup, pre-trim pool, including surviving archive events.
     // Do not reintroduce archive candidates already rejected by the pre-search.
+    // Explicit recall instead reruns dedup on the original eligible pool so
+    // fanout scoring cannot strand events discarded by an earlier dedup pass.
     // Fall back to the old result shape for callers supplying legacy results.
     const mergedAdditional = [
-        ...(preSearch.candidates ?? [...(additionalCandidates || []), ...(preSearch.events || [])]),
+        ...((plan?.recall_past_event === true ? preSearch.recallCandidates : null)
+            ?? preSearch.candidates ?? [...(additionalCandidates || []), ...(preSearch.events || [])]),
         ...agenticHits,
     ];
 
