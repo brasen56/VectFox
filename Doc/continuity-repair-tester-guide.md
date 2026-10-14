@@ -60,7 +60,7 @@ Click **Inventory and estimate (no LLM)**. This loads the stored vectors (no emb
 
 Below the controls, the preview lists every proposal for the current run, 20 per page:
 
-- Each entry shows the field (`resolves` or `duplicate_of`), its status, the owner event's summary, the target event's summary, **which thread texts it closes** (shown as text, not bare indices), and the judge's short "how" note.
+- Each entry shows the field (`resolves` or `duplicate_of`), its status, the owner event's summary, the target event's summary, **which thread texts it closes** (shown as text, not bare indices), and the judge's short "how" note. The "how" note is written in the collection's extraction language (English by default, or your CJK mode's language; with a custom extraction prompt it matches each conflict's own summary). If a note mixes languages, that's a bug — tell us.
 - Use the **filter box** to narrow by character name.
 - **Accept** or **Reject** individual entries, or use **Accept all** / **Reject all proposals**.
 - Only **accepted** entries take effect. A `proposed` entry influences nothing until you accept it.

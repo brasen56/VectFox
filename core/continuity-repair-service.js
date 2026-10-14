@@ -7,7 +7,7 @@ import { getBackend, getBackendForCollection } from '../backends/backend-manager
 import { fetchChunksWithVectors } from './collection-export.js';
 import { postChatCompletion, parseJsonArrayFromLlm, resolveModelParameterStyle } from './llm-provider-call.js';
 import { generationRateLimiter, generationRateLimitSettings } from './generation-rate-limiter.js';
-import { ContinuityRepair } from './continuity-repair.js';
+import { ContinuityRepair, repairLanguageMode } from './continuity-repair.js';
 import { threadsDigest } from './continuity.js';
 
 const collectionOperations = new Map();
@@ -74,6 +74,7 @@ export async function createContinuityRepair(collectionKey, settings, override =
     const engine = new ContinuityRepair({ events: context.entry.events, vectors,
         operations: collectionOperations.get(context.id),
         groups: getCharacterRoster([context.id], settings).groups, write: context.write, model: effectiveModel, endpoint: url,
+        language: repairLanguageMode(settings),
         refresh: async () => {
             const events = (await context.currentEntry()).events;
             if (events.size !== vectorHashes.size || [...events.values()].some(event => vectorHashes.get(event.event_id) !== String(event.hash))) {

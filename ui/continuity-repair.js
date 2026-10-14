@@ -127,7 +127,7 @@ export async function openContinuityRepair(settings) {
     button(actions, 'Inventory and estimate (no LLM)', async () => {
         status.text('Loading stored vectors…');
         await load(); estimatedOptions = estimateConfiguration();
-        const estimate = estimateRepair(engine.plan(estimatedOptions.options), engine.model);
+        const estimate = estimateRepair(engine.plan(estimatedOptions.options), engine.model, engine.language);
         preview.show(); render();
         const { scope: chosen, importance: floor } = estimatedOptions.options;
         const scopeName = `${SCOPE_LABELS[chosen] || chosen}${chosen === 'conflicts' ? ` (importance ≥ ${floor})` : ''}`;

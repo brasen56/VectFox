@@ -1,5 +1,5 @@
 import { ContinuityRepair, cosineSimilarity, repairCandidates, repairScope, findDuplicateProposals,
-    validateRepairResponse, estimateRepair, buildCandidateIndex } from '../core/continuity-repair.js';
+    validateRepairResponse, estimateRepair, buildCandidateIndex, repairPrompt, repairLanguageRule, repairLanguageMode } from '../core/continuity-repair.js';
 import { isActiveDuplicate, getContinuityView, buildResolvedBy, threadsDigest } from '../core/continuity.js';
 import { GenerationRateLimiter } from '../core/generation-rate-limiter.js';
 
@@ -63,6 +63,40 @@ describe('continuity repair inventory and validation', () => {
         vectors.set('e0', [0.9, Math.sqrt(1 - 0.9 ** 2)]);
         expect(findDuplicateProposals(events, vectors, 'r1').some(item => item.owner === 'e0')).toBe(false);
         expect(findDuplicateProposals([events[0], event('later', 100)], new Map([['e0', [1, 0]], ['later', [1, 0]]]), 'r1')).toEqual([]);
+    });
+});
+
+describe('repair judge language rule', () => {
+    const batch = () => { const { events } = fixture(); return [{ conflict: events.get('conflict'), candidates: [events.get('resolution')] }]; };
+
+    it('names one explicit output language per mode instead of the records-language rule', () => {
+        for (const [mode, anchor] of [['intl', 'English'], ['jieba', 'Simplified Chinese (简体中文)'],
+            ['jieba_tw', 'Traditional Chinese (繁體中文)'], ['tiny_segmenter', 'Japanese (日本語)'], ['korean', 'Korean (한국어)']]) {
+            const prompt = repairPrompt(batch(), mode);
+            expect(prompt).toContain(`Write every "how" in ${anchor}`);
+            expect(prompt).toContain('one language only');
+            expect(prompt).not.toContain("records' language");
+        }
+    });
+
+    it("anchors unknown modes to each conflict's own summary", () => {
+        expect(repairPrompt(batch(), 'others')).toContain("same one language as that conflict's summary field");
+        expect(repairLanguageRule('others')).not.toContain('English');
+    });
+
+    it('derives the mode from settings and distrusts it when a custom prompt overrides extraction', () => {
+        expect(repairLanguageMode({})).toBe('intl');
+        expect(repairLanguageMode({ cjk_tokenizer_mode: 'korean' })).toBe('korean');
+        expect(repairLanguageMode({ cjk_tokenizer_mode: 'korean', eventbase_custom_prompt: '{{text}}' })).toBe('others');
+    });
+
+    it('sends the engine language to the judge and keeps estimates on the same prompt', async () => {
+        const prompts = [];
+        const { engine } = makeEngine(fixture(), { language: 'korean',
+            complete: async prompt => { prompts.push(prompt); return []; } });
+        await engine.start({ end: 10 }); await engine.resume();
+        expect(prompts.every(prompt => prompt.includes('Korean (한국어)'))).toBe(true);
+        expect(estimateRepair(batch(), 'model', 'korean').inputTokens).toBeGreaterThan(0);
     });
 });
 
