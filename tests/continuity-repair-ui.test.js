@@ -26,7 +26,7 @@ class Element {
     empty() { this.nodes = []; return this; }
     css() { return this; }
     attr() { return this; }
-    prop() { return this; }
+    prop(name, value) { if (value !== undefined) this[name] = value; return this; }
     show() { return this; }
     hide() { return this; }
 }
@@ -61,6 +61,21 @@ describe('continuity repair configuration controls', () => {
         expect(toastr.error).toHaveBeenCalledWith(expect.stringContaining('undo'), 'Continuity repair');
         await click('Start');
         expect(engine.resume).toHaveBeenCalled();
+    });
+    it('names the estimated scope and disables the importance floor outside "Conflicts only"', async () => {
+        const { openContinuityRepair } = await import('../ui/continuity-repair.js');
+        await openContinuityRepair({ chat_model: 'A' });
+        const scope = elements.find(item => item.tag.startsWith('<select') && item.value === 'conflicts');
+        const floor = input('Minimum importance');
+        expect(floor.disabled).toBe(false);
+        await click('Inventory and estimate (no LLM)');
+        expect(elements.some(item => String(item.label).startsWith('Conflicts only (importance ≥ 6): 0 to judge'))).toBe(true);
+        scope.val('all'); scope.handlers.change();
+        expect(floor.disabled).toBe(true);
+        await click('Inventory and estimate (no LLM)');
+        expect(elements.some(item => String(item.label).startsWith('Every event with open threads: 0 to judge'))).toBe(true);
+        scope.val('conflicts'); scope.handlers.change();
+        expect(floor.disabled).toBe(false);
     });
     it.each(['Model override (optional)', 'Provider override (openrouter or vllm; optional)', 'vLLM URL override (optional)'])
         ('requires a fresh estimate after changing %s', async label => {

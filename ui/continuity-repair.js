@@ -4,6 +4,7 @@ import { estimateRepair, listRepairEntries } from '../core/continuity-repair.js'
 import { rosterCollectionId } from '../core/character-roster.js';
 
 const sessions = new Map();
+const SCOPE_LABELS = Object.freeze({ conflicts: 'Conflicts only', all: 'Every event with open threads', duplicates: 'Duplicates only (no LLM)' });
 const button = (host, text, action) => $('<button type="button" class="vectfox-btn vectfox-btn-secondary">').text(text)
     .appendTo(host).on('click', async function () {
         $(this).prop('disabled', true);
@@ -21,12 +22,17 @@ export async function openContinuityRepair(settings) {
     $('<p>').text('Metadata-only repair; no re-embedding or deletion. Use one writer/tab only. Pause takes effect after the current batch. Estimated tokens are approximate; provider pricing is not included.').appendTo(host);
     const selector = $('<select class="vectfox-select">').appendTo(host);
     collections.forEach(collection => $('<option>').val(collection.registryKey).text(collection.collectionId).appendTo(selector));
-    const scope = $('<select class="vectfox-select">').append('<option value="conflicts">Conflicts only</option><option value="all">Every event with open threads</option><option value="duplicates">Duplicates only (no LLM)</option>').appendTo(host);
+    const scope = $('<select class="vectfox-select">').append(Object.entries(SCOPE_LABELS)
+        .map(([value, label]) => `<option value="${value}">${label}</option>`).join('')).appendTo(host);
     const input = (label, value, type = 'text') => {
         const row = $('<label>').text(`${label} `).css({ display: 'block', margin: '6px 0' }).appendTo(host);
         return $('<input class="vectfox-input">').attr('type', type).val(value).appendTo(row);
     };
     const importance = input('Minimum importance', 6, 'number').attr({ min: 1, max: 10 });
+    // Only "Conflicts only" applies the floor; a live box under another scope reads as if it did.
+    const syncImportance = () => importance.prop('disabled', scope.val() !== 'conflicts');
+    scope.on('change', syncImportance);
+    syncImportance();
     const characters = input('Character pair (comma-separated; optional)', '');
     const start = input('First message (optional)', '', 'number');
     const end = input('Last message (optional)', '', 'number');
@@ -123,9 +129,11 @@ export async function openContinuityRepair(settings) {
         await load(); estimatedOptions = estimateConfiguration();
         const estimate = estimateRepair(engine.plan(estimatedOptions.options), engine.model);
         preview.show(); render();
-        status.text(estimatedOptions.options.scope === 'duplicates'
-            ? 'Duplicates only: no LLM calls. Proposals still need review before they take effect.'
-            : `${estimate.events} conflicts · up to ${estimate.calls} calls · about ${estimate.inputTokens.toLocaleString()} input tokens · ${estimate.model}. Duplicate scan uses no LLM. Review this estimate before Start.`);
+        const { scope: chosen, importance: floor } = estimatedOptions.options;
+        const scopeName = `${SCOPE_LABELS[chosen] || chosen}${chosen === 'conflicts' ? ` (importance ≥ ${floor})` : ''}`;
+        status.text(chosen === 'duplicates'
+            ? `${scopeName}: no LLM calls. Proposals still need review before they take effect.`
+            : `${scopeName}: ${estimate.events} to judge · up to ${estimate.calls} calls · about ${estimate.inputTokens.toLocaleString()} input tokens (output and reasoning tokens not included) · ${estimate.model}. Duplicate scan uses no LLM. Review this estimate before Start.`);
     });
     button(actions, 'Start', async () => {
         if (!engine || !estimatedOptions || JSON.stringify(estimateConfiguration()) !== JSON.stringify(estimatedOptions) || selector.val() !== selectedKey) throw new Error('Inventory and estimate this scope and provider/model/endpoint first');
