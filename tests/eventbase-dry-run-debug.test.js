@@ -64,6 +64,14 @@ beforeEach(() => {
 });
 
 describe('EventBase dry-run diagnostic contract', () => {
+    it.each(['story', 'slice_of_life', 'custom'])('reports the effective extraction profile %s', async profile => {
+        const result = await runEventBaseRetrieval({ ...params, settings: {
+            eventbase_extraction_profile: profile === 'story' ? 'story' : 'slice_of_life',
+            eventbase_custom_prompt: profile === 'custom' ? '{{text}}' : '',
+        } });
+        expect(result.debug.extractionProfile).toBe(profile);
+        expect(formatRetrievalDiagnostics(result.debug).castText).toContain(`Effective extraction profile: ${profile}`);
+    });
     it.each([false, true])('reports cap-excluded characters and their signals (Agent Mode=%s)', async agentic => {
         const events = [
             { event_id: 'ann', summary: 'Ann opened the shop.', characters: ['Ann'] },

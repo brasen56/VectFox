@@ -19,6 +19,10 @@ yarn-error.log*
 Doc/settings.json
 temp_bug_list.md
 
+# Personal chat excerpts used for local extraction benchmarks — never publish
+Doc/temp_personal_chat_examples
+diagnostics/local/
+
 # Playwright test artifacts — regenerated on every run
 playwright-report/
 test-results/

@@ -36,6 +36,7 @@ import { resolveCastSetting } from './scene-cast-settings.js';
 import { isCollectionEnabled, isCollectionActiveForContextAnyKey, setCollectionLock, setCollectionMeta } from './collection-metadata.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { log } from './log.js';
+import { resolveExtractionProfile, effectiveExtractionProfile } from './eventbase-extraction-settings.js';
 import { prepareMessagesForEventBase } from './ils-expander.js';
 
 /** Extension prompt tag for EventBase (distinct from legacy chunks tag) */
@@ -1301,7 +1302,8 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     log.trace('[EventBase] Retrieval debug:', debug);
 
     // Return diagnostics even when every candidate was cut.
-    const dryRunDebug = { candidateOutcomes: {}, plannerQuerySummary: [], ...debug };
+    const dryRunDebug = { candidateOutcomes: {}, plannerQuerySummary: [], ...debug,
+        extractionProfile: effectiveExtractionProfile(settings), selectedExtractionProfile: resolveExtractionProfile(settings) };
     const roster = continuityRoster;
     const inPlay = roster.ready ? detectSceneCast({ roster, chat: chat || liveChat,
         plannerCharacters: debug?.plannerCharacters, chatId: `${currentChatId}:${uuid}`, settings, dryRun, testMessage, includeAll: true }) : [];

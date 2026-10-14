@@ -111,6 +111,8 @@ export function formatRetrievalDiagnostics(debug = {}) {
         : debug.zeroInjectionCharacters
             ? `In play with zero events injected: ${debug.zeroInjectionCharacters.map(c => `${c.name} (${c.signals.join(' + ')})`).join(', ') || 'none'}.`
             : '';
+    if (debug.extractionProfile) castText = [castText,
+        `Effective extraction profile: ${debug.extractionProfile} (selected: ${debug.selectedExtractionProfile || 'story'}; current settings, not the profile of stored events).`].filter(Boolean).join('\n');
     if (rescues.length) castText = [castText, `Rescued by cast history: ${rescues.join(', ')}.`].filter(Boolean).join('\n');
     if (debug.eventbaseTokenBudget != null) castText = [castText,
         `Shared EventBase budget: ${debug.estimatedInjectionTokens || 0}/${debug.eventbaseTokenBudget} estimated tokens.`,

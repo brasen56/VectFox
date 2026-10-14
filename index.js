@@ -340,6 +340,7 @@ const defaultSettings = {
     eventbase_debug_qdrant_backend: false,
     debug_vectorizing_log: false,                // Verbose vectorization progress logs in console
     eventbase_custom_prompt: '',                  // Custom extraction prompt (empty = use built-in default)
+    eventbase_extraction_profile: 'story',         // Opt-in slice_of_life preserves quiet continuity
     eventbase_resolved_downrank: 0.85,
     eventbase_open_issues_max: 6,
     eventbase_lead_share_threshold: 0.25,

@@ -28,6 +28,7 @@ import StringUtils from '../utils/string-utils.js';
 import { log } from './log.js';
 import { getCharacterRoster, renderKnownCharacters } from './character-roster.js';
 import { selectOpenIssues, mapResolutionRefs } from './continuity.js';
+import { resolveExtractionProfile, effectiveExtractionProfile } from './eventbase-extraction-settings.js';
 
 // Cap each message's reasoning (chain-of-thought) fed to the extractor as a
 // date/time/location fallback. Tunable — raise if a game places the scene recap
@@ -309,6 +310,7 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
     const languageHint = _inferLanguageHint(excerptText);
     const extractionRoster = getCharacterRoster(collectionIds.slice(0, 1), settings);
     const customPrompt = settings.eventbase_custom_prompt || '';
+    log.lifecycle(`[EventBase] Effective extraction profile: ${effectiveExtractionProfile(settings)} (selected: ${resolveExtractionProfile(settings)})`);
     const issueContextEnabled = extractionRoster.continuitySupported !== false && (!customPrompt.trim() || customPrompt.includes('{{openIssues}}'));
     const sceneText = messages.map(m => `${m.name || ''}: ${cleanText(String(m.mes || ''))}`).join('\n');
     const openIssues = issueContextEnabled ? selectOpenIssues({ roster: extractionRoster, windowStart, windowEnd, text: sceneText, settings })
@@ -322,6 +324,7 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         settings.cjk_tokenizer_mode || 'intl',
         renderKnownCharacters(getCharacterRoster(collectionIds, settings), settings),
         openIssues.text,
+        resolveExtractionProfile(settings),
     );
     if (languageHint) {
         basePrompt = `DETECTED EXCERPT LANGUAGE: ${languageHint}. You MUST write ALL string fields in that language — no exceptions.\n\n${basePrompt}`;

@@ -1,6 +1,6 @@
 # EventBase continuity: phased scope
 
-**Status:** Scope proposal, revision 1, 2026-10-12. Phases 0–2 are implemented; Phase 2 still needs live-collection precision and cost validation (see Validation below).
+**Status:** Scope proposal, revision 1, 2026-10-12; implementation update 2026-10-14. Phases 0–3 are implemented; Phase 2 still needs live-collection precision and cost validation (see Validation below), and Phase 3's real-model fixture measurement is pending (see [extraction-profile-validation.md](extraction-profile-validation.md)).
 **Responds to:** [eventbase-continuity-design.md](eventbase-continuity-design.md), the co-author's proposal. This document turns it into phases, and adds measurements taken from a real long-running collection.
 
 **Already decided:**
@@ -220,11 +220,13 @@ Release condition: an interrupted repair resumes without duplicating proposals, 
 
 - **Setting.** `eventbase_extraction_profile`: `story` (default) or `slice_of_life`. A custom prompt overrides it, and diagnostics show the effective profile.
 - **What the profile changes:**
-  - It swaps the text of Gate 1 and Gate 3 and the importance guidance, so established routines, agreements, preferences, nicknames, commitments and project milestones get stored.
+  - It swaps the introduction, all three gates and the opening of the importance guidance, so established routines, agreements, preferences, nicknames, boundaries, commitments and project milestones get stored. Gate 2 changes too: the story profile's "Do you remember when…?" test rejects preferences, which nobody recalls as an event. The per-type importance ranges stay, so conflicts score the same under both profiles (repair scope and Rule 5 depend on that).
+  - Quiet facts are told to carry `open_threads: []`. Preferences and agreements are interpersonal types, and `selectOpenIssues` ranks those first with no importance filter, so invented threads on them would crowd real conflicts out of the open-issue list.
   - These score 3–5, so they clear the default store floor of 3. The design doc's warning about the store floor is met without adding a `continuity_value` field.
   - The rule is one event for each new or changed routine, never one per repetition.
 - **Languages.** All six variants.
 - **Before it is offered.** Measure on a fixture chat how many more events the profile produces, both at the default window (2 messages, 3 events) and at 20 messages and 10 events.
+  - Implementation includes a read-only 22-call fixture benchmark and regression tests. Real-model results remain a release gate; see [validation instructions and results table](extraction-profile-validation.md).
 
 ## Phase 4: deferred design-doc items
 

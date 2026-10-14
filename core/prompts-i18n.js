@@ -924,9 +924,10 @@ const _EXTRACTION_PROMPTS = {
  * Falls back to the English (intl) prompt for unknown modes.
  *
  * @param {string} [mode] - Value from CJK_TOKENIZER_MODES (e.g. 'jieba_tw')
+ * @param {string} [profile] - story (default) or slice_of_life; custom prompts bypass this
  * @returns {string}
  */
-export function getEventBaseExtractionPrompt(mode) {
+export function getEventBaseExtractionPrompt(mode, profile = 'story') {
     const rosterInstructions = {
         intl: 'Known characters (aliases in parentheses refer to the same person). Prefer these names when supported by the excerpt; do not invent events from this list:',
         jieba: '已知角色（括号中的别名指同一人）。当节选支持时优先使用这些名字；不要根据此列表编造事件：',
@@ -949,9 +950,69 @@ export function getEventBaseExtractionPrompt(mode) {
    - Gate 1 exception: an event that resolves a listed issue passes Gate 1, even when reconciliation returns the story to an earlier state.
    - Importance: score a resolution within 1 of the listed issue it closes.
    - If the same excerpt contains both conflict and outcome, extract one event with the outcome in result and keep only questions still open in open_threads.\n`;
-    const base = _EXTRACTION_PROMPTS[mode] ?? _EXTRACTION_PROMPTS.intl;
+    let base = _EXTRACTION_PROMPTS[mode] ?? _EXTRACTION_PROMPTS.intl;
+    if (profile === 'slice_of_life') {
+        // Gates 1-3 are replaced whole; the per-type importance ranges stay so
+        // story changes score the same under both profiles.
+        base = base.replace(_EXTRACTION_TOP, _SLICE_OF_LIFE_TOP)
+            .replace(/   ── GATE 1:[\s\S]*?(?=4\. REASONING BLOCKS)/, _SLICE_OF_LIFE_GATES)
+            .replace(/  BEFORE ASSIGNING A SCORE[\s\S]*?(?=  PERMANENT \/ IRREVERSIBLE)/, _SLICE_OF_LIFE_IMPORTANCE);
+    }
     return `${rosterInstructions[mode] ?? rosterInstructions.intl}\n{{knownCharacters}}\n\n${issueIntro[mode] ?? issueIntro.intl}\n{{openIssues}}\n\n${base.replace('=========================\nOUTPUT SCHEMA', `${rules}\n=========================\nOUTPUT SCHEMA`)}`;
 }
+
+// Instructional metadata is shared across all six output-language variants.
+const _SLICE_OF_LIFE_TOP = `You are a story event archivist for a roleplay session. Extract concrete information useful for future continuity, including established ordinary life, without requiring a dramatic change.
+
+Preserve significant story changes AND supported routines, agreements, preferences, nicknames, boundaries, commitments, and project milestones. Extract only facts established in the narrative, never inferred relationship states.
+
+=========================
+ABSOLUTE RULES (DO NOT BREAK)
+=========================
+`;
+
+// Examples deliberately differ from the benchmark fixture so it measures the rules, not recall.
+const _SLICE_OF_LIFE_GATES = `   ── GATE 1: THE FUTURE-CONTINUITY TEST ──
+   "If the story forgot this, could a later scene get something wrong?"
+   (offering food to someone with an allergy, using a nickname that was refused,
+   forgetting whose turn it is to walk the dog)
+   - YES → continue to Gate 2. Routines, agreements, preferences, nicknames,
+     boundaries, commitments and milestones count even with no drama.
+   - NO, and nothing in the story changed → SKIP.
+
+   ── GATE 2: THE RECALL TEST ──
+   "Would anyone later need this, either to ask 'Do you remember when…?'
+   or to keep a detail consistent?"
+   - If no one would → SKIP. Otherwise → continue to Gate 3.
+
+   ── GATE 3: THE NEW-OR-CHANGED TEST ──
+   "Does this excerpt establish this fact for the first time, or change it?"
+   - Habit words ("as usual", "again", "another", "like every week") mean it is
+     already established. SKIP unless something about it changes.
+   - One event per new or changed fact, never one per repetition. Keep separate
+     facts separate; merge only details of the same fact.
+   - Ordinary attendance (work, school, chores) is not a fact; a change to it
+     (a new job, quitting, a new shift) is.
+   - Store an agreed plan or a promise as a COMMITMENT, not as completed work.
+     A date that is only mentioned ("the exam is Monday") is not a commitment.
+   - An apology or reconciliation settles only what it addresses. Other
+     problems stay open.
+   - Teasing, affection or your own interpretation is not a nickname, boundary or
+     relationship change. Store only what the excerpt explicitly establishes.
+   - Routines, preferences and nicknames normally have open_threads: [].
+     A commitment may keep its one real question ("Will he call his sister before her birthday?").
+   - Sexual / intimate scenes: extract only explicit preferences, boundaries, agreements, revelations, or relationship changes useful later; intimacy alone is not an event.
+
+`;
+
+const _SLICE_OF_LIFE_IMPORTANCE = `  Score future continuity value, not dramatic intensity:
+  - 1-2: filler, unsupported interpretations, or unchanged repetitions → DO NOT EXTRACT.
+  - 3-5: supported new or changed routines, agreements, preferences, nicknames, boundaries, commitments, and concrete project milestones, whatever their event type. Never score a supported quiet fact below 3, and do not raise it to a dramatic score.
+  - Story changes (confrontations, revelations, betrayals, deaths, major milestones) use the type ranges below.
+  - A resolution of a listed issue is scored by Rule 5 instead.
+  Event types for quiet facts: dialogue_significant for preferences, nicknames and agreements; promise_or_oath for commitments; side_quest_update for practical milestones; other for routines when no more specific type fits.
+
+`;
 
 
 // ─────────────────────────────────────────────────────────────────────────────

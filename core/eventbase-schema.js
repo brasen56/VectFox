@@ -321,7 +321,7 @@ export const DEFAULT_EXTRACTION_PROMPT = getEventBaseExtractionPrompt('intl');
  *
  * Template selection (first non-empty wins):
  *   1. `customPrompt` — user-edited override from settings.eventbase_custom_prompt
- *   2. `getEventBaseExtractionPrompt(mode)` — built-in default localized to the
+ *   2. `getEventBaseExtractionPrompt(mode, profile)` — selected built-in localized to the
  *      user's CJK Tokenizer Mode (defaults to 'intl' / English when mode is
  *      unset or unrecognized)
  *
@@ -335,12 +335,13 @@ export const DEFAULT_EXTRACTION_PROMPT = getEventBaseExtractionPrompt('intl');
  *                          customPrompt is provided.
  * @param {string} [knownCharacters] - Bounded grouped roster, empty while indexing
  * @param {string} [openIssues] - Bounded window-local issue refs, or (none)
+ * @param {string} [profile] - Built-in extraction profile (story / slice_of_life)
  * @returns {string}
  */
-export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl', knownCharacters = '', openIssues = '(none)') {
+export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl', knownCharacters = '', openIssues = '(none)', profile = 'story') {
     const template = (customPrompt && customPrompt.trim())
         ? customPrompt
-        : getEventBaseExtractionPrompt(mode);
+        : getEventBaseExtractionPrompt(mode, profile);
     return template
         .replace(/\{\{maxCount\}\}|\{\{knownCharacters\}\}|\{\{openIssues\}\}|\{\{text\}\}/g, placeholder => {
             if (placeholder === '{{maxCount}}') return String(maxCount);
