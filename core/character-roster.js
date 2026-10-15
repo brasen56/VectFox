@@ -51,6 +51,8 @@ function slimEvent(item) {
         source_window_start: event.source_window_start,
         created_at: event.created_at,
         inserted_at: event.inserted_at,
+        // Per-file chat the event was extracted from; undefined = unknown (older events).
+        source_chat_id: event.source_chat_id,
         result: event.result || parsed.result || '',
         open_threads: Array.isArray(event.open_threads) ? [...event.open_threads] : [],
         continuity: event.continuity,

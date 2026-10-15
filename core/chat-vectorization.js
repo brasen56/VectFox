@@ -332,6 +332,9 @@ export async function synchronizeChat(settings, batchSize = 5, triggerEvent = nu
     const { runEventBaseIngestion, getAutoSyncWindowSize } = await import('./eventbase-workflow.js');
     const prepared = prepareMessagesForEventBase(context.chat, chat_metadata);
     const messages = prepared.messages;
+    // Read with the snapshot (no await in between) so it names the file these
+    // messages came from, even if the chat switched during the awaits above.
+    const sourceChatId = getCurrentChatId();
     if (prepared.stats.summariesFound > 0) {
         log.lifecycle(
             `[AutoSync] InlineSummary expansion: ${prepared.stats.summariesFound} summary message(s) `
@@ -371,6 +374,7 @@ export async function synchronizeChat(settings, batchSize = 5, triggerEvent = nu
             // turn-pair is an independent window.
             windowSizeOverride: getAutoSyncWindowSize(settings),
             windowOverlapOverride: 0,
+            sourceChatId,
         });
     } catch (err) {
         // A retired/unknown model (extraction OR embedding) would otherwise be
@@ -1712,6 +1716,9 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null, {
 
         const prepared = prepareMessagesForEventBase(context.chat, chat_metadata);
         const allMessages = prepared.messages;
+        // Same synchronous step as the snapshot; `chatId` above predates the
+        // backend health-check await, so it can name a different file.
+        const sourceChatId = getCurrentChatId();
         if (prepared.stats.summariesFound > 0) {
             log.lifecycle(
                 `[VectorizeAll] InlineSummary expansion: ${prepared.stats.summariesFound} summary message(s) `
@@ -1733,6 +1740,7 @@ export async function vectorizeAll(settings, batchSize, abortSignal = null, {
             parallelWindows,
             progressPlan,
             skipTipFallback,
+            sourceChatId,
         });
 
         if (chatId !== getCurrentChatId()) {

@@ -108,6 +108,8 @@ export function getCommitBoundary(messages, settings) {
  * @param {object}   params.settings    - VectFox settings
  * @param {AbortSignal|null} [params.abortSignal]
  * @param {{ strategy?: string, batchSize?: number, totalChunks?: number }|null} [params.progressPlan]
+ * @param {string|null} [params.sourceChatId] - Per-file chat name `messages` were read from,
+ *   captured with the message snapshot. Stamped on new events as `source_chat_id`.
  * @returns {Promise<{ eventsExtracted: number, windowsProcessed: number, windowsSkipped: number, windowsTimedOut?: number, windowsFailed?: number }>}
  */
 /**
@@ -128,8 +130,14 @@ export function countUnfinishedWindows(result) {
     return (result?.windowsTimedOut || 0) + (result?.windowsFailed || 0);
 }
 
-export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null, parallelWindows = 3, isAutoSync = false, suppressAutoSyncPopup = false, skipTipFallback = false, windowSizeOverride = undefined, windowOverlapOverride = undefined }) {
+export async function runEventBaseIngestion({ messages, chatUUID, settings, abortSignal = null, progressPlan = null, collectionIdOverride = null, parallelWindows = 3, isAutoSync = false, suppressAutoSyncPopup = false, skipTipFallback = false, windowSizeOverride = undefined, windowOverlapOverride = undefined, sourceChatId = null }) {
     const uuid = chatUUID || getChatUUID();
+    // Per-file chat name the messages were read from. Sibling chat files share
+    // the integrity UUID, so chat_uuid alone cannot say which branch an event
+    // came from. Callers capture it in the same synchronous step that snapshots
+    // `messages`; it is never re-read here, because the user can switch chats
+    // while windows are extracting. Absent (archives, older callers) = unknown.
+    const sourceChat = typeof sourceChatId === 'string' && sourceChatId ? sourceChatId : null;
 
     // Defensive normalization for direct ingestion callers (notably uploaded
     // archives). Live-chat callers already pass an expanded sequence with access
@@ -596,8 +604,9 @@ export async function runEventBaseIngestion({ messages, chatUUID, settings, abor
                     return { skipped: false, events: [], failed: true, failureDetail: err.message };
                 }
 
-                // Attach chat_uuid to each event
-                const annotated = rawEvents.map(e => ({ ...e, chat_uuid: uuid }));
+                // Attach chat_uuid (and the source chat file, when known) to each event.
+                // source_chat_id is payload-only: not in the embed text, fingerprints or tips.
+                const annotated = rawEvents.map(e => ({ ...e, chat_uuid: uuid, ...(sourceChat ? { source_chat_id: sourceChat } : {}) }));
 
                 // Filter by minimum importance
                 const toStore = annotated.filter(e => e.importance >= minImportanceStore);

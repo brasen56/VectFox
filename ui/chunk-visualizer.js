@@ -158,6 +158,9 @@ function getChunkData(chunk) {
         // Real-world send-time anchor (message send_date). Deterministic metadata,
         // NOT part of the editable embed text — surfaced read-only in the info bar.
         realWorldDate: chunk.metadata?.real_world_date || null,
+        // Per-file chat the event was extracted from (null = unknown: extracted
+        // before this was recorded, an archive upload, or a hashes-only backend).
+        sourceChatId: chunk.metadata?.source_chat_id || null,
     };
 }
 
@@ -794,6 +797,12 @@ function renderDetailPanel() {
                         <span class="vectfox-meta-value">${data.eventItems.length
                             ? data.eventItems.map(it => `<span class="vectfox-concept-tag">${StringUtils.escapeHtml(it)}</span>`).join('')
                             : '<span class="vectfox-meta-empty">—</span>'}</span>
+                    </div>
+                    <div class="vectfox-meta-row" title="Chat file this event was extracted from. Unknown for events extracted before this was recorded.">
+                        <span class="vectfox-meta-label">Source chat</span>
+                        <span class="vectfox-meta-value">${data.sourceChatId
+                            ? StringUtils.escapeHtml(String(data.sourceChatId))
+                            : '<span class="vectfox-meta-empty">unknown</span>'}</span>
                     </div>
                     ${data.openThreads.length ? `
                     <div class="vectfox-meta-row vectfox-meta-row-full">

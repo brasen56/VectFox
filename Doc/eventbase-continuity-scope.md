@@ -230,6 +230,8 @@ Release condition: an interrupted repair resumes without duplicating proposals, 
 
 ## Phase 4: deferred design-doc items
 
+Implementation breakdown, dependencies and proposed acceptance criteria: [Phase 4 implementation scope](eventbase-continuity-phase4-scope.md) (draft, 2026-10-15). The items below remain deferred; that draft does not change Phase 2–3 release gates.
+
 | Design-doc item | Plan | Reason |
 |---|---|---|
 | Relationship states with a reserved budget (§3.1, §5.4) | Later, as a "current relationship with {lead}" section on NPC cards | Cards already have capped incremental refresh and per-fact citations. A parallel store needs subject IDs, per-pair synthesis and branch scoping before it helps. |

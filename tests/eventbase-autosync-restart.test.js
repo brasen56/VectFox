@@ -67,6 +67,7 @@ import { extension_settings } from '../../../../extensions.js';
 import {
     clearExtractionCachesForChat, setAutoSyncStartPoint, getAutoSyncMarker,
     hasPendingAutoSyncRecheck, markWindowExtracted, isWindowAlreadyExtracted, getVectorizationTip,
+    insertEvents,
 } from '../core/eventbase-store.js';
 import { extractEvents } from '../core/eventbase-extractor.js';
 import { getAutoSyncWindowSize, getChatAutoSyncStatus, runEventBaseIngestion } from '../core/eventbase-workflow.js';
@@ -274,5 +275,53 @@ describe('manual auto-sync restart', () => {
         expect(extractEvents).not.toHaveBeenCalled();
         expect(await isWindowAlreadyExtracted(sourceHashes(400), null, {}, UUID)).toBe(false);
         expect(extension_settings.vectfox.eventbase_extracted_windows?.[UUID]).toBeUndefined();
+    });
+});
+
+describe('source chat identity on new events', () => {
+    const inserted = () => insertEvents.mock.calls.flatMap(([events]) => events);
+    // Everything a run leaves behind besides the event payloads.
+    const runState = () => ({
+        starts: extractedStarts(),
+        tip: getVectorizationTip(UUID),
+        marker: getAutoSyncMarker(UUID),
+        fingerprints: extension_settings.vectfox.eventbase_extracted_windows?.[UUID],
+    });
+
+    it('stamps the caller-frozen chat file on every event, not whatever chat is open later', async () => {
+        setAutoSyncStartPoint(UUID, 400, extension_settings.vectfox);
+        // The mocked getCurrentChatId() says 'restart-chat' throughout; the
+        // workflow must keep the value the caller captured with the messages.
+        await run({ sourceChatId: 'Branch A - 2026-10-01@12h00m' });
+        expect(inserted()).toHaveLength(4);
+        for (const event of inserted()) {
+            expect(event).toMatchObject({ chat_uuid: UUID, source_chat_id: 'Branch A - 2026-10-01@12h00m' });
+        }
+    });
+
+    it('leaves the field absent (unknown) when the caller has no chat file, e.g. archive uploads', async () => {
+        setAutoSyncStartPoint(UUID, 400, extension_settings.vectfox);
+        await run({ sourceChatId: '' });
+        expect(inserted()).toHaveLength(4);
+        for (const event of inserted()) expect(event).not.toHaveProperty('source_chat_id');
+    });
+
+    it('changes nothing but the payload field: same windows, tip, marker and fingerprints', async () => {
+        setAutoSyncStartPoint(UUID, 400, extension_settings.vectfox);
+        await run();
+        const without = { state: runState(), events: inserted() };
+        expect(without.state.starts).toEqual([400, 440, 480, 520]);
+        expect(without.state.fingerprints).toHaveLength(4);
+
+        clearExtractionCachesForChat(UUID);
+        vi.clearAllMocks();
+        extension_settings.vectfox.eventbase_vectorization_tip = { [UUID]: 560 };
+        extension_settings.vectfox.eventbase_autosync_start_marker = { [UUID]: 560 };
+        fixture.items = [{ metadata: { source_window_end: 559, source_message_hashes: [-1, -2] } }];
+        setAutoSyncStartPoint(UUID, 400, extension_settings.vectfox);
+        await run({ sourceChatId: 'Branch A' });
+
+        expect(runState()).toEqual(without.state);
+        expect(inserted().map(({ source_chat_id, ...rest }) => rest)).toEqual(without.events);
     });
 });

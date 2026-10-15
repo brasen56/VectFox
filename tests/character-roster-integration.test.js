@@ -52,6 +52,18 @@ describe('EventBase roster lifecycle hooks', () => {
         expect(getCharacterRoster([id]).totalEvents).toBe(1);
     });
 
+    it('carries source_chat_id into the payload and roster without touching the embed text', async () => {
+        await insertEvents([event, { ...event, event_id: 'evt2', source_chat_id: 'Branch A - 2026-10-01@12h00m' }], settings);
+        const [plain, stamped] = insertVectorItems.mock.calls[0][1];
+        expect(stamped.metadata.source_chat_id).toBe('Branch A - 2026-10-01@12h00m');
+        expect(plain.metadata).not.toHaveProperty('source_chat_id');
+        expect(stamped.text).toBe(plain.text);
+        const byId = getCharacterRoster([id]).eventById;
+        expect(byId.get('evt2').source_chat_id).toBe('Branch A - 2026-10-01@12h00m');
+        // Missing means unknown — never filled in from the open chat.
+        expect(byId.get('evt1').source_chat_id).toBeUndefined();
+    });
+
     it('drops the collection index when fresh extraction caches are cleared', async () => {
         await insertEvents([event], settings);
         clearExtractionCachesForChat('uuid');
