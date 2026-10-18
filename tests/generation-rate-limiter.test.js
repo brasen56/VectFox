@@ -7,6 +7,42 @@ const quota = { rate_limit_calls: 1, rate_limit_interval: 1 };
 afterEach(() => vi.useRealTimers());
 
 describe('shared generation priority queue', () => {
+    it('removes aborted queued work immediately without charging quota or blocking other work', async () => {
+        vi.useFakeTimers();
+        const limiter = new GenerationRateLimiter();
+        const settings = { rate_limit_calls: 1, rate_limit_interval: 60 };
+        await limiter.execute(() => 'seed', settings);
+        const timestamps = [...limiter.timestamps];
+        const controller = new AbortController();
+        const fn = vi.fn();
+        const pending = limiter.execute(fn, settings, 'ask-story', { signal: controller.signal });
+        const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        const next = limiter.execute(() => 'next', settings);
+        controller.abort();
+        await rejected;
+        expect(limiter.queue).toHaveLength(1);
+        expect(limiter.timestamps).toEqual(timestamps);
+        await vi.runAllTimersAsync();
+        expect(await next).toBe('next');
+        expect(fn).not.toHaveBeenCalled();
+        expect(limiter.timer).toBeNull();
+    });
+    it('rejects pre-aborted work even with throttling disabled and clears an empty queue timer', async () => {
+        vi.useFakeTimers();
+        const limiter = new GenerationRateLimiter();
+        const controller = new AbortController();
+        const fn = vi.fn();
+        controller.abort();
+        await expect(limiter.execute(fn, {}, '', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+        await limiter.execute(() => 'seed', quota);
+        const queued = new AbortController();
+        const rejected = expect(limiter.execute(fn, quota, '', { signal: queued.signal })).rejects.toMatchObject({ name: 'AbortError' });
+        queued.abort();
+        await rejected;
+        expect(limiter.queue).toEqual([]);
+        expect(limiter.timer).toBeNull();
+        expect(fn).not.toHaveBeenCalled();
+    });
     it('dispatches planner before queued cards without exceeding the shared quota', async () => {
         vi.useFakeTimers();
         const limiter = new GenerationRateLimiter();

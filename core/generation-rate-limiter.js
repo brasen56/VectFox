@@ -33,6 +33,8 @@ export class GenerationQueueTimeoutError extends Error {
  * requests do not hold the dispatch queue while awaiting their LLM response.
  * Background cards never take a window's last slot, and a request with a
  * `deadline` is dropped, uncharged, once its caller has stopped waiting.
+ * An optional abort signal removes queued work immediately without charging
+ * quota; after dispatch, cancellation is the provider callback's responsibility.
  */
 export class GenerationRateLimiter {
     constructor() {
@@ -41,10 +43,22 @@ export class GenerationRateLimiter {
         this.timer = null;
     }
 
-    execute(fn, settings, label = '', { deadline = Infinity } = {}) {
+    execute(fn, settings, label = '', { deadline = Infinity, signal } = {}) {
         return new Promise((resolve, reject) => {
+            signal?.throwIfAborted();
             const priority = label === 'agent' ? 2 : label === 'repair' ? -1 : label === 'npc-card' ? 0 : 1;
-            this.queue.push({ fn, settings, label, priority, deadline, queuedAt: Date.now(), resolve, reject });
+            const request = { fn, settings, label, priority, deadline, queuedAt: Date.now(), resolve, reject,
+                cleanup: () => signal?.removeEventListener('abort', abort) };
+            const abort = () => {
+                const index = this.queue.indexOf(request);
+                if (index < 0) return;
+                this.queue.splice(index, 1);
+                request.cleanup();
+                reject(signal.reason);
+                this._drain();
+            };
+            signal?.addEventListener('abort', abort, { once: true });
+            this.queue.push(request);
             this.queue.sort((a, b) => b.priority - a.priority);
             this._drain();
         });
@@ -58,6 +72,7 @@ export class GenerationRateLimiter {
             const now = Date.now();
             this.queue = this.queue.filter(request => {
                 if (request.deadline > now) return true;
+                request.cleanup();
                 request.reject(new GenerationQueueTimeoutError(request.label, now - request.queuedAt));
                 return false;
             });
@@ -82,6 +97,7 @@ export class GenerationRateLimiter {
                 this.timestamps.push(now);
             }
             this.queue.shift();
+            request.cleanup();
             // Catch synchronous throws as well as rejected provider promises.
             try {
                 Promise.resolve(request.fn()).then(request.resolve, request.reject);

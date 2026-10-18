@@ -56,6 +56,8 @@ const publicEventAPI = installPublicEventAPI();
 
 // Default settings
 const defaultSettings = {
+    // Ask the Story is manual, opt-in, and never injected into roleplay context.
+    ask_story_enabled: false,
     // Master switch — when false, VectFox does no automatic runtime work
     // (retrieval injection, auto-sync, lorebook WI injection). Default ON.
     // Single source of truth for reads: core/feature-gate.js::isVectFoxEnabled.

@@ -7,6 +7,7 @@ vi.mock('../core/providers.js', () => ({ getModelFromSettings: () => 'test-model
 import { StandardBackend } from '../backends/standard.js';
 import { createPublicEventAPI } from '../core/public-event-api.js';
 import { threadsDigest } from '../core/continuity.js';
+import { askStory } from '../core/story-research.js';
 import { captureEventSources, legacySourceHash, narrativeFingerprint, resolveEventSources } from '../core/event-sources.js';
 
 const message = (mes, id = 'a') => ({ name: 'Alex', mes, id, extra: { mesid: id, mwt_uuid: 'private' } });
@@ -209,9 +210,102 @@ describe('Phase 0 public history API', () => {
         expect((await api.findEvents({ subjects: [{ name: 'Alex' }, { name: 'Ranger' }], match: 'all' })).events).toHaveLength(0);
         expect((await api.findEvents({ subjects: [{ name: 'Alex' }, { name: 'Ranger' }], match: 'any' })).events).toHaveLength(3);
     });
+    it('research retrieves old and resolved events despite aggressive injection settings', async () => {
+        const old = event('old', { source_window_start: 0, characters: ['Alexander'],
+            summary: 'Alexander met Ranger at the old gate.', open_threads: ['return sword'],
+            continuity: { v: 1 } });
+        old.continuity.closed_threads = { status: 'active', threads: 'all', threads_digest: threadsDigest(old), how: 'Returned' };
+        const { api, state } = fixture([old, event('recent', { source_window_start: 999, summary: 'Unrelated recent business', characters: [] })]);
+        Object.assign(state.settings, { eventbase_top_k: 1, eventbase_exclude_recent: 1000,
+            eventbase_resolved_downrank: 0, eventbase_character_alias_overrides: { events: [{ name: 'Alex', aliases: ['Alexander'] }] } });
+        const result = await api.findEvents({ mode: 'question', question: 'How did Alex meet Ranger?', limit: 10 });
+        expect(result.events.map(e => e.event_id)).toContain('old');
+        expect(result.events.find(e => e.event_id === 'old').continuity_view.fullyResolved).toBe(true);
+        expect(result.events.map(e => e.event_id)).not.toContain('recent');
+    });
+    it('surfaces ambiguous roster subjects in research questions', async () => {
+        const { api } = fixture([event('one', { characters: ['Alex Smith', 'Alex Jones', 'Alex'] })]);
+        expect(await api.findEvents({ mode: 'question', question: 'What did Alex do?' }))
+            .toMatchObject({ ok: false, error: { code: 'ambiguous_subject' } });
+    });
+    it('carries a full character chronology through real API research and answer evidence', async () => {
+        const { api } = fixture(Array.from({ length: 300 }, (_, i) => event(String(i), {
+            source_window_start: i, characters: ['Alex'], summary: 'Alex continues the journey',
+        })));
+        const candidates = await api.findEvents({ mode: 'question', question: 'Give me a timeline of Alex' });
+        expect(candidates.events).toHaveLength(200);
+        expect(candidates.events.at(-1).event_id).toBe('299');
+        const complete = vi.fn(async prompt => {
+            const data = JSON.parse(prompt.split('Research data: ')[1]);
+            expect(data.evidence).toHaveLength(40);
+            expect(data.evidence[0].source_window_start).toBe(0);
+            expect(data.evidence.at(-1).source_window_start).toBe(299);
+            expect(data.evidence.some(e => e.source_window_start >= 140 && e.source_window_start <= 160)).toBe(true);
+            return JSON.stringify({ status: 'partial', gap: 'History was sampled.', claims: [{
+                sentence: 'Alex continued the journey.', event_refs: [data.evidence[0].event_ref],
+            }] });
+        });
+        const result = await askStory({ api, complete, question: 'Give me a timeline of Alex' });
+        expect(result.coverage.sampled).toBe(true);
+        expect(complete).toHaveBeenCalledOnce();
+    });
+    it('expands subject anchors into topical same-chat outcomes but keeps history strict', async () => {
+        const { api } = fixture([
+            event('unrelated', { source_window_start: 0, summary: 'A merchant counts coins.', characters: ['Merchant'] }),
+            event('promise', { source_window_start: 1, summary: 'Alex promises to bring an antidote.', characters: ['Alex'] }),
+            event('outcome', { source_window_start: 2, summary: 'The antidote arrives and the patient recovers.', characters: ['Patient'] }),
+            event('distant', { source_window_start: 3, summary: 'The antidote is sold elsewhere.', characters: ['Merchant'] }),
+            event('other-chat', { source_chat_id: 'other', source_window_start: 0,
+                summary: 'The antidote arrives.', characters: ['Patient'] }),
+        ]);
+        for (const scope of [undefined, { kind: 'selected_collections', collections: ['events'] }]) {
+            const result = await api.findEvents({ mode: 'question', question: 'Did Alex deliver the antidote?', scope });
+            expect(result.events.map(e => e.event_id)).toEqual(['promise', 'outcome']);
+        }
+        expect((await api.findEvents({ subjects: [{ name: 'Alex' }] })).events.map(e => e.event_id)).toEqual(['promise']);
+        const complete = vi.fn(async prompt => {
+            const data = JSON.parse(prompt.split('Research data: ')[1]);
+            expect(data.evidence.map(e => e.summary)).toEqual([
+                'Alex promises to bring an antidote.', 'The antidote arrives and the patient recovers.',
+            ]);
+            return JSON.stringify({ status: 'partial', gap: 'Delivery by Alex is not established.', claims: [{
+                sentence: 'The patient recovered after the antidote arrived.', event_refs: [data.evidence[1].event_ref],
+            }] });
+        });
+        await askStory({ api, complete, question: 'Did Alex deliver the antidote?' });
+        expect(complete).toHaveBeenCalledOnce();
+    });
     it('reports ambiguity rather than silently merging two people', async () => {
         const { api } = fixture([event('one', { characters: ['Alex Smith', 'Alex Jones', 'Alex'] })]);
         expect((await api.findEvents({ subjects: [{ name: 'Alex' }] })).error.code).toBe('ambiguous_subject');
+    });
+    it('prefers full names at overlapping positions but retains independent short-name ambiguity', async () => {
+        const { api } = fixture(['Alex', 'Alex Smith', 'Alex Jones'].map(name => event(name, { characters: [name] })));
+        for (const name of ['Alex Smith', 'Alex Jones']) {
+            const result = await api.findEvents({ mode: 'question', question: `What did ${name} do?` });
+            expect(result.ok).toBe(true);
+            expect(result.events.map(e => e.event_id)).toEqual([name]);
+        }
+        for (const question of ['What did Alex do?', 'What did Alex Smith tell Alex?', 'Did Alexander see Alex?']) {
+            expect(await api.findEvents({ mode: 'question', question }))
+                .toMatchObject({ ok: false, error: { code: 'ambiguous_subject' } });
+        }
+    });
+    it('preserves a manually resolved alias through public research and answer generation', async () => {
+        const { api, state } = fixture([event('task', { summary: 'Elizabeth repaired the gate.', characters: ['Elizabeth'] }),
+            event('unrelated', { summary: 'Ranger slept.', characters: ['Ranger'] })]);
+        state.settings.eventbase_character_alias_overrides = { events: [{ name: 'Bess', aliases: ['Elizabeth'] }] };
+        const complete = vi.fn(async prompt => {
+            const data = JSON.parse(prompt.split('Research data: ')[1]);
+            expect(data.evidence.map(e => e.summary)).toEqual(['Elizabeth repaired the gate.']);
+            expect(data.question).toBe('What did Bess do?');
+            return JSON.stringify({ status: 'answered', gap: '', claims: [{ sentence: 'Bess repaired the gate.',
+                event_refs: [data.evidence[0].event_ref] }] });
+        });
+        const result = await askStory({ api, complete, question: 'What did Bess do?' });
+        expect(result.status).toBe('answered');
+        expect(result.evidence.map(e => e.event_id)).toEqual(['task']);
+        expect(complete).toHaveBeenCalledOnce();
     });
     it.each([false, true])('keeps subject membership collection-qualified (ignored tag: %s)', async ignored => {
         const { api, state, backend } = fixture();
@@ -302,12 +396,14 @@ describe('Phase 0 public history API', () => {
         backend.listChunks.mockImplementation(async id => { if (id === 'second') throw new Error('offline'); return { items: [], total: 0 }; });
         expect(await api.findEvents()).toMatchObject({ ok: true, coverage: { partial: true } });
     });
-    it('bounds requests and explicitly rejects unsupported question research', async () => {
+    it('bounds requests and requires a question for research', async () => {
         const { api } = fixture();
         for (const request of [{ limit: 0 }, { limit: 501 }, { subjects: [null] }, { scope: { kind: 'bad' } }, { types: 'bad' }]) {
             expect((await api.findEvents(request)).error.code).toBe('invalid_request');
         }
-        expect((await api.findEvents({ mode: 'question' })).error.code).toBe('unsupported');
+        expect((await api.findEvents({ mode: 'question' })).error.code).toBe('invalid_request');
+        expect(await api.findEvents({ mode: 'question', question: 'A timeline of the story' })).toMatchObject({ ok: true });
+        expect(api.getStatus().capabilities.question_research.available).toBe(true);
         expect(api.getStatus().capabilities.semantic_search.available).toBe(false);
     });
     it('rejects stale async reads on chat switches, locks, and message edits', async () => {

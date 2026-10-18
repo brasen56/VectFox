@@ -1,0 +1,6 @@
+.vectfox-ask-story { margin: 12px 0; padding: 12px; border: 1px solid var(--SmartThemeBorderColor, #666); border-radius: 8px; }
+.vectfox-ask-story textarea { display: block; width: 100%; margin: 8px 0; }
+.vectfox-ask-story details { margin: 6px 0; padding: 6px; border-left: 2px solid var(--SmartThemeBorderColor, #666); }
+.vectfox-ask-story summary { cursor: pointer; overflow-wrap: anywhere; }
+.vectfox-ask-story pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow-y: auto; }
+.vectfox-ask-story small, .vectfox-ask-story p { overflow-wrap: anywhere; }

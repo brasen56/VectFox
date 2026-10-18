@@ -246,6 +246,7 @@ export async function postChatCompletion({
     sendTemperature = true,
     tokenLimitParameter = 'max_tokens',
     reasoningEffort = null,
+    signal = null,
 }) {
     const label = _providerLabel(provider);
 
@@ -285,7 +286,7 @@ export async function postChatCompletion({
         method: 'POST',
         headers,
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
 
     if (!response.ok) {

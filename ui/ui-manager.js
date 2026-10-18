@@ -1072,6 +1072,10 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <i class="fa-solid fa-bug"></i>
                                     <span>Debug Query</span>
                                 </button>
+                                <button id="VectFox_ask_story" class="vectfox-action-btn vectfox-btn-secondary">
+                                    <i class="fa-solid fa-book-open"></i>
+                                    <span>Ask the Story</span>
+                                </button>
                                 <button id="VectFox_debug_summarizer" class="vectfox-action-btn vectfox-btn-secondary" title="Preview the exact <VectFoxSummarizer> block that would be injected into the prompt this turn (without injecting it).">
                                     <i class="fa-solid fa-eye"></i>
                                     <span>Debug Summarizer</span>
@@ -5065,6 +5069,13 @@ function bindSettingsEvents(settings, callbacks) {
     });
     $('#VectFox_view_results').on('click', () => {
         openQueryTestModal();
+    });
+    $('#VectFox_ask_story').on('click', async () => {
+        const { openAskStoryPanel } = await import('./ask-story.js');
+        openAskStoryPanel(settings, () => {
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
     });
     $('#VectFox_debug_summarizer').on('click', () => {
         openSummarizerDebug(settings);

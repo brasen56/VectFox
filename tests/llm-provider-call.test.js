@@ -95,6 +95,18 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('postChatCompletion — isolated keys', () => {
+    it('combines caller cancellation with the existing request timeout', async () => {
+        const controller = new AbortController();
+        const fetchMock = vi.fn(async (_url, options) => {
+            expect(options.signal.aborted).toBe(false);
+            controller.abort();
+            expect(options.signal.aborted).toBe(true);
+            options.signal.throwIfAborted();
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(postChatCompletion(baseArgs({ signal: controller.signal }))).rejects.toThrow();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
     it('calls OpenRouter directly with the active VectFox key and merged request options', async () => {
         isolatedKeys.openrouter = 'vf-openrouter-key';
         const fetchMock = vi.fn(async () => okResponse({ content: 'isolated reply' }));
