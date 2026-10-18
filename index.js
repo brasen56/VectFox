@@ -40,6 +40,7 @@ import {
 } from './core/constants.js';
 import { isVectFoxEnabled } from './core/feature-gate.js';
 import { runNetworkStartup } from './core/network-startup.js';
+import { installPublicEventAPI } from './core/public-event-api-host.js';
 
 // VectFox modules - UI
 import { renderSettings, openDiagnosticsModal, loadWebLlmModels, updateWebLlmStatus, refreshAutoSyncCheckbox } from './ui/ui-manager.js';
@@ -51,6 +52,7 @@ import { CJK_TOKENIZER_MODES, setCjkTokenizerMode, ensureJiebaTokenizerLoaded, e
 
 // SillyTavern display label — NOT the settings key. For settings, use 'vectfox' (lowercase).
 const MODULE_NAME = 'VectFox';
+const publicEventAPI = installPublicEventAPI();
 
 // Default settings
 const defaultSettings = {
@@ -836,6 +838,7 @@ jQuery(async () => {
     eventSource.on(event_types.WORLDINFO_SETTINGS_UPDATED, refreshWiDepthDebounced);
 
     log.lifecycle('VectFox: ✅ Initialized successfully');
+    publicEventAPI.markReady();
 });
 
 /**

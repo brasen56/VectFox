@@ -10,6 +10,9 @@ export const CHARACTER_ROSTER_DEFAULTS = Object.freeze({
     eventbase_known_characters_max_chars: 4000,
 });
 const indexes = new Map();
+let archiveRevision = 0;
+/** Changes to stored events invalidate public integration snapshots too. */
+export function getEventArchiveRevision() { return archiveRevision; }
 // The current listing API scans the collection before slicing offset/limit.
 const LIST_LIMIT = Number.MAX_SAFE_INTEGER;
 const HONORIFICS = /^(?:(?:mr|mrs|ms|miss|dr|prof|sir|lady|lord|captain|capt|officer|judge|doctor|professor)\.?\s+)+/i;
@@ -125,10 +128,12 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null)
 }
 
 export function invalidateCharacterIndex(collectionId) {
+    archiveRevision++;
     indexes.delete(rosterCollectionId(collectionId));
 }
 
 export function upsertCharacterEvents(collectionId, items) {
+    archiveRevision++;
     const entry = indexes.get(rosterCollectionId(collectionId));
     if (!entry) return;
     for (const item of items) {
@@ -145,6 +150,7 @@ export function upsertCharacterEvents(collectionId, items) {
 }
 
 export function pruneCharacterEvents(collectionId, hashes) {
+    archiveRevision++;
     const entry = indexes.get(rosterCollectionId(collectionId));
     if (!entry) return;
     const removed = new Set(hashes);

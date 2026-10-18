@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 const mocks = vi.hoisted(() => ({ complete: vi.fn(), roster: null }));
 vi.mock('../core/api-keys.js', () => ({ getOpenRouterApiKey: () => 'key', getCustomApiKey: () => 'key' }));
 vi.mock('../core/llm-provider-call.js', async importOriginal => ({ ...(await importOriginal()), postChatCompletion: (...args) => mocks.complete(...args) }));
@@ -6,11 +6,44 @@ vi.mock('../core/log.js', () => ({ log: new Proxy({}, { get: () => vi.fn() }) })
 vi.mock('../core/character-roster.js', () => ({ getCharacterRoster: () => mocks.roster, renderKnownCharacters: () => 'Alex' }));
 vi.mock('../../../../../script.js', () => ({ getRequestHeaders: () => ({}) }));
 vi.mock('../../../../extensions.js', () => ({ extension_settings: { vectfox: {} } }));
-vi.mock('../core/text-cleaning.js', () => ({ cleanText: text => text }));
+vi.mock('../core/text-cleaning.js', () => ({ cleanText: text => text,
+    stripReasoningBlocks: text => text, stripGameSystemBlocks: text => text }));
 import { extractEvents } from '../core/eventbase-extractor.js';
 import { threadsDigest } from '../core/continuity.js';
+import { eventSourceReferences, resolveEventSources } from '../core/event-sources.js';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('resolution-aware extraction integration', () => {
+    it('keeps provenance tied to the prompt when live input changes during generation', async () => {
+        mocks.roster = { ready: false };
+        const messages = [{ name: 'Alex', mes: 'BEFORE EDIT', id: 'a', extra: { mesid: 'original' }, send_date: '2026-10-01' }];
+        mocks.complete.mockImplementationOnce(async () => {
+            messages[0].mes = 'AFTER EDIT';
+            messages[0].extra.mesid = 'edited';
+            messages[0].send_date = '2026-10-02';
+            return { content: JSON.stringify([{ event_type: 'other', importance: 3, summary: 'BEFORE EDIT' }]) };
+        });
+        const events = await extractEvents({ messages, windowStart: 0, windowEnd: 0,
+            settings: { chat_provider: 'openrouter', chat_model: 'model' } });
+        expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).toContain('BEFORE EDIT');
+        expect(events[0].source_messages[0].host_mesid).toBe('original');
+        expect(events[0].real_world_date).toBe('2026-10-01T00:00:00.000Z');
+        // Restore the host identity to isolate the narrative edit in resolution.
+        messages[0].extra.mesid = 'original';
+        const references = eventSourceReferences({ ...events[0], source_chat_id: 'chat' }, 'events', 'ref', 'scope');
+        const result = await resolveEventSources(references, { chatId: 'chat', chat: messages, chatMetadata: {} });
+        expect(result[0]).toMatchObject({ status: 'changed', reason: 'narrative_changed', message: { mes: 'AFTER EDIT' } });
+    });
+    it('continues extraction without secure-context hashing', async () => {
+        vi.stubGlobal('crypto', {});
+        mocks.roster = { ready: false };
+        mocks.complete.mockResolvedValueOnce({ content: JSON.stringify([{ event_type: 'other', importance: 3, summary: 'A fact.' }]) });
+        const events = await extractEvents({ messages: [{ name: 'Alex', mes: 'A fact.' }], windowStart: 0, windowEnd: 0,
+            settings: { chat_provider: 'openrouter', chat_model: 'model' } });
+        expect(events[0].source_messages[0]).toMatchObject({ fingerprint: null, expanded_index: 0 });
+        expect(events[0].source_message_hashes).toHaveLength(1);
+    });
     it('sends the selected profile, preserves custom precedence, and benchmarks both window sizes', async () => {
         mocks.roster = { ready: false };
         mocks.complete.mockClear();
@@ -19,6 +52,8 @@ describe('resolution-aware extraction integration', () => {
         const params = { messages: [{ name: 'Alex', mes: 'I prefer tea without sugar.' }], windowStart: 0, windowEnd: 0, settings };
         const events = await extractEvents(params);
         expect(events[0].importance).toBe(3);
+        expect(events[0].source_messages[0]).toMatchObject({ expanded_index: 0, host_id: null, host_mesid: null });
+        expect(events[0].source_messages[0].fingerprint).toMatch(/^sha256-narrative-v1:[a-f0-9]{64}$/);
         expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).toContain('FUTURE-CONTINUITY TEST');
         await extractEvents({ ...params, settings: { ...settings, eventbase_custom_prompt: 'CUSTOM {{text}}' } });
         expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).toContain('CUSTOM Alex:');

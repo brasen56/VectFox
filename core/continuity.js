@@ -36,7 +36,8 @@ export function buildResolvedBy(events) {
 
 export function getContinuityView(event, rosterIndex = null) {
     const events = rosterIndex?.events instanceof Map ? [...rosterIndex.events.values()] : rosterIndex?.events || [];
-    const stored = rosterIndex?.eventById?.get(event.event_id) || events.find(e => e.event_id === event.event_id);
+    const eventKey = rosterIndex?.eventKey || (record => record.event_id);
+    const stored = rosterIndex?.eventById?.get(eventKey(event)) || events.find(e => eventKey(e) === eventKey(event));
     const target = { ...stored, ...event };
     const threads = Array.isArray(target.open_threads) ? target.open_threads : [];
     const closed = new Set(), resolutions = [], inactiveLinks = [];
@@ -45,7 +46,7 @@ export function getContinuityView(event, rosterIndex = null) {
         if (!link) return;
         let reason = link.status !== 'active' ? 'not_active' : null;
         if (!reason && rosterIndex && (!stored || (resolver && !(rosterIndex.eventById
-            ? rosterIndex.eventById.has(resolver.event_id) : events.some(e => e.event_id === resolver.event_id))))) reason = 'ineligible_collection';
+            ? rosterIndex.eventById.has(eventKey(resolver)) : events.some(e => eventKey(e) === eventKey(resolver)))))) reason = 'ineligible_collection';
         if (!reason && link.threads_digest !== threadsDigest(target)) reason = 'digest_mismatch';
         if (!reason && resolver && link.resolver_digest && link.resolver_digest !== threadsDigest(resolver)) reason = 'resolver_digest_mismatch';
         if (!reason && link.threads !== 'all' && (!Array.isArray(link.threads) || !link.threads.length
@@ -59,7 +60,7 @@ export function getContinuityView(event, rosterIndex = null) {
     };
     if (target.continuity?.v === 1) apply(target.continuity.closed_threads);
     const reverse = rosterIndex?.resolvedBy || buildResolvedBy(events);
-    for (const { resolver, link } of reverse.get(target.event_id) || []) apply(link, resolver);
+    for (const { resolver, link } of reverse.get(eventKey(target)) || []) apply(link, resolver);
     // Outgoing links without eligible resolvers must not silently close anything.
     return { remainingThreads: threads.filter((_, i) => !closed.has(i)), closedThreads: threads.map((_, i) => i).filter(i => closed.has(i)),
         resolutions, fullyResolved: closesAll || (threads.length > 0 && closed.size === threads.length), inactiveLinks };

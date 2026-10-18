@@ -936,7 +936,8 @@ export class StandardBackend extends VectorBackend {
                 });
 
                 if (response.ok) {
-                    return await response.json();
+                    const result = await response.json();
+                    return { ...result, capabilities: { ...result.capabilities, metadata: true } };
                 }
                 // Split the !ok path: 4xx is misconfiguration (wrong route,
                 // bad params, plugin version skew) — fail loud so the DB
@@ -968,6 +969,7 @@ export class StandardBackend extends VectorBackend {
         return {
             items: hashes.map(hash => ({ hash, text: '', metadata: {} })),
             total: hashes.length,
+            capabilities: { metadata: false },
         };
     }
 

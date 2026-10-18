@@ -29,6 +29,7 @@ import { log } from './log.js';
 import { getCharacterRoster, renderKnownCharacters } from './character-roster.js';
 import { selectOpenIssues, mapResolutionRefs } from './continuity.js';
 import { resolveExtractionProfile, effectiveExtractionProfile } from './eventbase-extraction-settings.js';
+import { captureEventSources } from './event-sources.js';
 
 // Cap each message's reasoning (chain-of-thought) fed to the extractor as a
 // date/time/location fallback. Tunable — raise if a game places the scene recap
@@ -266,6 +267,9 @@ function _resolveWindowRealWorldDate(messages) {
  * @returns {Promise<object[]>} Array of full EventRecord objects (ingestion fields attached)
  */
 export async function extractEvents({ messages, windowStart, windowEnd, settings, windowIndex = 0, collectionIds = [] }) {
+    // Keep the prompt, fingerprints, hashes and timestamps tied to the same input,
+    // even if the live chat is edited while the provider request is pending.
+    messages = structuredClone(messages);
     // Logging routes through core/log.js. Per-window flow → Verbose; per-item
     // parse detail → Trace; raw LLM/parser dumps → 'raw_llm' domain deep-dive.
 
@@ -397,6 +401,7 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
 
     // Validate + coerce each event
     const validatedEvents = [];
+    const sourceMessages = await captureEventSources(messages, windowStart);
     const now = Date.now();
     // Real-world send-time anchor stamped onto every event in this window — the
     // final date fallback when no in-story DateTime/scene_time is available.
@@ -444,6 +449,7 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
             event_id: eventId,
             source_message_ids: messages.map((_, idx) => windowStart + idx),
             source_message_hashes: sourceHashes,
+            source_messages: sourceMessages,
             source_window_start: windowStart,
             source_window_end: windowEnd,
             // Intra-window event order (0-based, resets each window) plus the
