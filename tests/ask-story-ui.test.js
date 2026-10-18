@@ -38,6 +38,32 @@ afterEach(() => {
 });
 
 describe('Ask panel', () => {
+    it('selects archives explicitly and invalidates answers when selection changes', async () => {
+        settings.ask_story_enabled = true;
+        const getStatus = window.VectFoxAPI.getStatus;
+        window.VectFoxAPI.getStatus = () => ({ ...getStatus(), available_collections: [
+            { collectionId: 'events', registryKey: 'qdrant:events' },
+            { collectionId: 'archive', registryKey: 'standard:archive' }] });
+        events[0].source_chat_id = null;
+        window.VectFoxAPI.resolveSources.mockResolvedValue({ ok: true, sources: [{ ref: 'source:e', status: 'unresolved', reason: 'unknown_source_chat', message: null }] });
+        openAskStoryPanel(settings, vi.fn());
+        const [scope, collections] = document.querySelectorAll('select');
+        scope.value = 'selected_collections';
+        scope.dispatchEvent(new Event('change'));
+        expect([...document.querySelectorAll('button')].find(b => b.textContent === 'Ask').disabled).toBe(true);
+        collections.options[1].selected = true;
+        collections.dispatchEvent(new Event('change'));
+        document.querySelector('textarea').value = 'Alex';
+        click('Ask');
+        await settle();
+        expect(window.VectFoxAPI.findEvents).toHaveBeenCalledWith(expect.objectContaining({ scope: { kind: 'selected_collections', collections: ['standard:archive'] } }));
+        expect(document.body.textContent).toContain('Original unavailable: unresolved (unknown_source_chat)');
+        expect(document.body.textContent).not.toContain('Inspect verified original');
+        collections.options[1].selected = false;
+        collections.dispatchEvent(new Event('change'));
+        expect(document.body.textContent).not.toContain('Alex met Ranger.');
+        expect([...document.querySelectorAll('button')].find(b => b.textContent === 'Copy').disabled).toBe(true);
+    });
     it('is off by default, displays scope/model, and saves explicit opt-in', () => {
         const save = vi.fn();
         openAskStoryPanel(settings, save);

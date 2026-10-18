@@ -14,11 +14,11 @@ const message = (mes, id = 'a') => ({ name: 'Alex', mes, id, extra: { mesid: id,
 const collection = { collectionId: 'events', registryKey: 'qdrant:events' };
 const event = (event_id, fields = {}) => ({ event_id, source_chat_id: 'chat', summary: event_id,
     characters: ['Alex', 'Ranger'], event_type: 'dialogue_significant', source_window_start: 0, ...fields });
-function fixture(records = []) {
+function fixture(records = [], querySemantic) {
     const state = { ready: true, enabled: true, chatId: 'chat', chat: [message('hello')], chatMetadata: {},
         settings: {}, collections: [collection], availableCollections: [collection] };
     const backend = { listChunks: vi.fn(async () => ({ items: records.map(metadata => ({ metadata })), total: records.length })) };
-    const api = createPublicEventAPI({ readState: () => state, loadBackend: async () => backend });
+    const api = createPublicEventAPI({ readState: () => state, loadBackend: async () => backend, querySemantic });
     return { state, backend, api };
 }
 async function refs(messages) {
@@ -28,6 +28,23 @@ const resolve = (references, chat, chatMetadata = {}) => resolveEventSources(ref
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Phase 0 source resolution', () => {
+    it.each([0, 1])('does not verify a deleted dated duplicate against its survivor (%i)', async deleted => {
+        const messages = ['2026-01-01', '2026-01-02'].map(send_date => ({ name: 'Alex', mes: 'same', send_date }));
+        const stored = await captureEventSources(messages, 0);
+        const f = fixture([event('duplicates', { source_messages: stored })]);
+        f.state.chat = messages.filter((_, i) => i !== deleted);
+        const history = await f.api.findEvents();
+        const result = await f.api.resolveSources({ sources: history.events[0].source_refs, scope_token: history.scope_token });
+        expect(result.sources[deleted]).toMatchObject({ status: 'unresolved', message: null });
+        expect(result.sources[1 - deleted]).toMatchObject({ status: 'verified', message: { send_date: messages[1 - deleted].send_date } });
+    });
+    it('keeps undated legacy and same-date duplicates unresolved without host IDs', async () => {
+        const original = { name: 'Alex', mes: 'same', send_date: '2026-01-01' };
+        const references = await refs([original]);
+        expect((await resolve(references, [original, { ...original }]))[0]).toMatchObject({ status: 'unresolved', reason: 'ambiguous_duplicate', message: null });
+        delete references[0].send_date;
+        expect((await resolve(references, [original]))[0]).toMatchObject({ status: 'unresolved', message: null });
+    });
     it.each([undefined, {}, { subtle: { digest: async () => { throw new Error('unavailable'); } } }])(
         'degrades safely when hashing is unavailable (%j)', async crypto => {
             const original = message('hello');
@@ -113,6 +130,69 @@ describe('Phase 0 source resolution', () => {
 });
 
 describe('Phase 0 public history API', () => {
+    it('merges paraphrase-only semantic candidates and carries them through answer selection', async () => {
+        const query = vi.fn(async () => ({ metadata: [event('rescue', { summary: 'A stranger pulls the child ashore', characters: [] })] }));
+        const f = fixture([], query);
+        const complete = vi.fn(async prompt => {
+            const data = JSON.parse(prompt.split('Research data: ')[1]);
+            expect(data.evidence.map(e => e.summary)).toContain('A stranger pulls the child ashore');
+            return JSON.stringify({ status: 'answered', gap: '', claims: [{ sentence: 'A rescue was recorded.', event_refs: [data.evidence[0].event_ref] }] });
+        });
+        const result = await askStory({ api: f.api, question: 'Who prevented a drowning?', complete });
+        expect(result.evidence).toHaveLength(1);
+        expect(result.coverage.semantic).toMatchObject({ attempted: true, candidate_count: 1, unavailable: [] });
+        expect(query).toHaveBeenCalledWith(collection, 'Who prevented a drowning?', 200, f.state.settings);
+        expect(f.api.getStatus().capabilities.semantic_search.available).toBe(true);
+        query.mockClear();
+        await f.api.findEvents();
+        expect(query).not.toHaveBeenCalled();
+    });
+    it('deduplicates semantic hits and applies source, subject, type and active-duplicate filters', async () => {
+        const records = [event('keep'), event('other', { source_chat_id: 'other' }),
+            event('subject', { characters: ['Morgan'] }), event('type', { event_type: 'combat' }),
+            event('duplicate', { continuity: { v: 1, duplicate_of: { status: 'active', event_id: 'keep' } } })];
+        const f = fixture(records, async () => ({ metadata: records }));
+        const result = await f.api.findEvents({ mode: 'question', question: 'Alex', subjects: [{ name: 'Alex' }], types: ['dialogue_significant'] });
+        expect(result.events.map(e => e.event_id)).toEqual(['keep']);
+        expect(result.events[0].retrieval.semantic_rank).toBe(0);
+    });
+    it('reports semantic failure without discarding lexical evidence', async () => {
+        const f = fixture([event('keep', { summary: 'Alex negotiates' })], async () => { throw new Error('Embedding offline'); });
+        const result = await f.api.findEvents({ mode: 'question', question: 'Alex negotiates' });
+        expect(result.events.map(e => e.event_id)).toEqual(['keep']);
+        expect(result.coverage).toMatchObject({ partial: true, semantic: { unavailable: [{ code: 'semantic_error', reason: 'Embedding offline' }] } });
+    });
+    it('rejects scope changes during a semantic query', async () => {
+        const query = vi.fn(async () => { f.state.chatId = 'new'; return { metadata: [event('stale')] }; });
+        const f = fixture([], query);
+        expect(await f.api.findEvents({ mode: 'question', question: 'rescue' })).toMatchObject({ ok: false, error: { code: 'stale_scope' } });
+    });
+    it('does not generate after cancellation during semantic retrieval', async () => {
+        const controller = new AbortController();
+        const f = fixture([], async () => {
+            controller.abort();
+            return { metadata: [event('rescue', { summary: 'A stranger pulls the child ashore', characters: [] })] };
+        });
+        const complete = vi.fn();
+        await expect(askStory({ api: f.api, question: 'drowning', signal: controller.signal, complete })).rejects.toThrow();
+        expect(complete).not.toHaveBeenCalled();
+    });
+    it('caps vector candidates and reports a saturated search budget', async () => {
+        const f = fixture([], async () => ({ metadata: Array.from({ length: 250 }, (_, i) =>
+            event(String(i), { summary: 'A stranger pulls the child ashore', characters: [] })) }));
+        const result = await f.api.findEvents({ mode: 'question', question: 'drowning' });
+        expect(result.events).toHaveLength(200);
+        expect(result.coverage).toMatchObject({ truncated: true, semantic: { candidate_count: 200, truncated: true } });
+    });
+    it('qualifies semantic identities and divides the vector budget across selected collections', async () => {
+        const query = vi.fn(async () => ({ metadata: [event('same', { characters: [], summary: 'A stranger pulls the child ashore' })] }));
+        const f = fixture([], query);
+        f.state.collections = f.state.availableCollections = [collection, { collectionId: 'archive', registryKey: 'standard:archive' }];
+        const result = await f.api.findEvents({ mode: 'question', question: 'drowning', scope: { kind: 'selected_collections', collections: ['qdrant:events', 'standard:archive'] } });
+        expect(result.events).toHaveLength(2);
+        expect(new Set(result.events.map(e => e.event_ref)).size).toBe(2);
+        expect(query.mock.calls.map(call => call[2])).toEqual([100, 100]);
+    });
     it('separates matching, continuity and cached sources for identical IDs on different backends', async () => {
         const { state } = fixture();
         state.chat.push(message('second source', 'b'));

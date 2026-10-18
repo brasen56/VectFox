@@ -44,6 +44,10 @@ export function installPublicEventAPI() {
             const resolved = resolveBackendForCollection(collection.registryKey);
             return resolved.backend ? getBackendForCollection(resolved.backend, settings) : getBackend(settings);
         },
+        async querySemantic(collection, question, limit, settings) {
+            const { querySemanticCollection } = await import('./core-vector-api.js');
+            return querySemanticCollection(collection.registryKey, question, limit, settings);
+        },
     });
     window.VectFoxAPI = Object.freeze({ version: api.version, getStatus: api.getStatus,
         findEvents: api.findEvents, resolveSources: api.resolveSources });

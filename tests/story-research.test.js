@@ -17,6 +17,63 @@ function fixture(events = [event('1')]) {
 }
 
 describe('Ask the Story research', () => {
+    it('protects semantic-only anchors against lexical competition at both record budgets', () => {
+        const events = Array.from({ length: 240 }, (_, i) => event(String(i), 'drowning prevention'));
+        events[239] = event('239', 'A stranger pulls the child ashore', { characters: [], retrieval: { semantic_rank: 0 } });
+        for (const limit of [1, 40, 200]) {
+            expect(selectStoryEvents(events, 'drowning prevention', limit).events).toContain(events[239]);
+        }
+    });
+    it('preserves semantic-only evidence when the character budget forces reselection', async () => {
+        const events = Array.from({ length: 40 }, (_, i) => event(String(i), `drowning ${'detail '.repeat(250)}`));
+        events.push(event('semantic', 'A stranger pulls the child ashore', { characters: [], retrieval: { semantic_rank: 0 } }));
+        const f = fixture(events);
+        f.complete.mockImplementation(async prompt => {
+            const data = JSON.parse(prompt.split('Research data: ')[1]);
+            expect(JSON.stringify(data.evidence).length).toBeLessThanOrEqual(STORY_LIMITS.evidenceChars);
+            expect(data.evidence.some(e => e.event_ref === 'ref:semantic')).toBe(true);
+            return content(['ref:semantic']);
+        });
+        const result = await askStory({ ...f, question: 'drowning prevention' });
+        expect(result.coverage.truncated).toBe(true);
+        expect(f.complete).toHaveBeenCalledOnce();
+    });
+    it('passes explicit archive scope through and preserves unresolved provenance', async () => {
+        const f = fixture([event('1', 'Alex remembers the archive', { source_chat_id: null })]);
+        f.api.resolveSources.mockResolvedValue({ ok: true, sources: [{ ref: 'source:1', status: 'unresolved', reason: 'unknown_source_chat', message: null }] });
+        const scope = { kind: 'selected_collections', collections: ['qdrant:archive'] };
+        const result = await askStory({ ...f, question: 'Alex', scope });
+        expect(f.api.findEvents).toHaveBeenCalledWith(expect.objectContaining({ scope }));
+        expect(result.sources[0]).toMatchObject({ status: 'unresolved', message: null });
+        expect(result.coverage.sources_unavailable).toBe(true);
+    });
+    it.each([40, 200])('reserves nearby topical outcomes ahead of subject-only matches at limit %i', limit => {
+        const events = Array.from({ length: limit + 20 }, (_, i) => event(String(i), 'Alex rests'));
+        events[5] = event('5', 'Alex arranges antidote delivery');
+        events[6] = event('6', 'The antidote delivery saves the patient', { characters: [] });
+        const anchors = events.flatMap((e, i) => e.characters.includes('Alex') ? [i] : []);
+        const result = selectStoryEvents(events, 'What happened with Alex and the antidote delivery?', limit, ['Alex'], anchors);
+        expect(result.events).toContain(events[5]);
+        expect(result.events).toContain(events[6]);
+        expect(result.events).toHaveLength(limit);
+        events[6] = { ...events[6], source_chat_id: 'other' };
+        expect(selectStoryEvents(events, 'Alex antidote delivery', limit, ['Alex'], anchors).events).not.toContain(events[6]);
+    });
+    it('retains early, middle and late history when serialized evidence exceeds the character budget', async () => {
+        const events = Array.from({ length: 100 }, (_, i) => event(String(i),
+            `${i < 80 ? 'Alex negotiates the treaty' : 'Alex returns home'} ${'detail '.repeat(180)}`));
+        const f = fixture(events);
+        f.complete.mockImplementation(async prompt => {
+            const data = JSON.parse(prompt.split('Research data: ')[1]);
+            expect(JSON.stringify(data.evidence).length).toBeLessThanOrEqual(STORY_LIMITS.evidenceChars);
+            expect(data.evidence[0].event_ref).toBe('ref:0');
+            expect(data.evidence.at(-1).event_ref).toBe('ref:99');
+            expect(data.evidence.some(e => e.source_window_start >= 35 && e.source_window_start <= 65)).toBe(true);
+            return content([data.evidence[0].event_ref]);
+        });
+        const result = await askStory({ ...f, question: 'Timeline of Alex and the treaty' });
+        expect(result.coverage.truncated).toBe(true);
+    });
     it('preserves a meeting sequence without promoting a co-mention to a first meeting', async () => {
         const f = fixture([event('0', 'Alex mentions Ranger but has never met him.'), event('1', 'Alex first meets Ranger at the gate.'),
             event('2', 'Ranger introduces himself to Alex.')]);

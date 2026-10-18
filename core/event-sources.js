@@ -43,6 +43,7 @@ export async function captureEventSources(messages, windowStart) {
         expanded_index: windowStart + index,
         host_id: message.id ?? null,
         host_mesid: message.extra?.mesid ?? null,
+        send_date: message.send_date ?? null,
         legacy_hash: message.hash ?? legacySourceHash(message),
         raw_content_hash: rawSourceHash(message),
         fingerprint: await narrativeFingerprint(message),
@@ -62,6 +63,7 @@ export function eventSourceReferences(event, collectionId, eventRef, scopeToken)
         expanded_index: stored[i]?.expanded_index ?? indices[i] ?? null,
         host_id: stored[i]?.host_id ?? null,
         host_mesid: stored[i]?.host_mesid ?? null,
+        send_date: stored[i]?.send_date ?? null,
         stored_fingerprint: stored[i]?.fingerprint ?? null,
         legacy_hash: stored[i]?.legacy_hash ?? hashes[i] ?? null,
         raw_content_hash: stored[i]?.raw_content_hash ?? null,
@@ -91,6 +93,11 @@ export async function resolveEventSources(references, { chatId, chat, chatMetada
         if (hasIdentity && !candidates.length) return { ...base, status: 'missing', reason: 'host_identity_missing' };
         if (!hasIdentity && reference.stored_fingerprint) {
             candidates = leaves.filter(leaf => leaf.fingerprint === reference.stored_fingerprint);
+            // Content alone cannot distinguish a deleted duplicate from a survivor.
+            // Undated legacy references therefore remain unverified without host IDs.
+            if (reference.send_date == null) return { ...base, reason: candidates.length > 1 ? 'ambiguous_duplicate' : 'source_identity_unverified' };
+            candidates = candidates.filter(leaf => leaf.message.send_date === reference.send_date);
+            if (!candidates.length) return { ...base, reason: 'source_not_located' };
         }
         if (candidates.length > 1) return { ...base, reason: 'ambiguous_duplicate' };
         let leaf = candidates[0];

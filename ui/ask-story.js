@@ -21,7 +21,20 @@ export function openAskStoryPanel(settings, saveSettings) {
     enabled.checked = settings.ask_story_enabled === true;
     label.append(document.createTextNode(' Enable manual Ask requests (off by default)'));
     const scope = element('p');
-    const limits = element('small', `One answer call; no planning or retries. Up to ${STORY_LIMITS.candidates} candidates, ${STORY_LIMITS.evidence} evidence records, ${STORY_LIMITS.evidenceChars} evidence characters; 2048 output tokens. No lorebook writes or context injection.`);
+    const scopeLabel = element('label', 'Research scope');
+    const scopeKind = element('select', null, scopeLabel);
+    for (const [value, text] of [['current_chat', 'Current chat'], ['selected_collections', 'Selected collections']]) {
+        const option = element('option', text, scopeKind);
+        option.value = value;
+    }
+    const collectionLabel = element('label', 'Select 1–20 event collections (Ctrl/Cmd-click for multiple)');
+    const collections = element('select', null, collectionLabel);
+    collections.multiple = true;
+    collections.size = 5;
+    collections.setAttribute('aria-label', 'Event collections');
+    collectionLabel.hidden = true;
+    element('small', 'Selected archives may have unknown provenance; unavailable originals remain unresolved.', collectionLabel);
+    const limits = element('small', `One answer call; no planning or retries. Semantic retrieval may make embedding requests (at most one query per selected collection). Up to ${STORY_LIMITS.candidates} candidates, ${STORY_LIMITS.evidence} evidence records, ${STORY_LIMITS.evidenceChars} evidence characters; 2048 output tokens. No lorebook writes or context injection.`);
     limits.style.display = 'block';
     const questionLabel = element('label', 'Research question');
     const question = element('textarea');
@@ -43,9 +56,22 @@ export function openAskStoryPanel(settings, saveSettings) {
     status.setAttribute('role', 'status');
     const output = element('div');
     let controller = null, answer = null, activeToken = null, closed = false, operation = 0;
+    let collectionSignature = '';
     const api = () => window.VectFoxAPI;
     const refresh = () => {
         const state = api()?.getStatus();
+        const available = state?.available_collections || state?.effective_collections || [];
+        const signature = JSON.stringify(available);
+        if (signature !== collectionSignature) {
+            const selected = new Set([...collections.selectedOptions].map(option => option.value));
+            collections.replaceChildren();
+            for (const collection of available) {
+                const option = element('option', collection.registryKey || collection.collectionId, collections);
+                option.value = collection.registryKey || collection.collectionId;
+                option.selected = selected.has(option.value);
+            }
+            collectionSignature = signature;
+        }
         const valid = state?.ready && (!activeToken || activeToken === state.scope_token);
         if (!valid && (controller || answer)) {
             controller?.abort();
@@ -53,8 +79,10 @@ export function openAskStoryPanel(settings, saveSettings) {
             output.replaceChildren();
             status.textContent = 'Story scope changed or became unavailable. Ask again.';
         }
-        scope.textContent = `Model: ${settings.chat_model || '(not configured)'} (${settings.chat_provider || 'openrouter'}). Scope: current chat; collections: ${state?.effective_collections?.map(c => c.collectionId).join(', ') || '(none)'}. VectFox: ${state?.state || 'unavailable'}.`;
-        ask.disabled = !enabled.checked || !!controller || !state?.ready;
+        const explicit = scopeKind.value === 'selected_collections';
+        const selected = [...collections.selectedOptions].map(option => option.value);
+        scope.textContent = `Model: ${settings.chat_model || '(not configured)'} (${settings.chat_provider || 'openrouter'}). Scope: ${explicit ? 'selected collections' : 'current chat'}; collections: ${(explicit ? selected : state?.effective_collections?.map(c => c.collectionId))?.join(', ') || '(none)'}. VectFox: ${state?.state || 'unavailable'}.`;
+        ask.disabled = !enabled.checked || !!controller || !state?.ready || (explicit && (!selected.length || selected.length > 20));
         cancel.disabled = !controller;
         copy.disabled = !answer;
     };
@@ -63,6 +91,7 @@ export function openAskStoryPanel(settings, saveSettings) {
         element('strong', result.status === 'no_evidence' ? 'No relevant evidence' : result.status === 'partial' ? 'Partial answer' : 'Answer', output);
         if (result.gap) element('p', result.gap, output);
         const coverage = result.coverage;
+        if (coverage.semantic?.unavailable?.length) element('p', 'Semantic retrieval was unavailable for some or all collections; lexical/chronological results may miss paraphrases.', output);
         element('p', `Coverage: ${coverage.returned_count} retrieved, ${coverage.evidence_count} shown to model. ${coverage.search_policy}. ${coverage.sampled ? 'History sampled. ' : ''}${coverage.truncated ? 'Search/evidence truncated. ' : ''}${coverage.partial ? 'Some records unavailable or sources unknown. ' : ''}${coverage.sources_unavailable ? 'Some originals unavailable or unverified. ' : ''}${result.calls} generation call(s).`, output);
         element('small', 'Citations identify supplied evidence, not proof that the model interpreted it correctly. Inspect the summaries below.', output);
         for (const claim of result.claims) {
@@ -102,6 +131,9 @@ export function openAskStoryPanel(settings, saveSettings) {
         refresh();
         try {
             const result = await askStory({ api: api(), question: researchQuestion,
+                scope: scopeKind.value === 'selected_collections'
+                    ? { kind: 'selected_collections', collections: [...collections.selectedOptions].map(option => option.value) }
+                    : { kind: 'current_chat' },
                 complete: (prompt, signal) => completeStoryAnswer(prompt, config, signal), signal: request.signal });
             if (closed || run !== operation) return;
             request.signal.throwIfAborted();
@@ -132,6 +164,19 @@ export function openAskStoryPanel(settings, saveSettings) {
         if (!enabled.checked) { controller?.abort(); answer = null; output.replaceChildren(); }
         refresh();
     });
+    const changeScope = () => {
+        operation++;
+        controller?.abort();
+        controller = null;
+        answer = null;
+        activeToken = null;
+        output.replaceChildren();
+        status.textContent = 'Research scope changed. Ask again.';
+        collectionLabel.hidden = scopeKind.value !== 'selected_collections';
+        refresh();
+    };
+    scopeKind.addEventListener('change', changeScope);
+    collections.addEventListener('change', changeScope);
     const poll = setInterval(() => {
         if (!host.isConnected) { closed = true; controller?.abort(); clearInterval(poll); return; }
         refresh();

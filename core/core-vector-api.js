@@ -1078,6 +1078,21 @@ export async function supportsCollectionFilters(collectionId, settings) {
     return filtersReachBackend(settings, backend?.supportsHybridSearch?.() === true);
 }
 
+/** Dense-only research candidates: no lexical reranking or injection preferences. */
+export async function querySemanticCollection(collectionId, searchText, topK, settings) {
+    const resolved = resolveBackendForCollection(collectionId);
+    const backend = resolved.backend
+        ? await getBackendForCollection(resolved.backend, settings) : await getBackend(settings);
+    let queryVector = null;
+    if (['webllm', 'koboldcpp'].includes(settings.embedding_provider)) {
+        const args = await getAdditionalArgs([searchText], settings);
+        queryVector = args.embeddings?.[searchText];
+        if (!queryVector) throw new Error('Research query embedding unavailable');
+    }
+    return backend.queryCollection(resolved.collectionId, searchText, topK,
+        { ...settings, score_threshold: 0 }, queryVector);
+}
+
 export async function queryCollection(collectionId, searchText, topK, settings, filters = {}) {
     // Canonical routing (Doc/collection_helper.md): resolveBackendForCollection accepts either form
     //   (registry-key "backend:id" or bare ID) and returns the backend label

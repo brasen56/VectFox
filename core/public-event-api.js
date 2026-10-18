@@ -3,7 +3,7 @@ import { buildCharacterRoster, normalizeCharacterName, getIgnoredCharacterTags }
 import { getContinuityView, isActiveDuplicate } from './continuity.js';
 import { parseEmbedText } from './eventbase-schema.js';
 import { canFingerprintNarrative, eventSourceReferences, resolveEventSources } from './event-sources.js';
-import { selectStoryEvents } from './story-research.js';
+import { selectStoryEvents, STORY_LIMITS } from './story-research.js';
 
 const MAX_RECORDS = 10000;
 const clone = value => structuredClone(value);
@@ -20,7 +20,7 @@ async function boundedRead(work, milliseconds = 30000) {
     } finally { clearTimeout(timer); }
 }
 
-export function createPublicEventAPI({ readState, loadBackend }) {
+export function createPublicEventAPI({ readState, loadBackend, querySemantic }) {
     let revision = 0, sequence = 0, previous = '', token = '';
     // Scope tokens are invalidation handles, not security credentials.
     const session = typeof globalThis.crypto?.randomUUID === 'function'
@@ -54,12 +54,15 @@ export function createPublicEventAPI({ readState, loadBackend }) {
         const unsupported = state.collections.length > 0 && state.collections.every(c => backendSupport.get(c.registryKey) === false);
         return clone({ version: 1, state: reason || 'ready', ready: !reason, scope_token: state.token,
             effective_collections: state.collections,
+            available_collections: state.availableCollections,
             capabilities: {
                 history: { available: !reason && !unsupported, reason: reason || (unsupported ? 'metadata_listing_unavailable' : null),
                     backend_support: state.collections.map(c => ({ collection_id: c.collectionId,
                         available: backendSupport.get(c.registryKey) ?? null, reason: backendSupport.has(c.registryKey) ? null : 'not_probed' })) },
-                semantic_search: { available: false, reason: 'not_implemented' },
-                question_research: { available: !reason && !unsupported, policy: 'bounded_lexical_chronological' },
+                semantic_search: { available: !reason && typeof querySemantic === 'function',
+                    reason: reason || (querySemantic ? null : 'semantic_query_unavailable') },
+                question_research: { available: !reason && !unsupported,
+                    policy: querySemantic ? 'bounded_semantic_lexical_chronological' : 'bounded_lexical_chronological' },
                 source_resolution: { available: !reason && canFingerprintNarrative(),
                     reason: reason || (canFingerprintNarrative() ? null : 'fingerprinting_unavailable') },
                 cross_chat_source_resolution: { available: false, reason: 'current_chat_only_in_v1' },
@@ -145,6 +148,37 @@ export function createPublicEventAPI({ readState, loadBackend }) {
         if (collections.length && unavailable.length === collections.length) {
             return failure(unavailable.every(c => c.code === 'unsupported') ? 'unsupported' : 'unavailable', 'No selected collection could be read', { unavailable });
         }
+        const semantic = { attempted: false, candidate_count: 0, unavailable: [], truncated: false };
+        const semanticRanks = new Map();
+        if (request.mode === 'question') {
+            if (!querySemantic) semantic.unavailable.push({ code: 'unsupported', reason: 'Semantic query unavailable' });
+            else {
+                // Bound the total vector candidates independently of injection Top-K.
+                const perCollection = Math.floor(STORY_LIMITS.candidates / Math.max(1, collections.length));
+                const identities = new Set(records.map(recordIdentity));
+                for (const collection of collections) {
+                    if (unavailable.some(item => item.collection_key === collection.registryKey)) continue;
+                    semantic.attempted = true;
+                    try {
+                        const result = await boundedRead(querySemantic(collection, request.question, perCollection, state.settings));
+                        if (stale(state)) return failure('stale_scope', 'Scope changed during semantic retrieval');
+                        if (!Array.isArray(result?.metadata)) throw new Error('Invalid semantic results');
+                        semantic.truncated ||= result.metadata.length >= perCollection;
+                        for (const [rank, metadata] of result.metadata.slice(0, perCollection).entries()) {
+                            const parsed = parseEmbedText(metadata.text || '');
+                            const event = { ...parsed, ...metadata, collection_id: collection.collectionId, collection_key: collection.registryKey };
+                            if (!event.event_id) continue;
+                            const key = recordIdentity(event);
+                            semanticRanks.set(key, Math.min(semanticRanks.get(key) ?? Infinity, rank));
+                            if (!identities.has(key)) { records.push(event); identities.add(key); }
+                        }
+                    } catch (error) {
+                        semantic.unavailable.push({ collection_id: collection.collectionId, code: 'semantic_error', reason: error.message });
+                    }
+                }
+            }
+        }
+        if (stale(state)) return failure('stale_scope', 'Scope changed during retrieval');
         // Continuity uses the full collection union, not the filtered return set.
         // Duplicate exclusions and digest/link validation retain roster semantics.
         const continuityEvents = records.filter(event => !isActiveDuplicate(event));
@@ -216,9 +250,12 @@ export function createPublicEventAPI({ readState, loadBackend }) {
         const matchesSubject = event => !subjects.length || (request.match === 'any'
             ? subjects.some(ids => ids.has(recordIdentity(event))) : subjects.every(ids => ids.has(recordIdentity(event))));
         const matched = history.filter(matchesSubject);
+        semantic.candidate_count = matched.filter(event => semanticRanks.has(recordIdentity(event))).length;
         const anchorIndices = history.flatMap((event, index) => matchesSubject(event) ? [index] : []);
         const subjectNames = resolvedSubjects.flatMap(subject => [subject.name, ...subject.aliases]);
         const selection = request.mode === 'question' ? selectStoryEvents(history.map(event => ({ ...event,
+            retrieval: semanticRanks.has(recordIdentity(event)) && matchesSubject(event)
+                ? { semantic_rank: semanticRanks.get(recordIdentity(event)) } : undefined,
             continuity_view: getContinuityView(event, continuityIndex) })), request.question, request.limit ?? 200, subjectNames, anchorIndices)
             : { events: matched.slice(0, request.limit ?? 100), sampled: false, truncated: matched.length > (request.limit ?? 100) };
         const events = selection.events.map(event => {
@@ -233,9 +270,10 @@ export function createPublicEventAPI({ readState, loadBackend }) {
         return clone({ ok: true, scope_token: state.token, events, resolved_subjects: resolvedSubjects,
             coverage: { collections_searched: searched, matched_count: matched.length, returned_count: events.length,
                 counts_exact: !truncatedCollections.length && !unavailable.length,
-                truncated: selection.truncated || truncatedCollections.length > 0,
+                ...(request.mode === 'question' ? { semantic } : {}),
+                truncated: selection.truncated || truncatedCollections.length > 0 || semantic.truncated,
                 sampled: selection.sampled, truncated_collections: truncatedCollections, unavailable,
-                unknown_source_chat_count: unknownSources, partial: !!unavailable.length || !!truncatedCollections.length || unknownSources > 0,
+                unknown_source_chat_count: unknownSources, partial: !!unavailable.length || !!truncatedCollections.length || unknownSources > 0 || !!semantic.unavailable.length,
                 ordering: 'grouped_by_source_chat_then_source_order' } });
     }
     async function resolveSources(request) {

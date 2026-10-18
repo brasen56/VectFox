@@ -101,6 +101,7 @@ vi.mock('../core/lorebook-rename-detector.js', () => ({
 }));
 
 import { getSemanticWorldInfoEntries } from '../core/world-info-integration.js';
+import { querySemanticCollection } from '../core/core-vector-api.js';
 import { resetBackendHealth } from '../backends/backend-manager.js';
 import { invalidateCollectionMetadata } from '../core/tokenizer-lock.js';
 import {
@@ -314,6 +315,24 @@ afterEach(() => {
 // ============================================================================
 // TESTS
 // ============================================================================
+
+describe('Dense-only research routing', () => {
+    it.each(['qdrant', 'standard'])('bypasses hybrid and lexical ranking on %s', async backend => {
+        plainQueryResponder = () => jsonResponse({ success: true, results: [
+            { hash: 1, text: 'A stranger pulls the child ashore', score: 0.9, metadata: { event_id: 'rescue' } },
+            { hash: 2, text: 'drowning prevention', score: 0.5, metadata: { event_id: 'lexical' } },
+        ] });
+        const settings = baseSettings({ vector_backend: backend, score_threshold: 0.99 });
+        const result = await querySemanticCollection(`${backend}:vectfox_eventbase_chat`, 'drowning prevention', 7, settings);
+        expect(result.metadata.map(e => e.event_id)).toEqual(['rescue', 'lexical']);
+        const calls = fetchLog.filter(e => e.url === '/api/plugins/similharity/chunks/query');
+        expect(calls).toHaveLength(1);
+        expect(calls[0].body).toMatchObject({ collectionId: 'vectfox_eventbase_chat', topK: 7,
+            threshold: 0, searchText: 'drowning prevention', backend: backend === 'standard' ? 'vectra' : 'qdrant' });
+        expect(queryCalls()).not.toContain('/api/plugins/similharity/chunks/hybrid-query');
+        expect(settings.score_threshold).toBe(0.99);
+    });
+});
 
 describe('Qdrant lorebook routing', () => {
     it('sends the lorebook query to the plugin hybrid-query endpoint with the BARE collection ID', async () => {

@@ -1,4 +1,4 @@
-/** Deterministic research policy, independent of injection Top-K and recency. */
+/** Bounded research selection, independent of injection Top-K and recency. */
 export const STORY_LIMITS = Object.freeze({ candidates: 200, evidence: 40, evidenceChars: 24000,
     questionChars: 4000, claims: 20, sentenceChars: 600, outputChars: 16000, calls: 1 });
 
@@ -24,11 +24,15 @@ export function selectStoryEvents(events, question, limit, subjectNames = [], an
         const topicalScore = topicalTerms.reduce((sum, term) => sum + (text.includes(term) ? 1 : 0), 0);
         return { index, score, topicalScore };
     });
-    const ranked = scored.filter(item => anchors.has(item.index) && item.score > 0)
+    const semantic = scored.filter(item => anchors.has(item.index) && Number.isInteger(events[item.index].retrieval?.semantic_rank))
+        .sort((a, b) => events[a.index].retrieval.semantic_rank - events[b.index].retrieval.semantic_rank || a.index - b.index);
+    const ranked = scored.filter(item => anchors.has(item.index) && (item.score > 0 || semantic.includes(item)))
         .sort((a, b) => (broad ? b.topicalScore - a.topicalScore : b.score - a.score) || a.index - b.index);
     if (!ranked.length && !broad) return { events: [], sampled: false, truncated: false };
     const chosen = new Set();
     const add = index => { if (index >= 0 && index < events.length && chosen.size < limit) chosen.add(index); };
+    // Reserve semantic anchors before lexical matches can exhaust either budget.
+    for (const item of semantic.slice(0, Math.ceil(limit / 4))) add(item.index);
     if (broad) {
         // Subject names establish membership, not topical importance. Reserve a
         // bounded spine even when topical matches alone could consume the budget.
@@ -41,14 +45,23 @@ export function selectStoryEvents(events, question, limit, subjectNames = [], an
         const slots = Math.min(limit - chosen.size, spine.length);
         for (let i = 0; i < slots; i++) add(spine[Math.round(i * (spine.length - 1) / Math.max(1, slots - 1))]);
     }
-    for (const item of ranked) add(item.index);
+    // Protect topical anchors, but leave room for their supporting outcomes before
+    // weaker subject-only matches consume the entire record budget.
+    const contextBudget = Math.ceil(limit / 4);
+    if (!broad) {
+        for (const item of ranked) {
+            if (chosen.size >= limit - contextBudget) break;
+            add(item.index);
+        }
+    }
     for (const item of ranked) {
         for (const index of [item.index, item.index - 1, item.index + 1]) {
             // Never expand into a different source chat.
             if (events[index]?.source_chat_id === events[item.index].source_chat_id
-                && (anchors.has(index) || scored[index]?.topicalScore > 0)) add(index);
+                && scored[index]?.topicalScore > 0) add(index);
         }
     }
+    for (const item of ranked) add(item.index);
     return { events: [...chosen].sort((a, b) => a - b).map(index => events[index]),
         sampled: broad && [...anchors].some(index => !chosen.has(index)), truncated: ranked.some(item => !chosen.has(item.index)) };
 }
@@ -79,8 +92,8 @@ export function validateStoryAnswer(content, evidence) {
     return { status: parsed.status, claims: parsed.claims.map(c => ({ sentence: c.sentence, event_refs: [...new Set(c.event_refs)] })), gap: parsed.gap };
 }
 
-/** No planner, retries, embeddings, writes, or injection. One explicitly invoked answer call. */
-export async function askStory({ api, question, complete, signal }) {
+/** No planner, retries, writes, or injection. Retrieval may embed the question. */
+export async function askStory({ api, question, complete, signal, scope = { kind: 'current_chat' } }) {
     const check = token => {
         signal?.throwIfAborted();
         const status = api.getStatus();
@@ -91,28 +104,23 @@ export async function askStory({ api, question, complete, signal }) {
     if (typeof question !== 'string' || !question.trim() || question.length > STORY_LIMITS.questionChars) throw new Error('Enter a question of 1–4000 characters');
     const token = check();
     const research = await api.findEvents({ mode: 'question', question, limit: STORY_LIMITS.candidates,
-        scope: { kind: 'current_chat' }, scope_token: token });
+        scope, scope_token: token });
     check(token);
     if (!research.ok) throw new Error(`${research.error.message}${research.error.candidates ? ` — ${research.error.candidates.map(c => c.name).join(', ')}` : ''}`);
     const subjectNames = (research.resolved_subjects || []).flatMap(subject => [subject.name, ...subject.aliases]);
     const selection = selectStoryEvents(research.events, question, STORY_LIMITS.evidence, subjectNames);
-    const included = new Set();
-    let size = 2;
-    // Apply the character budget in relevance order too, not just source order.
-    const terms = [...new Set(words([question, ...subjectNames].join(' ')))];
-    const priority = selection.events.map((event, index) => ({ event, index,
-        score: terms.reduce((sum, term) => sum + (textOf(event).toLowerCase().includes(term) ? 1 : 0), 0) }))
-        .sort((a, b) => b.score - a.score || a.index - b.index);
-    for (const { event } of priority) {
-        const cost = JSON.stringify(storyEvidence(event)).length + 1;
-        if (size + cost > STORY_LIMITS.evidenceChars) continue;
-        included.add(event);
-        size += cost;
+    // Reduce the record budget using the same context/chronology policy instead
+    // of repacking by relevance and silently discarding the chronological spine.
+    const affordable = research.events.filter(event => JSON.stringify([storyEvidence(event)]).length <= STORY_LIMITS.evidenceChars);
+    let evidence = selection.events;
+    for (let limit = Math.min(STORY_LIMITS.evidence - 1, affordable.length); JSON.stringify(evidence.map(storyEvidence)).length > STORY_LIMITS.evidenceChars; limit--) {
+        evidence = selectStoryEvents(affordable, question, limit, subjectNames).events;
     }
-    const evidence = selection.events.filter(event => included.has(event));
     const coverage = { ...research.coverage, sampled: research.coverage.sampled || selection.sampled,
         truncated: research.coverage.truncated || selection.truncated || evidence.length < selection.events.length,
-        evidence_count: evidence.length, search_policy: 'bounded lexical research with chronological context; not semantic search' };
+        evidence_count: evidence.length, search_policy: research.coverage.semantic?.attempted
+            ? 'bounded semantic and lexical research with chronological context'
+            : 'bounded lexical research with chronological context; semantic search unavailable' };
     if (!evidence.length) return { status: 'no_evidence', claims: [], gap: 'No relevant evidence found in the searched records.',
         evidence, sources: [], coverage, scope_token: token, calls: 0 };
     const prompt = `Answer the research question using ONLY the stored event summaries and metadata in the JSON data below.
