@@ -78,6 +78,23 @@ are preserved without renaming.
 
 ## Sources and lifecycle
 
+### Targeted Growth candidate windows (Phase 2)
+
+Check `capabilities.candidate_windows.available`, then call
+`findCandidateWindows({ subjects, scope: { kind: 'current_chat' }, scope_token,
+max_windows: 4 })`. Only current-chat scope is supported; `max_windows` is 1–4.
+This performs bounded representative history retrieval (up to 500 events), merges
+overlapping source sets and chooses behavior/importance-ranked scenes across
+temporal strata. It does not generate observations or invoke a model/embedding.
+
+Success returns `{ ok, scope_token, windows, coverage, limits }`. Each window has
+`window_ref`, `event_refs`, issued `source_refs`, `ranking`, `scope_token`,
+`availability` (`verified`, `partial`, `unavailable`), `available_sources`, and a
+`truncated` flag. Limits are 40 references per window and 120 total; surrounding
+context is zero. References, not bare positions, identify sources. Availability is
+a snapshot: consumers must resolve references again before capture/commit and
+retain their own scope/NPC/write guards. Archive limits remain visible in coverage.
+
 New extractions persist `source_messages`: expanded-coordinate hints, host `id`
 and `extra.mesid`, extraction/deduplication hashes, a separate versioned
 `raw_content_hash` (`djb2-raw-v1`), and versioned SHA-256 fingerprints of normalized

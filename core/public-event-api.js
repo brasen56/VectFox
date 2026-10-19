@@ -4,6 +4,7 @@ import { getContinuityView, isActiveDuplicate } from './continuity.js';
 import { parseEmbedText } from './eventbase-schema.js';
 import { canFingerprintNarrative, eventSourceReferences, resolveEventSources } from './event-sources.js';
 import { selectStoryEvents, STORY_LIMITS } from './story-research.js';
+import { selectCaptureWindows } from './capture-windows.js';
 
 const MAX_RECORDS = 10000;
 const clone = value => structuredClone(value);
@@ -94,6 +95,8 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
                 source_resolution: { available: !reason && canFingerprintNarrative(),
                     reason: reason || (canFingerprintNarrative() ? null : 'fingerprinting_unavailable') },
                 cross_chat_source_resolution: { available: false, reason: 'current_chat_only_in_v1' },
+                candidate_windows: { available: !reason && !unsupported && canFingerprintNarrative(),
+                    reason: reason || (unsupported ? 'metadata_listing_unavailable' : !canFingerprintNarrative() ? 'fingerprinting_unavailable' : null) },
             } });
     }
     const stale = state => snapshot().token !== state.token;
@@ -331,6 +334,33 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             return failure('source_error', error.message);
         }
     }
-    return Object.freeze({ version: 1, getStatus, findEvents, resolveSources,
+    async function findCandidateWindows(request = {}) {
+        if (!request || typeof request !== 'object' || Array.isArray(request)
+            || (request.scope && request.scope.kind !== 'current_chat')
+            || (request.max_windows != null && (!Number.isInteger(request.max_windows)
+                || request.max_windows < 1 || request.max_windows > 4))) {
+            return failure('invalid_request', 'Candidate windows support current_chat and 1–4 windows only');
+        }
+        const history = await findEvents({ subjects: request.subjects, match: request.match,
+            scope_token: request.scope_token, scope: { kind: 'current_chat' },
+            mode: 'history', history_selection: 'representative', limit: 500 });
+        if (!history.ok) return history;
+        const windows = selectCaptureWindows(history.events, request.max_windows ?? 4);
+        const resolved = await resolveSources({ scope_token: history.scope_token,
+            sources: windows.flatMap(window => window.source_refs) });
+        if (!resolved.ok) return resolved;
+        let offset = 0;
+        for (const window of windows) {
+            const checks = resolved.sources.slice(offset, offset + window.source_refs.length);
+            offset += window.source_refs.length;
+            const verified = checks.filter(source => source.status === 'verified').length;
+            window.availability = verified === checks.length ? 'verified' : verified ? 'partial' : 'unavailable';
+            window.available_sources = verified;
+            window.scope_token = history.scope_token;
+        }
+        return clone({ ok: true, scope_token: history.scope_token, windows, coverage: history.coverage,
+            limits: { windows: 4, sources_per_window: 40, total_sources: 120, surrounding_messages: 0 } });
+    }
+    return Object.freeze({ version: 1, getStatus, findEvents, resolveSources, findCandidateWindows,
         invalidate() { revision++; sourceCache.clear(); } });
 }

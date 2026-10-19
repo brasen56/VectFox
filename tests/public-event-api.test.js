@@ -27,6 +27,35 @@ async function refs(messages) {
 const resolve = (references, chat, chatMetadata = {}) => resolveEventSources(references, { chatId: 'chat', chat, chatMetadata });
 afterEach(() => vi.unstubAllGlobals());
 
+describe('Phase 2 candidate-window API', () => {
+    it('returns scoped ranked scene handles and verified source availability without generation', async () => {
+        const originals = [message('Alex keeps the promise.'), message('Ranger thanks Alex.', 'b')];
+        const stored = await captureEventSources(originals, 0);
+        const f = fixture([event('scene-a', { source_messages: stored }),
+            event('scene-b', { source_messages: stored })]);
+        f.state.chat = originals;
+        expect(f.api.getStatus().capabilities.candidate_windows.available).toBe(true);
+        const result = await f.api.findCandidateWindows({ subjects: [{ name: 'Alex' }],
+            scope_token: f.api.getStatus().scope_token, max_windows: 4 });
+        expect(result.ok).toBe(true);
+        expect(result.windows).toHaveLength(1);
+        expect(result.windows[0]).toMatchObject({ availability: 'verified', available_sources: 2,
+            scope_token: result.scope_token });
+        expect(result.windows[0].event_refs).toHaveLength(2);
+        expect(result.windows[0].source_refs).toHaveLength(2);
+        expect(result.windows[0].window_ref).toBeTruthy();
+        expect(result.windows[0].ranking.score).toBeGreaterThan(0);
+    });
+    it('rejects cross-chat selection, excessive budgets and stale scopes', async () => {
+        const f = fixture();
+        expect((await f.api.findCandidateWindows({ scope: { kind: 'selected_collections' } })).error.code).toBe('invalid_request');
+        expect((await f.api.findCandidateWindows({ max_windows: 5 })).error.code).toBe('invalid_request');
+        const token = f.api.getStatus().scope_token;
+        f.api.invalidate();
+        expect((await f.api.findCandidateWindows({ scope_token: token })).error.code).toBe('stale_scope');
+    });
+});
+
 describe('Scope exclusion coverage', () => {
     it('distinguishes excluded unknown and other-chat entries from included archive entries', async () => {
         const { api } = fixture([event('local'), event('unknown', { source_chat_id: null }), event('other', { source_chat_id: 'other' })]);
