@@ -27,6 +27,19 @@ async function refs(messages) {
 const resolve = (references, chat, chatMetadata = {}) => resolveEventSources(references, { chatId: 'chat', chat, chatMetadata });
 afterEach(() => vi.unstubAllGlobals());
 
+describe('Scope exclusion coverage', () => {
+    it('distinguishes excluded unknown and other-chat entries from included archive entries', async () => {
+        const { api } = fixture([event('local'), event('unknown', { source_chat_id: null }), event('other', { source_chat_id: 'other' })]);
+        const current = await api.findEvents();
+        expect(current.coverage.exclusions).toEqual([
+            { reason: 'unknown_source_chat', count: 1 }, { reason: 'other_source_chat', count: 1 } ]);
+        expect(current.coverage.unknown_source_chat_included_count).toBe(0);
+        const archive = await api.findEvents({ scope: { kind: 'selected_collections', collections: ['qdrant:events'] } });
+        expect(archive.coverage.exclusions).toEqual([]);
+        expect(archive.coverage.unknown_source_chat_included_count).toBe(1);
+    });
+});
+
 describe('Phase 0 source resolution', () => {
     it.each([0, 1])('does not verify a deleted dated duplicate against its survivor (%i)', async deleted => {
         const messages = ['2026-01-01', '2026-01-02'].map(send_date => ({ name: 'Alex', mes: 'same', send_date }));

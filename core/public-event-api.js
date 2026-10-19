@@ -206,6 +206,12 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
         const eligible = continuityEvents.filter(event => request.scope?.kind === 'selected_collections'
             || event.source_chat_id === state.chatId);
         const unknownSources = records.filter(e => !e.source_chat_id).length;
+        const currentChatOnly = request.scope?.kind !== 'selected_collections';
+        const exclusions = [
+            { reason: 'active_duplicate', count: records.length - continuityEvents.length },
+            { reason: 'unknown_source_chat', count: currentChatOnly ? continuityEvents.filter(event => !event.source_chat_id).length : 0 },
+            { reason: 'other_source_chat', count: currentChatOnly ? continuityEvents.filter(event => event.source_chat_id && event.source_chat_id !== state.chatId).length : 0 },
+        ].filter(item => item.count > 0);
         // Qualify subject identities without changing the public/stored event IDs.
         const rosterEvents = eligible.map(event => ({ ...event, event_id: recordIdentity(event), characters: (event.characters || [])
             .filter(name => !getIgnoredCharacterTags(event.collection_id, state.settings).includes(name)) }));
@@ -273,7 +279,9 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
                 ...(request.mode === 'question' ? { semantic } : {}),
                 truncated: selection.truncated || truncatedCollections.length > 0 || semantic.truncated,
                 sampled: selection.sampled, truncated_collections: truncatedCollections, unavailable,
-                unknown_source_chat_count: unknownSources, partial: !!unavailable.length || !!truncatedCollections.length || unknownSources > 0 || !!semantic.unavailable.length,
+                unknown_source_chat_count: unknownSources, exclusions,
+                unknown_source_chat_included_count: eligible.filter(event => !event.source_chat_id).length,
+                partial: !!unavailable.length || !!truncatedCollections.length || unknownSources > 0 || !!semantic.unavailable.length,
                 ordering: 'grouped_by_source_chat_then_source_order' } });
     }
     async function resolveSources(request) {

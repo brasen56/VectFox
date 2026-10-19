@@ -204,6 +204,14 @@ Distinguish:
 - A limited search caused by sampling, truncation, or unavailable sources.
 - A failed or malformed model response.
 
+#### Failure diagnostics (implemented)
+
+- Failures identify retrieval, provider, malformed JSON/answer structure, invalid citations, or output truncation. The underlying error detail remains visible.
+- When retrieval succeeds but generation or validation fails, retain the bounded evidence, coverage, and available original-message inspections. Reject all generated claims; do not present failed output as an answer. Copy includes failure details, evidence references, stored records, and coverage.
+- Cancellation, disablement, and scope changes still invalidate results; retained evidence must never bypass those safeguards.
+- Ask requests JSON-object output through the existing provider helper, while retaining local structure, size, and citation validation. Unsupported endpoint/model controls surface as provider errors; there are no automatic retries.
+- Coverage reports explicit counts for unknown-source-chat exclusions, other-chat exclusions, and active duplicates. Selected archives may instead include unknown-source entries, which are disclosed as included with unverified provenance. Counts describe the retrieved candidate pool, not unseen records beyond collection/search limits.
+
 An earliest shared event is not automatically a first meeting. Say “earliest recorded interaction” unless the evidence establishes a meeting. Do not infer causation solely from chronological proximity.
 
 ### Settings and cost

@@ -74,20 +74,30 @@ export function storyEvidence(event) {
         open_threads: event.open_threads, continuity_view: event.continuity_view };
 }
 
+export class StoryResearchError extends Error {
+    constructor(stage, message, cause = null) {
+        super(message, cause ? { cause } : undefined);
+        this.name = 'StoryResearchError';
+        this.stage = stage;
+    }
+}
+
 export function validateStoryAnswer(content, evidence) {
-    if (typeof content !== 'string' || content.length > STORY_LIMITS.outputChars) throw new Error('Invalid answer size');
-    const parsed = JSON.parse(content.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, ''));
+    if (typeof content !== 'string' || content.length > STORY_LIMITS.outputChars) throw new StoryResearchError('malformed_json', 'Invalid answer size');
+    let parsed;
+    try { parsed = JSON.parse(content.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '')); }
+    catch (error) { throw new StoryResearchError('malformed_json', `Answer is not valid JSON: ${error.message}`, error); }
     const refs = new Set(evidence.map(event => event.event_ref));
     if (!parsed || !['answered', 'partial', 'no_evidence'].includes(parsed.status)
         || !Array.isArray(parsed.claims) || parsed.claims.length > STORY_LIMITS.claims
         || typeof parsed.gap !== 'string' || parsed.gap.length > 1000
         || (parsed.status === 'no_evidence' ? parsed.claims.length !== 0 : !parsed.claims.length)
-        || (parsed.status !== 'answered' && !parsed.gap.trim())) throw new Error('Malformed answer structure');
+        || (parsed.status !== 'answered' && !parsed.gap.trim())) throw new StoryResearchError('malformed_json', 'Malformed answer structure');
     for (const claim of parsed.claims) {
         if (!claim || typeof claim.sentence !== 'string' || !claim.sentence.trim()
             || claim.sentence.length > STORY_LIMITS.sentenceChars || !Array.isArray(claim.event_refs)
             || !claim.event_refs.length || claim.event_refs.length > 8
-            || claim.event_refs.some(ref => !refs.has(ref))) throw new Error('Invalid or unsupported citation');
+            || claim.event_refs.some(ref => !refs.has(ref))) throw new StoryResearchError('invalid_citations', 'Invalid or unsupported citation');
     }
     return { status: parsed.status, claims: parsed.claims.map(c => ({ sentence: c.sentence, event_refs: [...new Set(c.event_refs)] })), gap: parsed.gap };
 }
@@ -103,10 +113,16 @@ export async function askStory({ api, question, complete, signal, scope = { kind
     };
     if (typeof question !== 'string' || !question.trim() || question.length > STORY_LIMITS.questionChars) throw new Error('Enter a question of 1–4000 characters');
     const token = check();
-    const research = await api.findEvents({ mode: 'question', question, limit: STORY_LIMITS.candidates,
-        scope, scope_token: token });
+    let research;
+    try {
+        research = await api.findEvents({ mode: 'question', question, limit: STORY_LIMITS.candidates,
+            scope, scope_token: token });
+    } catch (error) {
+        check(token);
+        throw new StoryResearchError('retrieval', error.message, error);
+    }
     check(token);
-    if (!research.ok) throw new Error(`${research.error.message}${research.error.candidates ? ` — ${research.error.candidates.map(c => c.name).join(', ')}` : ''}`);
+    if (!research.ok) throw new StoryResearchError('retrieval', `${research.error.message}${research.error.candidates ? ` — ${research.error.candidates.map(c => c.name).join(', ')}` : ''}`);
     const subjectNames = (research.resolved_subjects || []).flatMap(subject => [subject.name, ...subject.aliases]);
     const selection = selectStoryEvents(research.events, question, STORY_LIMITS.evidence, subjectNames);
     // Reduce the record budget using the same context/chronology policy instead
@@ -135,15 +151,34 @@ Use stored DateTime and scene_time for story dates, preserving the original scen
 Coverage limits: ${JSON.stringify(coverage)}
 Research data: ${JSON.stringify({ question, evidence: evidence.map(storyEvidence) })}`;
     check(token);
-    const content = await complete(prompt, signal);
-    check(token);
-    const answer = validateStoryAnswer(content, evidence);
+    let answer, failure;
+    try {
+        const content = await complete(prompt, signal);
+        check(token);
+        answer = validateStoryAnswer(content, evidence);
+    } catch (error) {
+        // Never retain results after cancellation, disablement, or a scope switch.
+        check(token);
+        failure = error instanceof StoryResearchError ? error : new StoryResearchError('provider', error.message, error);
+    }
     const allReferences = evidence.flatMap(event => event.source_refs || []);
     const references = allReferences.slice(0, 500);
-    const resolved = references.length ? await api.resolveSources({ sources: references, scope_token: token }) : { ok: true, sources: [] };
+    let resolved;
+    try {
+        resolved = references.length ? await api.resolveSources({ sources: references, scope_token: token }) : { ok: true, sources: [] };
+    } catch (error) {
+        resolved = { ok: false, error: { code: 'source_error', message: error.message } };
+    }
     check(token);
     if (!resolved.ok && resolved.error?.code === 'stale_scope') throw new Error('Story scope changed. Ask again.');
     coverage.sources_unavailable = !resolved.ok || references.length < allReferences.length
         || evidence.some(event => !event.source_refs?.length) || resolved.sources.some(source => source.status !== 'verified');
+    if (!resolved.ok) coverage.source_resolution_error = resolved.error.message;
+    if (failure) {
+        failure.result = { status: 'failed', claims: [], gap: 'No generated answer accepted. Retrieved evidence is available below.',
+            failure: { stage: failure.stage, message: failure.message }, evidence,
+            sources: resolved.ok ? resolved.sources : [], coverage, scope_token: token, calls: 1 };
+        throw failure;
+    }
     return { ...answer, evidence, sources: resolved.ok ? resolved.sources : [], coverage, scope_token: token, calls: 1 };
 }

@@ -53,14 +53,15 @@ import { log } from './log.js';
 export class LlmCallError extends Error {
     /**
      * @param {string} message
-     * @param {{kind: string, status?: number|null, provider?: string|null}} meta
+     * @param {{kind: string, status?: number|null, provider?: string|null, finishReason?: string|null}} meta
      */
-    constructor(message, { kind, status = null, provider = null } = {}) {
+    constructor(message, { kind, status = null, provider = null, finishReason = null } = {}) {
         super(message);
         this.name = 'LlmCallError';
         this.kind = kind;
         this.status = status;
         this.provider = provider;
+        this.finishReason = finishReason;
     }
 }
 
@@ -354,7 +355,7 @@ export async function postChatCompletion({
                 + `(finish_reason "${noAnswer.finishReason}") — spending ${spent}. Raise the ${contextLabel} token `
                 + `limit, or pick a model that does not think before replying. VectFox cannot use chain-of-thought `
                 + `as output — it is the model's scratch work, not an answer it stands behind.`,
-                { kind: 'model_config', status: response.status, provider },
+                { kind: 'model_config', status: response.status, provider, finishReason: noAnswer.finishReason },
             );
         }
 

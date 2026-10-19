@@ -2,6 +2,9 @@
 import { askStory, STORY_LIMITS } from '../core/story-research.js';
 import { completeStoryAnswer } from '../core/story-answer-llm.js';
 
+const failureLabels = { retrieval: 'retrieval', provider: 'provider', malformed_json: 'malformed JSON / answer structure',
+    invalid_citations: 'invalid citations', output_truncation: 'output truncation' };
+
 export function openAskStoryPanel(settings, saveSettings) {
     const previous = document.getElementById('VectFox_ask_story_panel');
     if (previous) { previous.scrollIntoView?.({ block: 'nearest' }); return; }
@@ -88,13 +91,25 @@ export function openAskStoryPanel(settings, saveSettings) {
     };
     const render = result => {
         output.replaceChildren();
-        element('strong', result.status === 'no_evidence' ? 'No relevant evidence' : result.status === 'partial' ? 'Partial answer' : 'Answer', output);
+        element('strong', result.status === 'failed' ? 'Answer generation failed — retrieval succeeded' : result.status === 'no_evidence' ? 'No relevant evidence' : result.status === 'partial' ? 'Partial answer' : 'Answer', output);
         if (result.gap) element('p', result.gap, output);
         const coverage = result.coverage;
         if (coverage.semantic?.unavailable?.length) element('p', 'Semantic retrieval was unavailable for some or all collections; lexical/chronological results may miss paraphrases.', output);
         element('p', `Coverage: ${coverage.returned_count} retrieved, ${coverage.evidence_count} shown to model. ${coverage.search_policy}. ${coverage.sampled ? 'History sampled. ' : ''}${coverage.truncated ? 'Search/evidence truncated. ' : ''}${coverage.partial ? 'Some records unavailable or sources unknown. ' : ''}${coverage.sources_unavailable ? 'Some originals unavailable or unverified. ' : ''}${result.calls} generation call(s).`, output);
+        const exclusionReasons = { unknown_source_chat: 'their source chat is unknown',
+            other_source_chat: 'they belong to another source chat', active_duplicate: 'they are marked as active duplicates' };
+        for (const exclusion of coverage.exclusions || []) {
+            element('p', `${exclusion.count} entries excluded because ${exclusionReasons[exclusion.reason] || exclusion.reason}.`, output);
+        }
+        if (coverage.unknown_source_chat_included_count) element('p', `${coverage.unknown_source_chat_included_count} entries with unknown source chats included in the selected archives; their provenance remains unverified.`, output);
+        for (const unavailable of coverage.unavailable || []) element('p', `Collection unavailable: ${unavailable.collection_id || unavailable.collection_key || 'unknown'} — ${unavailable.reason || unavailable.code}.`, output);
+        if (coverage.source_resolution_error) element('p', `Source resolution unavailable: ${coverage.source_resolution_error}`, output);
         element('small', 'Citations identify supplied evidence, not proof that the model interpreted it correctly. Inspect the summaries below.', output);
-        for (const claim of result.claims) {
+        const blocks = [...result.claims];
+        const cited = new Set(result.claims.flatMap(claim => claim.event_refs));
+        const remaining = result.evidence.filter(event => !cited.has(event.event_ref));
+        if (remaining.length) blocks.push({ sentence: 'Retrieved evidence (not accepted answer claims)', event_refs: remaining.map(event => event.event_ref) });
+        for (const claim of blocks) {
             const block = element('div', null, output);
             element('p', claim.sentence, block);
             for (const ref of claim.event_refs) {
@@ -142,7 +157,16 @@ export function openAskStoryPanel(settings, saveSettings) {
             render(result);
             status.textContent = 'Research complete.';
         } catch (error) {
-            if (!closed && run === operation) status.textContent = request.signal.aborted ? 'Request cancelled; no answer accepted.' : `Research failed: ${error.message}`;
+            if (!closed && run === operation) {
+                const valid = !request.signal.aborted && enabled.checked && api()?.getStatus().ready
+                    && api().getStatus().scope_token === activeToken;
+                if (valid && error.result?.scope_token === activeToken) {
+                    answer = { ...error.result, question: researchQuestion };
+                    render(error.result);
+                }
+                status.textContent = request.signal.aborted ? 'Request cancelled; no answer accepted.'
+                    : `Research failed${error.stage ? ` [${failureLabels[error.stage] || error.stage}]` : ''}: ${error.message}`;
+            }
         } finally {
             if (!closed && run === operation) { controller = null; refresh(); }
         }
@@ -153,8 +177,10 @@ export function openAskStoryPanel(settings, saveSettings) {
         if (!answer) return;
         try {
             await navigator.clipboard.writeText([answer.question, ...answer.claims.map(c => `${c.sentence} [${c.event_refs.join(', ')}]`),
-                answer.gap, `Coverage: ${JSON.stringify(answer.coverage)}`].filter(Boolean).join('\n\n'));
-            if (!closed) status.textContent = 'Copied answer, citations, and coverage.';
+                answer.failure ? `Failure [${failureLabels[answer.failure.stage]}]: ${answer.failure.message}` : '',
+                answer.gap, `Coverage: ${JSON.stringify(answer.coverage)}`,
+                ...answer.evidence.map(event => `Stored evidence [${event.event_ref}]: ${JSON.stringify(event)}`)].filter(Boolean).join('\n\n'));
+            if (!closed) status.textContent = 'Copied research, evidence, citations, and coverage.';
         } catch { if (!closed) status.textContent = 'Clipboard unavailable.'; }
     });
     button('Close', () => { closed = true; controller?.abort(); clearInterval(poll); host.remove(); });

@@ -17,6 +17,43 @@ function fixture(events = [event('1')]) {
 }
 
 describe('Ask the Story research', () => {
+    it.each([
+        ['provider', new Error('HTTP 429: rate limited')],
+        ['malformed_json', 'not JSON'],
+        ['malformed_json', JSON.stringify({ status: 'answered', claims: [], gap: '' })],
+        ['invalid_citations', content(['invented'])],
+    ])('retains evidence, coverage and sources on %s failure', async (stage, raw) => {
+        const f = fixture();
+        if (raw instanceof Error) f.complete.mockRejectedValue(raw);
+        else f.complete.mockResolvedValue(raw);
+        await expect(askStory({ ...f, question: 'Alex' })).rejects.toMatchObject({ stage,
+            result: { status: 'failed', claims: [], evidence: [expect.objectContaining({ event_ref: 'ref:1' })],
+                sources: [expect.objectContaining({ status: 'verified' })], coverage: { evidence_count: 1 },
+                scope_token: 'scope', calls: 1 } });
+        expect(f.complete).toHaveBeenCalledOnce();
+    });
+    it.each([false, true])('labels retrieval failures without evidence or generation (%s)', async thrown => {
+        const f = fixture();
+        if (thrown) f.api.findEvents.mockRejectedValue(new Error('Database offline'));
+        else f.api.findEvents.mockResolvedValue({ ok: false, error: { message: 'Database offline' } });
+        await expect(askStory({ ...f, question: 'Alex' })).rejects.toMatchObject({ stage: 'retrieval', message: 'Database offline' });
+        expect(f.complete).not.toHaveBeenCalled();
+    });
+    it('retains evidence if source resolution throws after generation fails', async () => {
+        const f = fixture();
+        f.complete.mockResolvedValue('invalid');
+        f.api.resolveSources.mockRejectedValue(new Error('Originals offline'));
+        await expect(askStory({ ...f, question: 'Alex' })).rejects.toMatchObject({
+            stage: 'malformed_json', result: { evidence: [expect.any(Object)], sources: [],
+                coverage: { sources_unavailable: true, source_resolution_error: 'Originals offline' } } });
+    });
+    it('does not attach stale evidence when scope changes during a provider failure', async () => {
+        const f = fixture();
+        f.complete.mockImplementation(async () => { f.setToken('changed'); throw new Error('Provider failed'); });
+        try { await askStory({ ...f, question: 'Alex' }); expect.fail('Should reject'); }
+        catch (error) { expect(error.message).toContain('scope changed'); expect(error.result).toBeUndefined(); }
+        expect(f.api.resolveSources).not.toHaveBeenCalled();
+    });
     it('protects semantic-only anchors against lexical competition at both record budgets', () => {
         const events = Array.from({ length: 240 }, (_, i) => event(String(i), 'drowning prevention'));
         events[239] = event('239', 'A stranger pulls the child ashore', { characters: [], retrieval: { semantic_rank: 0 } });

@@ -19,7 +19,7 @@ describe('Ask answer provider', () => {
         expect(await completeStoryAnswer('question', settings, controller.signal)).toBe('{}');
         expect(generationRateLimiter.execute).toHaveBeenCalledWith(expect.any(Function), { rate_limit_calls: 3 }, 'ask-story', { signal: controller.signal });
         expect(postChatCompletion).toHaveBeenCalledWith(expect.objectContaining({ model: 'model', provider: 'openrouter',
-            maxTokens: 2048, signal: controller.signal, tokenLimitParameter: 'max_completion_tokens' }));
+            maxTokens: 2048, responseFormat: { type: 'json_object' }, signal: controller.signal, tokenLimitParameter: 'max_completion_tokens' }));
         expect(postChatCompletion).toHaveBeenCalledTimes(1);
     });
     it('does not send a queued request if cancelled before dispatch', async () => {
@@ -30,7 +30,7 @@ describe('Ask answer provider', () => {
     });
     it('rejects truncation and failures without retries', async () => {
         postChatCompletion.mockResolvedValueOnce({ content: '{}', finishReason: 'length' });
-        await expect(completeStoryAnswer('question', settings)).rejects.toThrow('truncated');
+        await expect(completeStoryAnswer('question', settings)).rejects.toMatchObject({ stage: 'output_truncation', message: expect.stringContaining('truncated') });
         expect(postChatCompletion).toHaveBeenCalledTimes(1);
         postChatCompletion.mockRejectedValueOnce(new Error('provider failure'));
         await expect(completeStoryAnswer('question', settings)).rejects.toThrow('provider failure');
@@ -40,5 +40,13 @@ describe('Ask answer provider', () => {
         await expect(completeStoryAnswer('q', {})).rejects.toThrow('Configure');
         await expect(completeStoryAnswer('q', { ...settings, chat_provider: 'unknown' })).rejects.toThrow('Configure');
         expect(generationRateLimiter.execute).not.toHaveBeenCalled();
+    });
+    it('labels a token-exhausted empty completion as output truncation', async () => {
+        postChatCompletion.mockRejectedValue(Object.assign(new Error('Token budget exhausted'), { kind: 'model_config', finishReason: 'length' }));
+        await expect(completeStoryAnswer('q', settings)).rejects.toMatchObject({ stage: 'output_truncation' });
+    });
+    it('requests JSON for the custom/vLLM provider too', async () => {
+        await completeStoryAnswer('q', { ...settings, chat_provider: 'vllm', chat_vllm_url: 'http://localhost:8000' });
+        expect(postChatCompletion).toHaveBeenCalledWith(expect.objectContaining({ provider: 'vllm', responseFormat: { type: 'json_object' } }));
     });
 });

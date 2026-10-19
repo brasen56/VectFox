@@ -38,6 +38,41 @@ afterEach(() => {
 });
 
 describe('Ask panel', () => {
+    it.each([
+        ['provider', new Error('HTTP 429: rate limited')],
+        ['malformed JSON / answer structure', 'not JSON'],
+        ['invalid citations', JSON.stringify({ status: 'answered', gap: '', claims: [{ sentence: 'Rejected claim', event_refs: ['invented'] }] })],
+    ])('shows %s failure with inspectable evidence and copyable coverage', async (label, raw) => {
+        settings.ask_story_enabled = true;
+        if (raw instanceof Error) completeStoryAnswer.mockRejectedValue(raw);
+        else completeStoryAnswer.mockResolvedValue(raw);
+        openAskStoryPanel(settings, vi.fn());
+        document.querySelector('textarea').value = 'Alex';
+        click('Ask');
+        await settle();
+        expect(document.querySelector('[role="status"]').textContent).toContain(`[${label}]`);
+        expect(document.body.textContent).toContain('retrieval succeeded');
+        expect(document.querySelector('details').textContent).toContain('Stored summary:');
+        expect(document.body.textContent).toContain('Original text');
+        expect(document.body.textContent).not.toContain('Rejected claim');
+        expect(document.querySelector('img')).toBeNull();
+        click('Copy');
+        await settle();
+        expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('Stored evidence [ref:e]'));
+        token = 'changed';
+        vi.advanceTimersByTime(500);
+        expect(document.querySelector('details')).toBeNull();
+    });
+    it('explains excluded unknown-source entries rather than implying they were searched', async () => {
+        settings.ask_story_enabled = true;
+        window.VectFoxAPI.findEvents.mockResolvedValue({ ok: true, events, coverage: { returned_count: 1,
+            exclusions: [{ reason: 'unknown_source_chat', count: 23 }] } });
+        openAskStoryPanel(settings, vi.fn());
+        document.querySelector('textarea').value = 'Alex';
+        click('Ask');
+        await settle();
+        expect(document.body.textContent).toContain('23 entries excluded because their source chat is unknown.');
+    });
     it('selects archives explicitly and invalidates answers when selection changes', async () => {
         settings.ask_story_enabled = true;
         const getStatus = window.VectFoxAPI.getStatus;
