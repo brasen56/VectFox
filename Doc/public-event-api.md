@@ -57,11 +57,24 @@ Limits: 20 collections, 20 subjects, 20 aliases per subject, 50 types, 500 retur
 events, 10,000 scanned records, 500 resolved references. Database/backend reads
 have a 30-second per-call timeout. Coverage discloses unavailable collections,
 scan truncation, unknown chat attribution, matched and returned counts. Unknown
-backend totals make counts inexact. There is no history sampling. Backend metadata
-support is reported per collection after probing; `available: null` means not yet
+backend totals make counts inexact. Backend metadata support is reported per
+collection after probing; `available: null` means not yet
 probed. Standard listings explicitly report `capabilities.metadata`; native
 hashes-only listings return `unsupported`, including empty fallbacks after plugin
 transport errors or server failures even when the plugin remains available.
+
+History defaults to the first `limit` matches (`history_selection: 'prefix'`).
+Use `history_selection: 'representative'` in history mode to build a bounded
+candidate pool across the matching scanned archive before consumer-side ranking.
+Slots are allocated round-robin across source chats (unknown sources group by
+qualified collection), then evenly spaced within each source, including both ends
+when at least two slots are available. A single slot keeps that source's latest
+event. If there are more sources than slots, only the first sources fit. Results
+retain source-grouped order. Coverage sets `sampled` and `truncated` when matches
+are omitted; scan truncation remains separately disclosed. This does not recover
+records outside the 10,000-record scan budget or establish cross-chat chronology.
+Stored `DateTime` (normalized date/time) and `scene_time` (verbatim story time)
+are preserved without renaming.
 
 ## Sources and lifecycle
 

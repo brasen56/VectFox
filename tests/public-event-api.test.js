@@ -143,6 +143,67 @@ describe('Phase 0 source resolution', () => {
 });
 
 describe('Phase 0 public history API', () => {
+    it('samples beyond 500 matches through the paged history contract without changing the default prefix', async () => {
+        const records = Array.from({ length: 501 }, (_, i) => event(`event-${i}`, {
+            source_window_start: i, event_type: i === 500 ? 'revelation' : 'introduction',
+            DateTime: '2026-10-19T12:00:00Z', scene_time: 'At noon on the final day',
+        }));
+        const f = fixture(records);
+        f.backend.listChunks.mockImplementation(async (_id, _settings, { offset, limit }) => ({
+            items: records.slice(offset, offset + limit).map(metadata => ({ metadata })), total: records.length,
+        }));
+        const request = { mode: 'history', subjects: [{ name: 'Alex' }], limit: 500 };
+        const prefix = await f.api.findEvents(request);
+        expect(prefix.events.at(-1).event_id).toBe('event-499');
+        const result = await f.api.findEvents({ ...request, history_selection: 'representative' });
+        expect(result.events).toHaveLength(500);
+        expect(new Set(result.events.map(e => e.event_ref)).size).toBe(500);
+        expect(result.events[0].event_id).toBe('event-0');
+        expect(result.events.at(-1)).toMatchObject({ event_id: 'event-500',
+            DateTime: '2026-10-19T12:00:00Z', scene_time: 'At noon on the final day' });
+        expect(result.coverage).toMatchObject({ matched_count: 501, returned_count: 500,
+            sampled: true, truncated: true, counts_exact: true });
+        expect(f.backend.listChunks).toHaveBeenCalledWith(collection.collectionId, f.state.settings, { offset: 500, limit: 500 });
+        const resolved = await f.api.resolveSources({ scope_token: result.scope_token, sources: result.events.at(-1).source_refs });
+        expect(resolved.ok).toBe(true);
+    });
+
+    it('shares representative slots across selected collections and retains source order', async () => {
+        const collections = ['a', 'z'].map(id => ({ collectionId: id, registryKey: `qdrant:${id}` }));
+        const f = fixture();
+        f.state.collections = f.state.availableCollections = collections;
+        f.backend.listChunks.mockImplementation(async (id, _settings, { offset, limit }) => ({
+            items: Array.from({ length: 601 }, (_, i) => ({ metadata: event(`${id}-${i}`, {
+                source_chat_id: id, source_window_start: i,
+            }) })).slice(offset, offset + limit), total: 601,
+        }));
+        const result = await f.api.findEvents({ mode: 'history', history_selection: 'representative',
+            limit: 500, subjects: [{ name: 'Alex' }],
+            scope: { kind: 'selected_collections', collections: collections.map(c => c.registryKey) } });
+        expect(result.events).toHaveLength(500);
+        for (const id of ['a', 'z']) {
+            const group = result.events.filter(e => e.source_chat_id === id);
+            expect(group).toHaveLength(250);
+            expect(group[0].event_id).toBe(`${id}-0`);
+            expect(group.at(-1).event_id).toBe(`${id}-600`);
+            expect(group.map(e => e.source_window_start)).toEqual(group.map(e => e.source_window_start).sort((a, b) => a - b));
+        }
+        expect(result.coverage).toMatchObject({ matched_count: 1202, sampled: true, truncated: true });
+    });
+
+    it('handles small representative budgets, complete matches, and invalid selection policies', async () => {
+        const { api } = fixture([event('early'), event('late', { source_window_start: 10 })]);
+        const single = await api.findEvents({ history_selection: 'representative', limit: 1 });
+        expect(single.events.map(e => e.event_id)).toEqual(['late']);
+        const complete = await api.findEvents({ history_selection: 'representative', limit: 2 });
+        expect(complete.events.map(e => e.event_id)).toEqual(['early', 'late']);
+        expect(complete.coverage).toMatchObject({ sampled: false, truncated: false });
+        for (const request of [{ history_selection: 'unknown' },
+            { mode: 'question', question: 'Alex?', history_selection: 'representative' }]) {
+            expect(await api.findEvents(request)).toMatchObject({ ok: false, error: { code: 'invalid_request' } });
+        }
+    });
+
     it('merges paraphrase-only semantic candidates and carries them through answer selection', async () => {
         const query = vi.fn(async () => ({ metadata: [event('rescue', { summary: 'A stranger pulls the child ashore', characters: [] })] }));
         const f = fixture([], query);

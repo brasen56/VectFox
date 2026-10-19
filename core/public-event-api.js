@@ -10,6 +10,34 @@ const clone = value => structuredClone(value);
 const failure = (code, message, details = {}) => ({ ok: false, error: { code, message, ...details } });
 const boundedString = value => typeof value === 'string' && value.length > 0 && value.length <= 200;
 const recordIdentity = event => JSON.stringify([event.collection_key, event.event_id]);
+/** Allocate fairly across sources, then sample each source including both ends.
+ * Return in the original source order, not in sampling priority order.
+ */
+function selectRepresentativeHistory(events, limit) {
+    if (events.length <= limit) return { events, sampled: false, truncated: false };
+    const groups = new Map();
+    for (const event of events) {
+        const key = event.source_chat_id || event.collection_key;
+        if (!groups.has(key)) groups.set(key, { events: [], count: 0 });
+        groups.get(key).events.push(event);
+    }
+    let remaining = limit;
+    while (remaining) {
+        for (const group of groups.values()) {
+            if (group.count < group.events.length) { group.count++; remaining--; }
+            if (!remaining) break;
+        }
+    }
+    const selected = new Set();
+    for (const group of groups.values()) {
+        for (let i = 0; i < group.count; i++) {
+            const index = group.count === 1 ? group.events.length - 1
+                : Math.round(i * (group.events.length - 1) / (group.count - 1));
+            selected.add(group.events[index]);
+        }
+    }
+    return { events: events.filter(event => selected.has(event)), sampled: true, truncated: true };
+}
 let sessionSequence = 0;
 async function boundedRead(work, milliseconds = 30000) {
     let timer;
@@ -72,6 +100,8 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
     function validate(request) {
         if (!request || typeof request !== 'object' || Array.isArray(request)) return 'Expected a request object';
         if (request.mode != null && !['history', 'question'].includes(request.mode)) return 'Invalid mode';
+        if (request.history_selection != null && (!['prefix', 'representative'].includes(request.history_selection)
+            || request.mode === 'question')) return 'Invalid history_selection';
         if (request.limit != null && (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 500)) return 'limit must be 1–500';
         if (request.match != null && !['all', 'any'].includes(request.match)) return 'Invalid subject match';
         if (request.question != null && (typeof request.question !== 'string' || request.question.length > 4000)) return 'Invalid question';
@@ -263,7 +293,8 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             retrieval: semanticRanks.has(recordIdentity(event)) && matchesSubject(event)
                 ? { semantic_rank: semanticRanks.get(recordIdentity(event)) } : undefined,
             continuity_view: getContinuityView(event, continuityIndex) })), request.question, request.limit ?? 200, subjectNames, anchorIndices)
-            : { events: matched.slice(0, request.limit ?? 100), sampled: false, truncated: matched.length > (request.limit ?? 100) };
+            : request.history_selection === 'representative' ? selectRepresentativeHistory(matched, request.limit ?? 100)
+                : { events: matched.slice(0, request.limit ?? 100), sampled: false, truncated: matched.length > (request.limit ?? 100) };
         const events = selection.events.map(event => {
             const eventRef = `vf1:${encodeURIComponent(event.collection_key)}:${encodeURIComponent(event.event_id)}`;
             const sourceRefs = eventSourceReferences(event, event.collection_id, eventRef, state.token);
