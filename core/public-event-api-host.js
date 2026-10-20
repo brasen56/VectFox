@@ -50,7 +50,8 @@ export function installPublicEventAPI() {
         },
     });
     window.VectFoxAPI = Object.freeze({ version: api.version, getStatus: api.getStatus,
-        findEvents: api.findEvents, resolveSources: api.resolveSources });
+        findEvents: api.findEvents, resolveSources: api.resolveSources,
+        findCandidateWindows: api.findCandidateWindows });
     const notify = () => {
         api.invalidate();
         void eventSource.emit('vectfox:api-status-changed', api.getStatus());

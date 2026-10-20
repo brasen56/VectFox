@@ -32,6 +32,8 @@ describe('public event API host initialization', () => {
         expect(host.registry).not.toHaveBeenCalled();
         expect(host.settings.vectfox).toBeUndefined();
         expect(await window.VectFoxAPI.findEvents()).toMatchObject({ ok: false, error: { code: 'loading' } });
+        expect(window.VectFoxAPI.findCandidateWindows).toBeTypeOf('function');
+        expect(await window.VectFoxAPI.findCandidateWindows()).toMatchObject({ ok: false, error: { code: 'loading' } });
 
         host.settings.vectfox = { vectfox_collection_registry: ['qdrant:vf_eventbase_test'] };
         adapter.markReady();
