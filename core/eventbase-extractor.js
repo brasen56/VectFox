@@ -23,7 +23,7 @@ import {
     EVENTBASE_SCHEMA_VERSION,
     packTimelineSortKey,
 } from './eventbase-schema.js';
-import { cleanText, stripReasoningBlocks, stripGameSystemBlocks } from './text-cleaning.js';
+import { cleanText, evidenceNarrative } from './text-cleaning.js';
 import StringUtils from '../utils/string-utils.js';
 import { log } from './log.js';
 import { getCharacterRoster, renderKnownCharacters } from './character-roster.js';
@@ -437,7 +437,7 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         // Invalid attribution must not invalidate otherwise usable event history.
         // Never restore reasoning-only content via the planner's empty fallback.
         const knowledge = validateKnowledge(event.knowledge, { sourceCount: messages.length,
-            narratives: messages.map(m => cleanText(stripGameSystemBlocks(stripReasoningBlocks(String(m.mes || ''), { allowEmpty: true }))).trim()) });
+            narratives: messages.map(m => evidenceNarrative(m.mes)) });
         if (knowledge.knowledge) event.knowledge = knowledge.knowledge;
         else delete event.knowledge;
         knowledge.errors.forEach(error => log.warn(`[EventBase] Knowledge dropped: ${error}`));

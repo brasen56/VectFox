@@ -5,7 +5,7 @@ import { parseEmbedText } from './eventbase-schema.js';
 import { canFingerprintNarrative, eventSourceReferences, resolveEventSources } from './event-sources.js';
 import { selectStoryEvents, STORY_LIMITS } from './story-research.js';
 import { selectCaptureWindows } from './capture-windows.js';
-import { KNOWLEDGE_VERSION, publicEventKnowledge } from './event-knowledge.js';
+import { KNOWLEDGE_VERSION, publicEventKnowledge, validateEventKnowledge } from './event-knowledge.js';
 
 const MAX_RECORDS = 10000;
 const clone = value => structuredClone(value);
@@ -75,6 +75,7 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             previous = signature;
             token = `${session}:${++sequence}`;
             sourceCache.clear();
+            backendSupport.clear();
         }
         return { ...state, token };
     }
@@ -121,7 +122,7 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             || scope.collections.length > 20 || !scope.collections.every(boundedString))) return 'Select 1–20 collections';
         return null;
     }
-    async function findEvents(input = {}) {
+    async function findEvents(input = {}, captureArchive = false) {
         const invalid = validate(input);
         if (invalid) return failure('invalid_request', invalid);
         const request = clone(input);
@@ -202,7 +203,8 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
                         semantic.truncated ||= result.metadata.length >= perCollection;
                         for (const [rank, metadata] of result.metadata.slice(0, perCollection).entries()) {
                             const parsed = parseEmbedText(metadata.text || '');
-                            const event = { ...parsed, ...metadata, collection_id: collection.collectionId, collection_key: collection.registryKey };
+                            const event = { ...parsed, ...metadata, summary: metadata.summary || parsed.summary || '',
+                                collection_id: collection.collectionId, collection_key: collection.registryKey };
                             if (!event.event_id) continue;
                             const key = recordIdentity(event);
                             semanticRanks.set(key, Math.min(semanticRanks.get(key) ?? Infinity, rank));
@@ -249,7 +251,8 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             { reason: 'other_source_chat', count: currentChatOnly ? continuityEvents.filter(event => event.source_chat_id && event.source_chat_id !== state.chatId).length : 0 },
         ].filter(item => item.count > 0);
         // Qualify subject identities without changing the public/stored event IDs.
-        const rosterEvents = eligible.map(event => ({ ...event, event_id: recordIdentity(event), characters: (event.characters || [])
+        const rosterEvents = eligible.map(event => ({ ...event, event_id: recordIdentity(event), characters: [...(event.characters || []),
+            ...(validateEventKnowledge(event).knowledge?.acquisitions || []).map(entry => entry.character)]
             .filter(name => !getIgnoredCharacterTags(event.collection_id, state.settings).includes(name)) }));
         const overrides = collections.flatMap(c => state.settings.eventbase_character_alias_overrides?.[c.collectionId] || []);
         const roster = buildCharacterRoster(rosterEvents, overrides, state.settings);
@@ -299,12 +302,14 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             retrieval: semanticRanks.has(recordIdentity(event)) && matchesSubject(event)
                 ? { semantic_rank: semanticRanks.get(recordIdentity(event)) } : undefined,
             continuity_view: getContinuityView(event, continuityIndex) })), request.question, request.limit ?? 200, subjectNames, anchorIndices)
-            : request.history_selection === 'representative' ? selectRepresentativeHistory(matched, request.limit ?? 100)
+            : request.history_selection === 'representative' ? selectRepresentativeHistory(matched, captureArchive ? MAX_RECORDS : request.limit ?? 100)
                 : { events: matched.slice(0, request.limit ?? 100), sampled: false, truncated: matched.length > (request.limit ?? 100) };
         const events = selection.events.map(event => {
             const eventRef = `vf1:${encodeURIComponent(event.collection_key)}:${encodeURIComponent(event.event_id)}`;
             const sourceRefs = eventSourceReferences(event, event.collection_id, eventRef, state.token);
-            sourceRefs.forEach(ref => sourceCache.set(ref.ref, ref));
+            // Candidate scans are internal: only publish/cache the selected page,
+            // not every reference in the archive on every pagination request.
+            if (!captureArchive) sourceRefs.forEach(ref => sourceCache.set(ref.ref, ref));
             return { ...event, event_ref: eventRef, source_refs: sourceRefs, source_status: 'unresolved',
                 ...publicEventKnowledge(event, sourceRefs),
                 continuity_view: getContinuityView(event, continuityIndex) };
@@ -340,31 +345,53 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
     }
     async function findCandidateWindows(request = {}) {
         if (!request || typeof request !== 'object' || Array.isArray(request)
+            || (request.retain_sources != null && (!Array.isArray(request.retain_sources)
+                || request.retain_sources.length > 120))
+            || (request.offset != null && (!Number.isInteger(request.offset) || request.offset < 0
+                || request.offset > 20000 || request.offset % (request.max_windows ?? 4) !== 0))
             || (request.scope && request.scope.kind !== 'current_chat')
             || (request.max_windows != null && (!Number.isInteger(request.max_windows)
                 || request.max_windows < 1 || request.max_windows > 4))) {
             return failure('invalid_request', 'Candidate windows support current_chat and 1–4 windows only');
         }
+        const state = snapshot();
+        if (request.scope_token != null && request.scope_token !== state.token) return failure('stale_scope', 'Scope changed');
+        // Retain only handles already issued in this scope, never caller-supplied
+        // provenance. The consumer's bounded plan is at most 120 sources.
+        const retained = (request.retain_sources || []).map(ref => sourceCache.get(typeof ref === 'string' ? ref : ref?.ref));
+        if (retained.some(ref => !ref)) return failure('invalid_reference', 'Retained sources must be issued in this scope');
         const history = await findEvents({ subjects: request.subjects, match: request.match,
             scope_token: request.scope_token, scope: { kind: 'current_chat' },
-            mode: 'history', history_selection: 'representative', limit: 500 });
+            mode: 'history', history_selection: 'representative', limit: 500 }, true);
         if (!history.ok) return history;
-        const windows = selectCaptureWindows(history.events, request.max_windows ?? 4);
+        const size = request.max_windows ?? 4;
+        const offset = request.offset ?? 0;
+        const windows = selectCaptureWindows(history.events, size, offset);
+        const hasMore = selectCaptureWindows(history.events, size, offset + size).length > 0;
+        // Refresh the bounded plan and newest page without displacing handles
+        // kept from earlier candidate pages during large archive scans.
+        const pinned = [...retained, ...windows.flatMap(window => window.source_refs)];
+        pinned.forEach(ref => {
+            sourceCache.delete(ref.ref);
+            sourceCache.set(ref.ref, ref);
+        });
+        while (sourceCache.size > 20000) sourceCache.delete(sourceCache.keys().next().value);
         const resolved = await resolveSources({ scope_token: history.scope_token,
             sources: windows.flatMap(window => window.source_refs) });
         if (!resolved.ok) return resolved;
-        let offset = 0;
+        let sourceOffset = 0;
         for (const window of windows) {
-            const checks = resolved.sources.slice(offset, offset + window.source_refs.length);
-            offset += window.source_refs.length;
+            const checks = resolved.sources.slice(sourceOffset, sourceOffset + window.source_refs.length);
+            sourceOffset += window.source_refs.length;
             const verified = checks.filter(source => source.status === 'verified').length;
             window.availability = verified === checks.length ? 'verified' : verified ? 'partial' : 'unavailable';
             window.available_sources = verified;
             window.scope_token = history.scope_token;
         }
         return clone({ ok: true, scope_token: history.scope_token, windows, coverage: history.coverage,
+            next_offset: hasMore ? offset + size : null,
             limits: { windows: 4, sources_per_window: 40, total_sources: 120, surrounding_messages: 0 } });
     }
     return Object.freeze({ version: 1, getStatus, findEvents, resolveSources, findCandidateWindows,
-        invalidate() { revision++; sourceCache.clear(); } });
+        invalidate() { revision++; sourceCache.clear(); backendSupport.clear(); } });
 }

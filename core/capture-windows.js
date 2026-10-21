@@ -1,5 +1,5 @@
 /** Deterministic scene selection; summaries rank scenes, never become evidence. */
-export function selectCaptureWindows(events, maxWindows = 4) {
+export function selectCaptureWindows(events, maxWindows = 4, offset = 0) {
     const groups = [];
     const key = ref => JSON.stringify([ref.source_chat_id, ref.host_id, ref.host_mesid,
         ref.stored_fingerprint, ref.send_date, ref.expanded_index]);
@@ -11,7 +11,7 @@ export function selectCaptureWindows(events, maxWindows = 4) {
         const group = { keys, sources: refs.slice(), events: [event], event_refs: [event.event_ref],
             position: event.source_window_start ?? Infinity,
             score: (/dialogue|decision|conflict|relationship|revelation/i.test(event.event_type || '') ? 3 : 0)
-                + Math.min(3, Math.max(0, Number(event.importance) || 0)) };
+                + Math.min(10, Math.max(0, Number(event.importance) || 0)) * 0.3 };
         for (const other of overlaps) {
             group.sources.push(...other.sources);
             group.event_refs.push(...other.event_refs);
@@ -39,19 +39,27 @@ export function selectCaptureWindows(events, maxWindows = 4) {
                 position: sources[0].expanded_index ?? group.position,
                 score: Math.max(...events.map(event =>
                     (/dialogue|decision|conflict|relationship|revelation/i.test(event.event_type || '') ? 3 : 0)
-                    + Math.min(3, Math.max(0, Number(event.importance) || 0)))),
+                    + Math.min(10, Math.max(0, Number(event.importance) || 0)) * 0.3)),
                 truncated: sources.length < group.sources.length });
         }
         return chunks;
     });
     candidates.sort((a, b) => a.position - b.position);
     // Allocate one ranked scene per temporal stratum before filling spare slots.
-    const selected = [];
-    for (let bin = 0; bin < maxWindows; bin++) {
-        const segment = candidates.slice(Math.floor(bin * candidates.length / maxWindows),
-            Math.floor((bin + 1) * candidates.length / maxWindows));
-        segment.sort((a, b) => b.score - a.score || a.position - b.position);
-        if (segment.length) selected.push(segment[0]);
+    let selected = [];
+    // Repeated deterministic strata provide bounded pages without starving the
+    // scenes that lost the first ranking. Offset is scoped to this snapshot.
+    for (let skipped = 0; candidates.length; skipped += selected.length) {
+        selected = [];
+        for (let bin = 0; bin < maxWindows; bin++) {
+            const segment = candidates.slice(Math.floor(bin * candidates.length / maxWindows),
+                Math.floor((bin + 1) * candidates.length / maxWindows));
+            segment.sort((a, b) => b.score - a.score || a.position - b.position);
+            if (segment.length) selected.push(segment[0]);
+        }
+        if (skipped >= offset) break;
+        for (const candidate of selected) candidates.splice(candidates.indexOf(candidate), 1);
+        if (!candidates.length) selected = [];
     }
     let remaining = 120;
     return selected.map((group, index) => {

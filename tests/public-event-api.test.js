@@ -28,6 +28,72 @@ const resolve = (references, chat, chatMetadata = {}) => resolveEventSources(ref
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Phase 2 candidate-window API', () => {
+    it('preserves earlier candidate pages when archive references exceed the cache', async () => {
+        const originals = Array.from({ length: 20 }, (_, index) => message(`Source ${index}`, `id:${index}`));
+        const stored = await captureEventSources(originals, 0);
+        const records = Array.from({ length: 2010 }, (_, index) => event(`e${index}`, {
+            source_window_start: 0, source_messages: stored,
+        }));
+        const f = fixture(records);
+        f.state.chat = originals;
+        f.backend.listChunks.mockImplementation(async (_id, _settings, { offset, limit }) => ({
+            items: records.slice(offset, offset + limit).map(metadata => ({ metadata })), total: records.length,
+        }));
+        const first = await f.api.findCandidateWindows({ max_windows: 1 });
+        expect(first.ok).toBe(true);
+        const retained = first.windows.flatMap(window => window.source_refs);
+        const second = await f.api.findCandidateWindows({ max_windows: 1, offset: 1,
+            scope_token: first.scope_token, retain_sources: retained });
+        expect(second.ok).toBe(true);
+        const resolved = await f.api.resolveSources({ scope_token: first.scope_token, sources: retained });
+        expect(resolved.ok).toBe(true);
+        expect(resolved.sources.every(source => source.status === 'verified')).toBe(true);
+        expect((await f.api.findCandidateWindows({ retain_sources: ['forged'] })).error.code).toBe('invalid_reference');
+        expect((await f.api.findCandidateWindows({ retain_sources: Array(121).fill(retained[0]) })).error.code).toBe('invalid_request');
+    });
+    it('finds validated off-screen acquisition recipients without inferring acquisitions from characters', async () => {
+        const knowledge = { v: 1, presence: [], acquisitions: [{ character: 'Ranger', claim: 'A delivery occurred.',
+            basis: 'document', epistemic_status: 'fact', uncertainty: '',
+            evidence: [{ source_index: 0, quote: 'Ranger read the report.' }] }] };
+        const f = fixture([event('offscreen', { characters: ['Alex'], knowledge, source_message_ids: [0] }),
+            event('invalid', { characters: ['Alex'], knowledge: { ...knowledge, v: 2 } })]);
+        const result = await f.api.findEvents({ subjects: [{ name: 'Ranger' }] });
+        expect(result.events.map(event => event.event_id)).toEqual(['offscreen']);
+        expect(result.events[0].characters).toEqual(['Alex']);
+    });
+    it('exposes cleaned evidence separately from the fingerprint-verified raw original', async () => {
+        const originals = [message('<b>Alex</b> delivered a letter.')];
+        const f = fixture([event('cleaned', { source_messages: await captureEventSources(originals, 0) })]);
+        f.state.chat = originals;
+        const found = await f.api.findEvents();
+        const resolved = await f.api.resolveSources({ scope_token: found.scope_token, sources: found.events[0].source_refs });
+        expect(resolved.sources[0]).toMatchObject({ status: 'verified',
+            evidence_narrative: { version: 1, text: 'Alex delivered a letter.' },
+            message: { mes: '<b>Alex</b> delivered a letter.' } });
+    });
+    it('paginates independent scenes with scope-bound offsets', async () => {
+        const originals = Array.from({ length: 8 }, (_, index) => message(`Scene ${index}`, `id:${index}`));
+        const stored = await captureEventSources(originals, 0);
+        const f = fixture(stored.map((source, index) => event(`e${index}`, {
+            source_window_start: index, source_messages: [source] })));
+        f.state.chat = originals;
+        const first = await f.api.findCandidateWindows();
+        const second = await f.api.findCandidateWindows({ scope_token: first.scope_token, offset: first.next_offset });
+        expect(first.windows.flatMap(window => window.event_refs)).toHaveLength(4);
+        expect(new Set([...first.windows, ...second.windows].flatMap(window => window.event_refs)).size).toBe(8);
+        expect(second.next_offset).toBeNull();
+        expect((await f.api.findCandidateWindows({ offset: -1 })).error.code).toBe('invalid_request');
+    });
+    it('keeps scenes beyond the public 500-event history sample eligible', async () => {
+        const f = fixture(Array.from({ length: 504 }, (_, index) => event(`e${index}`, {
+            source_window_start: index, source_message_ids: [index],
+        })));
+        const result = await f.api.findCandidateWindows({ offset: 500 });
+        expect(result.ok).toBe(true);
+        expect(result.windows).toHaveLength(4);
+        expect(result.next_offset).toBeNull();
+        expect(result.coverage.returned_count).toBe(504);
+    });
     it('publishes validated acquisition citations as resolvable scope-bound references', async () => {
         const originals = [message('Ranger watched the delivery.')];
         const knowledge = { v: 1, presence: [], acquisitions: [{ character: 'Ranger', claim: 'A delivery occurred.',
@@ -270,6 +336,20 @@ describe('Phase 0 public history API', () => {
         await f.api.findEvents();
         expect(query).not.toHaveBeenCalled();
     });
+    it.each([null, ''])('recovers semantic-only summaries from embedded text (%j)', async summary => {
+        const sentence = 'The bridge stands north of the old mill.';
+        const f = fixture([], async () => ({ metadata: [event('bridge', {
+            summary, text: `[location_change] ${sentence}`,
+        })] }));
+        const complete = vi.fn(async prompt => {
+            const data = JSON.parse(prompt.split('Research data: ')[1]);
+            expect(data.evidence[0].summary).toBe(sentence);
+            return JSON.stringify({ status: 'answered', gap: '', claims: [{ sentence,
+                event_refs: [data.evidence[0].event_ref] }] });
+        });
+        expect((await askStory({ api: f.api, question: 'Where is the bridge?', complete })).status).toBe('answered');
+        expect(complete).toHaveBeenCalledOnce();
+    });
     it('deduplicates semantic hits and applies source, subject, type and active-duplicate filters', async () => {
         const records = [event('keep'), event('other', { source_chat_id: 'other' }),
             event('subject', { characters: ['Morgan'] }), event('type', { event_type: 'combat' }),
@@ -375,6 +455,9 @@ describe('Phase 0 public history API', () => {
         expect(backend.pluginAvailable).toBe(true);
         expect(fetch.mock.calls.map(call => call[0])).toEqual(['/api/plugins/similharity/chunks/list', '/api/vector/list']);
         expect(api.getStatus().capabilities.history).toMatchObject({ available: false, reason: 'metadata_listing_unavailable' });
+        api.invalidate();
+        expect(api.getStatus().capabilities.history).toMatchObject({ available: true,
+            backend_support: [{ available: null, reason: 'not_probed' }] });
         fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ items: [], total: 0 }) });
         expect(await api.findEvents()).toMatchObject({ ok: true, events: [], coverage: { counts_exact: true, partial: false } });
         expect(api.getStatus().capabilities.history.available).toBe(true);

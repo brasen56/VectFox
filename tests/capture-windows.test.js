@@ -6,6 +6,17 @@ const ref = index => ({ ref: `source:${index}`, source_chat_id: 'chat', host_id:
 const event = index => ({ event_ref: `event:${index}`, source_window_start: index,
     event_type: 'dialogue_significant', source_refs: [ref(index)] });
 describe('Targeted candidate scenes', () => {
+    it('ranks the full importance scale within each temporal stratum', () => {
+        const events = Array.from({ length: 8 }, (_, index) => ({ ...event(index), importance: index % 2 ? 10 : 4 }));
+        expect(selectCaptureWindows(events).map(window => window.ranking.temporal_position)).toEqual([1, 3, 5, 7]);
+    });
+    it('pages through every scene once and terminates at the end', () => {
+        const events = Array.from({ length: 9 }, (_, index) => event(index));
+        const selected = [0, 4, 8].flatMap(offset => selectCaptureWindows(events, 4, offset));
+        expect(new Set(selected.flatMap(window => window.event_refs)).size).toBe(9);
+        expect(selected).toHaveLength(9);
+        expect(selectCaptureWindows(events, 4, 12)).toEqual([]);
+    });
     it('orders small chained overlaps without losing citations', () => {
         const count = 3;
         const events = Array.from({ length: count }, (_, index) => ({

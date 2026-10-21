@@ -340,6 +340,11 @@ export function cleanText(text) {
     return result;
 }
 
+/** Version 1 of the narrative used to validate acquisition evidence. */
+export function evidenceNarrative(text) {
+    return cleanText(stripGameSystemBlocks(stripReasoningBlocks(String(text || ''), { allowEmpty: true }))).trim();
+}
+
 /**
  * Strip AI reasoning / planning blocks from a message so downstream consumers
  * (currently the agentic retrieval planner) read narrative, not the model's

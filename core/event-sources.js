@@ -1,6 +1,6 @@
 /** Public provenance primitives. No generation, persistence, or MWT identities. */
 import { prepareMessagesForEventBase } from './ils-expander.js';
-import { stripReasoningBlocks, stripGameSystemBlocks } from './text-cleaning.js';
+import { stripReasoningBlocks, stripGameSystemBlocks, evidenceNarrative } from './text-cleaning.js';
 
 export function legacySourceHash(message) {
     const text = `${message.name || ''}:${String(message.mes || '').trim()}`;
@@ -129,6 +129,7 @@ export async function resolveEventSources(references, { chatId, chat, chatMetada
             ...base, status, reason, current_fingerprint: leaf.fingerprint,
             expanded_index: leaf.index, visible_index: leaf.container,
             recovered_ils: message !== container,
+            evidence_narrative: status === 'verified' ? { version: 1, text: evidenceNarrative(message.mes) } : null,
             leaf_identity: { id: message.id ?? null, mesid: message.extra?.mesid ?? null },
             container_identity: { id: container?.id ?? null, mesid: container?.extra?.mesid ?? null },
             // Never return an unverified original as usable evidence.
