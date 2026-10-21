@@ -73,6 +73,23 @@ describe('stripReasoningBlocks', () => {
         expect(stripReasoningBlocks(undefined)).toBe(undefined);
     });
 
+    it.each([
+        '<think>Private planning.</think>',
+        '<Thinking>Private planning.</Thinking>',
+        '<reasoning>Private planning.</reasoning>',
+        '<think><x_planning~>Private planning.</x_planning~>',
+    ])('allows empty output without restoring reasoning for evidence validation: %s', text => {
+        expect(stripReasoningBlocks(text, { allowEmpty: true })).toBe('');
+        expect(stripReasoningBlocks(text)).toBe('Private planning.');
+    });
+
+    it('preserves surrounding narrative when empty output is allowed', () => {
+        expect(stripReasoningBlocks('Before.<think>Private planning.</think>After.', { allowEmpty: true }))
+            .toBe('Before.After.');
+        expect(stripReasoningBlocks('<think><x_planning~>Private planning.</x_planning~>\nNarrative.', { allowEmpty: true }))
+            .toBe('Narrative.');
+    });
+
     // GitHub issue #18. The Agent Mode planner asks for `response_format:
     // json_object`, which does NOT stop a thinking model emitting its reasoning
     // first. _callPlanner runs this strip before JSON.parse; without it the

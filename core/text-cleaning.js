@@ -362,10 +362,15 @@ export function cleanText(text) {
  *      <think>…$ and silently deleted the entire narrative reply, leaving the planner
  *      with an empty turn (observed 2026-06-02).
  *
+ * By default, reasoning-only messages fall back to tag-peeled content for the
+ * planner. Evidence validation must use allowEmpty to never restore that content.
+ *
  * @param {string} text
+ * @param {object} [options]
+ * @param {boolean} [options.allowEmpty=false] - Disable the planner's content fallback
  * @returns {string} text with reasoning blocks removed
  */
-export function stripReasoningBlocks(text) {
+export function stripReasoningBlocks(text, { allowEmpty = false } = {}) {
     if (!text || typeof text !== 'string') return text;
     const stripped = text
         // 1. Paired standard reasoning blocks. \1 keeps open/close matched.
@@ -386,7 +391,7 @@ export function stripReasoningBlocks(text) {
     // the whole reply). An empty turn is useless to the planner — it's strictly
     // better to hand back the raw reply than nothing. So fall back to the
     // original text with only the bare tags peeled off (content kept).
-    if (stripped) return stripped;
+    if (stripped || allowEmpty) return stripped;
     return text
         .replace(/<\/?[A-Za-z][\w~-]*[^>]*>/g, ' ')
         .replace(/[ \t]+/g, ' ')

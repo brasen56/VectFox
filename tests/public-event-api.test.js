@@ -28,6 +28,26 @@ const resolve = (references, chat, chatMetadata = {}) => resolveEventSources(ref
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Phase 2 candidate-window API', () => {
+    it('publishes validated acquisition citations as resolvable scope-bound references', async () => {
+        const originals = [message('Ranger watched the delivery.')];
+        const knowledge = { v: 1, presence: [], acquisitions: [{ character: 'Ranger', claim: 'A delivery occurred.',
+            basis: 'witnessed', epistemic_status: 'fact', uncertainty: '',
+            evidence: [{ source_index: 0, quote: 'Ranger watched the delivery.' }] }] };
+        const f = fixture([event('delivery', { knowledge, source_messages: await captureEventSources(originals, 0) }),
+            event('legacy'), event('bad', { knowledge: { ...knowledge, v: 2 } })]);
+        f.state.chat = originals;
+        expect(f.api.getStatus().capabilities.knowledge_acquisition).toMatchObject({ available: true, schema_version: 1 });
+        const found = await f.api.findEvents();
+        const [recorded, legacy, bad] = found.events;
+        expect(recorded.knowledge_status).toBe('recorded');
+        const ref = recorded.knowledge.acquisitions[0].evidence[0].source_ref;
+        expect(ref).toBe(recorded.source_refs[0].ref);
+        expect((await f.api.resolveSources({ scope_token: found.scope_token, sources: [ref] })).sources[0].status).toBe('verified');
+        expect(legacy).toMatchObject({ knowledge_status: 'unknown', knowledge: null });
+        expect(bad).toMatchObject({ knowledge_status: 'invalid', knowledge: null });
+        recorded.knowledge.acquisitions[0].claim = 'MUTATED';
+        expect((await f.api.findEvents()).events[0].knowledge.acquisitions[0].claim).toBe('A delivery occurred.');
+    });
     it('returns scoped ranked scene handles and verified source availability without generation', async () => {
         const originals = [message('Alex keeps the promise.'), message('Ranger thanks Alex.', 'b')];
         const stored = await captureEventSources(originals, 0);

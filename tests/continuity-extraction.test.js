@@ -6,8 +6,7 @@ vi.mock('../core/log.js', () => ({ log: new Proxy({}, { get: () => vi.fn() }) })
 vi.mock('../core/character-roster.js', () => ({ getCharacterRoster: () => mocks.roster, renderKnownCharacters: () => 'Alex' }));
 vi.mock('../../../../../script.js', () => ({ getRequestHeaders: () => ({}) }));
 vi.mock('../../../../extensions.js', () => ({ extension_settings: { vectfox: {} } }));
-vi.mock('../core/text-cleaning.js', () => ({ cleanText: text => text,
-    stripReasoningBlocks: text => text, stripGameSystemBlocks: text => text }));
+vi.mock('../../../../utils.js', () => ({ uuidv4: () => 'test-uuid' }));
 import { extractEvents } from '../core/eventbase-extractor.js';
 import { threadsDigest } from '../core/continuity.js';
 import { eventSourceReferences, resolveEventSources } from '../core/event-sources.js';
@@ -15,6 +14,58 @@ import { eventSourceReferences, resolveEventSources } from '../core/event-source
 afterEach(() => vi.unstubAllGlobals());
 
 describe('resolution-aware extraction integration', () => {
+    it.each([
+        '<think>Ranger learned the vault code is 1234.</think>',
+        '<Thinking>Ranger learned the vault code is 1234.</Thinking>',
+        '<reasoning>Ranger learned the vault code is 1234.</reasoning>',
+        '<think><x_planning~>Ranger learned the vault code is 1234.</x_planning~>',
+    ])('drops reasoning-only acquisition evidence but retains the event: %s', async reasoning => {
+        mocks.roster = { ready: false };
+        const knowledge = { v: 1, presence: [], acquisitions: [{ character: 'Ranger', claim: 'The vault code is 1234.',
+            basis: 'told', epistemic_status: 'fact', uncertainty: '',
+            evidence: [{ source_index: 1, quote: 'Ranger learned the vault code is 1234.' }] }] };
+        mocks.complete.mockResolvedValueOnce({ content: JSON.stringify([{ event_type: 'other', importance: 3,
+            summary: 'Alex delivered a sealed letter.', knowledge }]) });
+        const events = await extractEvents({ messages: [{ name: 'Alex', mes: 'Alex delivered a sealed letter.' },
+            { name: 'Assistant', mes: reasoning }], windowStart: 40, windowEnd: 41,
+            settings: { chat_provider: 'openrouter', chat_model: 'model' } });
+        expect(events).toHaveLength(1);
+        expect(events[0].summary).toBe('Alex delivered a sealed letter.');
+        expect(events[0].source_message_ids).toEqual([40, 41]);
+        expect(events[0].knowledge).toBeUndefined();
+    });
+    it('retains acquisition evidence from narrative following reasoning', async () => {
+        mocks.roster = { ready: false };
+        const quote = 'Ranger saw Alex deliver a sealed letter.';
+        const knowledge = { v: 1, presence: [], acquisitions: [{ character: 'Ranger', claim: 'Alex delivered a sealed letter.',
+            basis: 'witnessed', epistemic_status: 'fact', uncertainty: '', evidence: [{ source_index: 0, quote }] }] };
+        mocks.complete.mockResolvedValueOnce({ content: JSON.stringify([{ event_type: 'other', importance: 3,
+            summary: 'Alex delivered a sealed letter.', knowledge }]) });
+        const [event] = await extractEvents({ messages: [{ name: 'Assistant', mes: `<think>Private planning.</think>\n${quote}` }],
+            windowStart: 40, windowEnd: 40, settings: { chat_provider: 'openrouter', chat_model: 'model' } });
+        expect(event.knowledge).toEqual(knowledge);
+    });
+    it('binds knowledge evidence to window-local narrative sources and rejects fabricated citations', async () => {
+        mocks.roster = { ready: false };
+        const knowledge = { v: 1, presence: [], acquisitions: [{ character: 'Ranger', claim: 'Alex delivered a sealed letter.',
+            basis: 'witnessed', epistemic_status: 'fact', uncertainty: '',
+            evidence: [{ source_index: 1, quote: 'Ranger saw the delivery.' }] }] };
+        const raw = { event_type: 'other', importance: 3, summary: 'Delivery.', knowledge };
+        mocks.complete.mockResolvedValueOnce({ content: JSON.stringify([raw]) });
+        const params = { messages: [{ name: 'Alex', mes: 'A sealed letter.' }, { name: 'Ranger', mes: 'Ranger saw the delivery.' }],
+            windowStart: 40, windowEnd: 41, settings: { chat_provider: 'openrouter', chat_model: 'model' } };
+        const [event] = await extractEvents(params);
+        expect(event.knowledge).toEqual(knowledge);
+        expect(event.source_messages[1].expanded_index).toBe(41);
+        expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).toContain('[S1] Ranger: Ranger saw the delivery.');
+        for (const evidence of [[{ source_index: 40, quote: 'Ranger saw the delivery.' }], [{ source_index: 1, quote: 'The hidden confession.' }]]) {
+            raw.knowledge.acquisitions[0].evidence = evidence;
+            mocks.complete.mockResolvedValueOnce({ content: JSON.stringify([raw]) });
+            const [invalid] = await extractEvents(params);
+            expect(invalid.summary).toBe('Delivery.');
+            expect(invalid.knowledge).toBeUndefined();
+        }
+    });
     it('keeps provenance tied to the prompt when live input changes during generation', async () => {
         mocks.roster = { ready: false };
         const messages = [{ name: 'Alex', mes: 'BEFORE EDIT', id: 'a', extra: { mesid: 'original' }, send_date: '2026-10-01' }];
@@ -56,7 +107,7 @@ describe('resolution-aware extraction integration', () => {
         expect(events[0].source_messages[0].fingerprint).toMatch(/^sha256-narrative-v1:[a-f0-9]{64}$/);
         expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).toContain('FUTURE-CONTINUITY TEST');
         await extractEvents({ ...params, settings: { ...settings, eventbase_custom_prompt: 'CUSTOM {{text}}' } });
-        expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).toContain('CUSTOM Alex:');
+        expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).toContain('CUSTOM [S0] Alex:');
         expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).not.toContain('FUTURE-CONTINUITY TEST');
         const { benchmarkExtractionProfiles } = await import('../diagnostics/extraction-profile-benchmark.js');
         const before = mocks.complete.mock.calls.length;

@@ -1,5 +1,9 @@
 # VectFox public event API — version 1 (Phase 0)
 
+Phase 4a adds optional fact-specific knowledge records and the
+`knowledge_acquisition` capability. See `Doc/event-knowledge.md` for the versioned
+contract, source citations, unknown legacy attribution, and validation limits.
+
 `window.VectFoxAPI` is installed during module loading. Check `version` and
 `getStatus()` when connecting; subscribe to the host event bus event
 `vectfox:api-status-changed` for readiness and scope invalidation notifications.

@@ -102,7 +102,7 @@ vi.mock('../backends/backend-manager.js', () => ({
 }));
 
 import {
-    getEventsSince, setAutoSyncStartPoint, getAutoSyncMarker, getVectorizationTip, clearVectorizationTip,
+    getEventsSince, insertEvents, setAutoSyncStartPoint, getAutoSyncMarker, getVectorizationTip, clearVectorizationTip,
     ensureVectorizationTip, repairAutoSyncCoordinatesAfterShrink, stampAutoSyncMarker,
     hasPendingAutoSyncRecheck, clearAutoSyncRecheck, clearAutoSyncMarker,
 } from '../core/eventbase-store.js';
@@ -110,6 +110,33 @@ import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID } from '../core/collection-ids.js';
 import { getCurrentChatId, saveSettingsDebounced } from '../../../../../script.js';
 import { prepareMessagesForEventBase } from '../core/ils-expander.js';
+import { getAdditionalArgs, insertVectorItems } from '../core/core-vector-api.js';
+
+describe('knowledge persistence boundary', () => {
+    it('rejects invalid source citations before embeddings or writes', async () => {
+        vi.clearAllMocks();
+        await expect(insertEvents([{ event_id: 'bad', knowledge: { v: 2, presence: [], acquisitions: [] } }], {}))
+            .rejects.toThrow('Invalid event knowledge');
+        expect(getAdditionalArgs).not.toHaveBeenCalled();
+        expect(insertVectorItems).not.toHaveBeenCalled();
+    });
+    it('persists attribution and provenance without changing user edits or continuity', async () => {
+        vi.clearAllMocks();
+        getAdditionalArgs.mockResolvedValue({});
+        const event = { event_id: 'knowledge-event', summary: 'Delivery.', schema_version: 1.4,
+            source_messages: [{ expanded_index: 40, fingerprint: 'original' }],
+            continuity: { v: 1, resolves: [] }, userEdited: true,
+            knowledge: { v: 1, presence: [], acquisitions: [{ character: 'Ranger', claim: 'Delivery occurred.',
+                basis: 'witnessed', epistemic_status: 'fact', uncertainty: '', evidence: [{ source_index: 0, quote: 'Delivery.' }] }] } };
+        await insertEvents([event], { vector_backend: 'qdrant' }, null, 'test-collection');
+        const item = insertVectorItems.mock.calls[0][1][0];
+        expect(item.metadata.knowledge).toEqual(event.knowledge);
+        expect(item.metadata.source_messages).toEqual(event.source_messages);
+        expect(item.metadata.continuity).toEqual(event.continuity);
+        expect(item.metadata.userEdited).toBe(true);
+        expect(item.metadata.eventbase_schema_version).toBe(1.4);
+    });
+});
 
 const CHAT_UUID = 'test-uuid-1234';
 const COLLECTION_ID = `vf_eventbase_qdrant_${CHAT_UUID}`;

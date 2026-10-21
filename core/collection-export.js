@@ -39,6 +39,7 @@ import { encodeSparseVector } from './sparse-vector-encoder.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { getStringHash } from '../../../../utils.js';
 import { log } from './log.js';
+import { assertKnowledgeChunks, validateEventKnowledge } from './event-knowledge.js';
 
 // ============================================================================
 // HELPERS
@@ -283,6 +284,7 @@ export async function exportMultipleCollections(collectionIds, settings) {
                     text: meta.text || '',
                     index: meta.index,
                     metadata: {
+                        ...meta,
                         contentType: meta.contentType,
                         sourceName: meta.sourceName,
                         entryName: meta.entryName,
@@ -454,6 +456,10 @@ export function validateImportData(data, currentSettings = {}) {
         if (!col.chunks || !Array.isArray(col.chunks)) {
             errors.push(`Collection ${col.collection?.id || 'unknown'} has no chunks array`);
         } else {
+            for (const chunk of col.chunks) {
+                const knowledge = validateEventKnowledge(chunk.metadata || {});
+                if (!knowledge.ok) errors.push(`${col.collection?.id}: ${knowledge.errors.join('; ')}`);
+            }
             const chunksWithoutText = col.chunks.filter(c => !c.text);
             if (chunksWithoutText.length > 0) {
                 warnings.push(`${col.collection?.id}: ${chunksWithoutText.length} chunks have no text (will be skipped)`);
@@ -628,6 +634,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings, onBatchPr
  * @returns {Promise<{ success: boolean, collectionId: string, chunkCount: number, usedVectors: boolean, errors: string[] }>}
  */
 export async function importCollection(exportData, settings, options = {}) {
+    assertKnowledgeChunks(exportData.chunks || []);
     const sourceCollection = exportData.collection || {};
     const sourceId = options.collectionId || sourceCollection.id;
 
@@ -964,6 +971,7 @@ export async function importMultipleCollections(multiExportData, settings, optio
  * Silent import (no progress tracker) for batch operations
  */
 async function importCollectionSilent(exportData, settings, options = {}) {
+    assertKnowledgeChunks(exportData.chunks || []);
     const sourceCollection = exportData.collection || {};
     const sourceId = options.collectionId || sourceCollection.id;
 

@@ -21,6 +21,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // AGENTIC PLANNER SYSTEM PROMPT
 // ─────────────────────────────────────────────────────────────────────────────
+import { KNOWLEDGE_PROMPT } from './event-knowledge.js';
+
 // Shared structural header — output format, filter rules, question type guide.
 // Language rule + examples are in the per-language blocks below.
 
@@ -944,7 +946,7 @@ export function getEventBaseExtractionPrompt(mode, profile = 'story') {
         korean: '이전 미해결 문제(맥락 전용; 나열된 참조만 인용):',
         others: 'Earlier open issues (context only; cite only these refs):',
     };
-    const rules = `5. RESOLUTION OF LISTED ISSUES:
+    const rules = `${KNOWLEDGE_PROMPT}\n5. RESOLUTION OF LISTED ISSUES:
    - If the excerpt clearly settles, answers, or reverses a listed open issue, add optional resolves: [{"ref":"I3","threads":[0],"how":"short outcome"}] to the event that does so. Cite only listed refs and original integer thread indices, naming only threads actually settled. Keep how under 200 characters, in the excerpt's language.
    - Affection, time passing or a calm scene is NOT a resolution unless the excerpt shows the issue was addressed. A planned reconciliation in a reasoning block is NOT a resolution; retain Rule 4.
    - Gate 1 exception: an event that resolves a listed issue passes Gate 1, even when reconciliation returns the story to an earlier state.

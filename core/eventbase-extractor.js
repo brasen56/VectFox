@@ -23,13 +23,14 @@ import {
     EVENTBASE_SCHEMA_VERSION,
     packTimelineSortKey,
 } from './eventbase-schema.js';
-import { cleanText } from './text-cleaning.js';
+import { cleanText, stripReasoningBlocks, stripGameSystemBlocks } from './text-cleaning.js';
 import StringUtils from '../utils/string-utils.js';
 import { log } from './log.js';
 import { getCharacterRoster, renderKnownCharacters } from './character-roster.js';
 import { selectOpenIssues, mapResolutionRefs } from './continuity.js';
 import { resolveExtractionProfile, effectiveExtractionProfile } from './eventbase-extraction-settings.js';
 import { captureEventSources } from './event-sources.js';
+import { validateKnowledge } from './event-knowledge.js';
 
 // Cap each message's reasoning (chain-of-thought) fed to the extractor as a
 // date/time/location fallback. Tunable — raise if a game places the scene recap
@@ -291,13 +292,13 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         // scene_time diagnostic: per-message reasoning presence + which field it came from.
         const rsrc = m.extra?.reasoning ? 'extra.reasoning' : (m.reasoning ? 'reasoning' : 'none');
         log.trace(`[EventBase][scene_time] win=${windowIndex} msg#${mi} "${speaker}": mes=${text.length}c reasoning=${reasoning.length}c src=${rsrc}`);
-        if (!reasoning) return `${speaker}: ${text}`;
+        if (!reasoning) return `[S${mi}] ${speaker}: ${text}`;
         _reasoningMsgs++;
         const capped = StringUtils.truncateCodePoints(reasoning, REASONING_FEED_CHAR_CAP);
         // Log the EXACT reasoning substring sent to the model (cap = REASONING_FEED_CHAR_CAP
         // code points). Lets you confirm the date/time/location line survived the cut.
         log.trace(`[EventBase][scene_time] win=${windowIndex} msg#${mi} REASONING SENT (${Array.from(capped).length}cp of ${Array.from(reasoning).length}cp original, cap=${REASONING_FEED_CHAR_CAP}):\n>>>${capped}<<<`);
-        return `${speaker}: ${text}\n[REASONING — CONTEXT ONLY, for date/time/location; NOT a source of events]\n${capped}`;
+        return `[S${mi}] ${speaker}: ${text}\n[REASONING — CONTEXT ONLY, for date/time/location; NOT a source of events]\n${capped}`;
     });
     const excerptText = excerptLines.join('\n\n');
     log.trace(`[EventBase][scene_time] win=${windowIndex} ${msgRange}: ${_reasoningMsgs}/${messages.length} msgs had reasoning; excerpt contains REASONING block=${excerptText.includes('[REASONING')}`);
@@ -431,6 +432,15 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
                 log.warn(`[EventBase] Window ${windowIndex} ${msgRange}, item ${i}: language mismatch (excerpt=${excerptScript}, summary=${summaryScript}) — kept`);
             }
         }
+
+        // Narrow model-selected evidence to this exact immutable narrative window.
+        // Invalid attribution must not invalidate otherwise usable event history.
+        // Never restore reasoning-only content via the planner's empty fallback.
+        const knowledge = validateKnowledge(event.knowledge, { sourceCount: messages.length,
+            narratives: messages.map(m => cleanText(stripGameSystemBlocks(stripReasoningBlocks(String(m.mes || ''), { allowEmpty: true }))).trim()) });
+        if (knowledge.knowledge) event.knowledge = knowledge.knowledge;
+        else delete event.knowledge;
+        knowledge.errors.forEach(error => log.warn(`[EventBase] Knowledge dropped: ${error}`));
 
         // Attach ingestion metadata (event_id, source info, timestamps)
         const continuity = mapResolutionRefs(event.resolves, openIssues.refMap, warning => log.warn(`[EventBase] ${warning}`),

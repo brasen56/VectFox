@@ -25,6 +25,7 @@ import { log } from './log.js';
 import { prepareMessagesForEventBase } from './ils-expander.js';
 import { getShrinkRecoveryMarker, getManualAutoSyncMarker } from './autosync-coordinates.js';
 import { upsertCharacterEvents, pruneCharacterEvents, invalidateCharacterIndex } from './character-roster.js';
+import { validateEventKnowledge } from './event-knowledge.js';
 
 // Re-export so callers can import from here if needed
 export { buildEventBaseCollectionId };
@@ -312,6 +313,10 @@ export async function getEventsSince(chatUUID, marker, settings) {
  */
 export async function insertEvents(events, settings, abortSignal = null, collectionIdOverride = null) {
     if (!events?.length) return;
+    for (const event of events) {
+        const result = validateEventKnowledge(event);
+        if (!result.ok) throw new Error(`Invalid event knowledge: ${result.errors.join('; ')}`);
+    }
 
     const chatUUID = events[0].chat_uuid;
     const collectionId = collectionIdOverride || buildEventBaseCollectionId(chatUUID, settings?.vector_backend);

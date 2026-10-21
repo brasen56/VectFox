@@ -5,6 +5,7 @@ import { parseEmbedText } from './eventbase-schema.js';
 import { canFingerprintNarrative, eventSourceReferences, resolveEventSources } from './event-sources.js';
 import { selectStoryEvents, STORY_LIMITS } from './story-research.js';
 import { selectCaptureWindows } from './capture-windows.js';
+import { KNOWLEDGE_VERSION, publicEventKnowledge } from './event-knowledge.js';
 
 const MAX_RECORDS = 10000;
 const clone = value => structuredClone(value);
@@ -85,6 +86,8 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             effective_collections: state.collections,
             available_collections: state.availableCollections,
             capabilities: {
+                knowledge_acquisition: { available: !reason && !unsupported, schema_version: KNOWLEDGE_VERSION,
+                    reason: reason || (unsupported ? 'metadata_listing_unavailable' : null) },
                 history: { available: !reason && !unsupported, reason: reason || (unsupported ? 'metadata_listing_unavailable' : null),
                     backend_support: state.collections.map(c => ({ collection_id: c.collectionId,
                         available: backendSupport.get(c.registryKey) ?? null, reason: backendSupport.has(c.registryKey) ? null : 'not_probed' })) },
@@ -303,6 +306,7 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             const sourceRefs = eventSourceReferences(event, event.collection_id, eventRef, state.token);
             sourceRefs.forEach(ref => sourceCache.set(ref.ref, ref));
             return { ...event, event_ref: eventRef, source_refs: sourceRefs, source_status: 'unresolved',
+                ...publicEventKnowledge(event, sourceRefs),
                 continuity_view: getContinuityView(event, continuityIndex) };
         });
         // Bound retained references across repeated requests as well as per request.

@@ -13,6 +13,7 @@
  */
 import { getEventBaseExtractionPrompt } from './prompts-i18n.js';
 import StringUtils from '../utils/string-utils.js';
+import { validateKnowledge } from './event-knowledge.js';
 
 /**
  * Controlled vocabulary for event_type field.
@@ -46,7 +47,8 @@ export const EVENT_TYPES = Object.freeze([
 // metadata, not an LLM field; older events simply lack it.
 // Float is safe — this constant is only stamped onto events + stored, never
 // compared or ordered. No re-extraction of older (v1) events is forced.
-export const EVENTBASE_SCHEMA_VERSION = 1.3;
+// 1.4: optional versioned presence / fact-specific acquisitions; legacy stays unknown.
+export const EVENTBASE_SCHEMA_VERSION = 1.4;
 
 /**
  * Stride used to pack (window_start, event_order) into a single sortable
@@ -222,6 +224,9 @@ export function validateEvent(raw) {
         open_threads: ensureArray((/** @type {any} */ (raw)).open_threads),
         should_persist: (/** @type {any} */ (raw)).should_persist === true,
     };
+    const knowledge = validateKnowledge(raw.knowledge);
+    errors.push(...knowledge.errors);
+    if (knowledge.knowledge) event.knowledge = knowledge.knowledge;
     if (Array.isArray(raw.resolves)) {
         event.resolves = raw.resolves.filter(r => r && /^I[1-9]\d*$/.test(r.ref) && Array.isArray(r.threads))
             .map(r => ({ ref: r.ref, threads: [...new Set(r.threads.filter(i => Number.isInteger(i) && i >= 0))],
