@@ -29,6 +29,17 @@ export const cases = [
 ];
 
 describe('fact-specific knowledge contract', () => {
+    it('retains valid entries independently during extraction and folds curly quotes', () => {
+        const valid = acquisition('Delivery.', 'Ranger said "it’s delivered".');
+        const raw = knowledge([valid, acquisition('Invented.', 'Never happened.')]);
+        const result = validateKnowledge(raw, { sourceCount: 1, discardInvalid: true,
+            narratives: ['Ranger said “it\'s delivered”.'] });
+        expect(result.knowledge.acquisitions).toEqual([valid]);
+        expect(result.errors).toHaveLength(1);
+        // Import validation remains strict, rather than silently accepting corrupt records.
+        expect(validateKnowledge(raw, { sourceCount: 1, narratives: ['Ranger said “it\'s delivered”.'] }).ok).toBe(false);
+    });
+
     it.each(cases)('preserves the expected attribution for $id', fixture => {
         const raw = knowledge(fixture.acquisitions);
         const result = validateKnowledge(raw, { sourceCount: 1, narratives: [fixture.narrative] });

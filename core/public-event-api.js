@@ -281,11 +281,12 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
         for (const subject of request.subjects || []) {
             const names = [subject.name, ...(subject.aliases || [])].map(normalizeCharacterName);
             const matches = roster.groups.filter(group => [group.name, ...group.aliases].some(name => names.includes(normalizeCharacterName(name))));
-            if (matches.length > 1 || matches.some(group => group.ambiguous)) {
+            if (matches.some(group => group.ambiguous)) {
                 return failure('ambiguous_subject', `Ambiguous subject: ${subject.name}`, { candidates: matches.map(g => ({ name: g.name, aliases: g.aliases })) });
             }
-            subjects.push(matches[0]?.eventIds || new Set());
-            if (matches[0]) resolvedSubjects.push({ name: matches[0].name, aliases: matches[0].aliases });
+            // The caller asserts that these aliases identify one subject.
+            subjects.push(new Set(matches.flatMap(group => [...group.eventIds])));
+            resolvedSubjects.push(...matches.map(group => ({ name: group.name, aliases: group.aliases })));
         }
         const history = eligible.filter(event => !request.types?.length || request.types.includes(event.event_type));
         // Group by source, then source order; unrelated indices never form one timeline.

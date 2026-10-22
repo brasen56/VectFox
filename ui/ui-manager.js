@@ -1162,6 +1162,11 @@ export function renderSettings(containerId, settings, callbacks) {
 
                             <!-- Extraction settings -->
                             <p class="vectfox-section-label"><strong>Extraction</strong></p>
+                            <label class="checkbox_label" for="VectFox_eventbase_capture_knowledge">
+                                <input type="checkbox" id="VectFox_eventbase_capture_knowledge" />
+                                <span>Capture fact-specific character knowledge</span>
+                            </label>
+                            <small class="VectFox_hint">Adds quoted presence and knowledge evidence to new extractions and uses more output tokens. Disable for lower-cost extraction; existing records are unchanged. Custom prompts are not rewritten, but returned knowledge is ignored when disabled.</small>
 
                             <!-- Window Size / Window Overlap moved to the Vectorize Content panel
                                  (Feature A): after the independent auto-sync window, these two only
@@ -4602,6 +4607,14 @@ function bindSettingsEvents(settings, callbacks) {
         });
 
     // Number inputs (temperature, max_tokens, timeout_ms)
+    $('#VectFox_eventbase_capture_knowledge')
+        .prop('checked', settings.eventbase_capture_knowledge !== false)
+        .off('change.knowledgeCapture').on('change.knowledgeCapture', function() {
+            settings.eventbase_capture_knowledge = $(this).prop('checked');
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+        });
+
     const _bindEventBaseNumber = (id, settingKey) => {
         $(`#VectFox_eventbase_${id}`)
             .val(settings[settingKey] ?? '')
@@ -4738,7 +4751,7 @@ function bindSettingsEvents(settings, callbacks) {
         const { getEventBaseExtractionPrompt } = await import('../core/prompts-i18n.js');
         const saved = settings.eventbase_custom_prompt || '';
         const mode = settings.cjk_tokenizer_mode || 'intl';
-        $('#VectFox_eventbase_custom_prompt').val(saved.trim() ? saved : getEventBaseExtractionPrompt(mode, resolveExtractionProfile(settings)));
+        $('#VectFox_eventbase_custom_prompt').val(saved.trim() ? saved : getEventBaseExtractionPrompt(mode, resolveExtractionProfile(settings), settings.eventbase_capture_knowledge !== false));
     })();
 
     $('#VectFox_eventbase_custom_prompt').on('input', function() {
@@ -4758,7 +4771,7 @@ function bindSettingsEvents(settings, callbacks) {
         updateExtractionProfileStatus();
         if (!settings.eventbase_custom_prompt?.trim()) {
             const { getEventBaseExtractionPrompt } = await import('../core/prompts-i18n.js');
-            $('#VectFox_eventbase_custom_prompt').val(getEventBaseExtractionPrompt(settings.cjk_tokenizer_mode, resolveExtractionProfile(settings)));
+            $('#VectFox_eventbase_custom_prompt').val(getEventBaseExtractionPrompt(settings.cjk_tokenizer_mode, resolveExtractionProfile(settings), settings.eventbase_capture_knowledge !== false));
         }
     });
     const updateContinuityStatus = async () => {
@@ -4784,7 +4797,7 @@ function bindSettingsEvents(settings, callbacks) {
         const { callGenericPopup, POPUP_TYPE } = await import('../../../../popup.js');
         const { getEventBaseExtractionPrompt } = await import('../core/prompts-i18n.js');
         const panel = $('<div>').append($('<p>').text('Your saved prompt is unchanged. Compare it with the current built-in default below.'));
-        const defaultPrompt = getEventBaseExtractionPrompt(settings.cjk_tokenizer_mode, resolveExtractionProfile(settings));
+        const defaultPrompt = getEventBaseExtractionPrompt(settings.cjk_tokenizer_mode, resolveExtractionProfile(settings), settings.eventbase_capture_knowledge !== false);
         panel.append($('<p>').text(`Effective extraction profile: ${effectiveExtractionProfile(settings)}; selected built-in: ${resolveExtractionProfile(settings)}.`));
         for (const [label, value] of [['Current prompt', settings.eventbase_custom_prompt?.trim() ? settings.eventbase_custom_prompt : defaultPrompt],
             ['Current default', defaultPrompt]]) {
@@ -4800,7 +4813,7 @@ function bindSettingsEvents(settings, callbacks) {
         settings.eventbase_custom_prompt = '';
         updateExtractionProfileStatus();
         updateContinuityStatus();
-        $('#VectFox_eventbase_custom_prompt').val(getEventBaseExtractionPrompt(mode, resolveExtractionProfile(settings)));
+        $('#VectFox_eventbase_custom_prompt').val(getEventBaseExtractionPrompt(mode, resolveExtractionProfile(settings), settings.eventbase_capture_knowledge !== false));
         Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
         toastr.success(`Extraction prompt reset to ${mode} / ${resolveExtractionProfile(settings)} default`, 'EventBase');
@@ -4814,7 +4827,13 @@ function bindSettingsEvents(settings, callbacks) {
         if (settings.eventbase_custom_prompt && settings.eventbase_custom_prompt.trim()) return;
         const { getEventBaseExtractionPrompt } = await import('../core/prompts-i18n.js');
         const mode = $(this).val() || 'intl';
-        $('#VectFox_eventbase_custom_prompt').val(getEventBaseExtractionPrompt(mode, resolveExtractionProfile(settings)));
+        $('#VectFox_eventbase_custom_prompt').val(getEventBaseExtractionPrompt(mode, resolveExtractionProfile(settings), settings.eventbase_capture_knowledge !== false));
+    });
+    $('#VectFox_eventbase_capture_knowledge').on('change.eventbasePromptSync', async () => {
+        if (settings.eventbase_custom_prompt?.trim()) return;
+        const { getEventBaseExtractionPrompt } = await import('../core/prompts-i18n.js');
+        $('#VectFox_eventbase_custom_prompt').val(getEventBaseExtractionPrompt(settings.cjk_tokenizer_mode,
+            resolveExtractionProfile(settings), settings.eventbase_capture_knowledge !== false));
     });
 
     // ── End EventBase settings ───────────────────────────────────────────────

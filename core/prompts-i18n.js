@@ -929,7 +929,7 @@ const _EXTRACTION_PROMPTS = {
  * @param {string} [profile] - story (default) or slice_of_life; custom prompts bypass this
  * @returns {string}
  */
-export function getEventBaseExtractionPrompt(mode, profile = 'story') {
+export function getEventBaseExtractionPrompt(mode, profile = 'story', captureKnowledge = true) {
     const rosterInstructions = {
         intl: 'Known characters (aliases in parentheses refer to the same person). Prefer these names when supported by the excerpt; do not invent events from this list:',
         jieba: '已知角色（括号中的别名指同一人）。当节选支持时优先使用这些名字；不要根据此列表编造事件：',
@@ -946,7 +946,7 @@ export function getEventBaseExtractionPrompt(mode, profile = 'story') {
         korean: '이전 미해결 문제(맥락 전용; 나열된 참조만 인용):',
         others: 'Earlier open issues (context only; cite only these refs):',
     };
-    const rules = `${KNOWLEDGE_PROMPT}\n5. RESOLUTION OF LISTED ISSUES:
+    const rules = `${captureKnowledge ? KNOWLEDGE_PROMPT : ''}\n5. RESOLUTION OF LISTED ISSUES:
    - If the excerpt clearly settles, answers, or reverses a listed open issue, add optional resolves: [{"ref":"I3","threads":[0],"how":"short outcome"}] to the event that does so. Cite only listed refs and original integer thread indices, naming only threads actually settled. Keep how under 200 characters, in the excerpt's language.
    - Affection, time passing or a calm scene is NOT a resolution unless the excerpt shows the issue was addressed. A planned reconciliation in a reasoning block is NOT a resolution; retain Rule 4.
    - Gate 1 exception: an event that resolves a listed issue passes Gate 1, even when reconciliation returns the story to an earlier state.

@@ -224,7 +224,7 @@ export function validateEvent(raw) {
         open_threads: ensureArray((/** @type {any} */ (raw)).open_threads),
         should_persist: (/** @type {any} */ (raw)).should_persist === true,
     };
-    const knowledge = validateKnowledge(raw.knowledge);
+    const knowledge = validateKnowledge(raw.knowledge, { discardInvalid: true });
     errors.push(...knowledge.errors);
     if (knowledge.knowledge) event.knowledge = knowledge.knowledge;
     if (Array.isArray(raw.resolves)) {
@@ -343,10 +343,10 @@ export const DEFAULT_EXTRACTION_PROMPT = getEventBaseExtractionPrompt('intl');
  * @param {string} [profile] - Built-in extraction profile (story / slice_of_life)
  * @returns {string}
  */
-export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl', knownCharacters = '', openIssues = '(none)', profile = 'story') {
+export function buildExtractionPrompt(text, maxCount, customPrompt = '', mode = 'intl', knownCharacters = '', openIssues = '(none)', profile = 'story', captureKnowledge = true) {
     const template = (customPrompt && customPrompt.trim())
         ? customPrompt
-        : getEventBaseExtractionPrompt(mode, profile);
+        : getEventBaseExtractionPrompt(mode, profile, captureKnowledge);
     return template
         .replace(/\{\{maxCount\}\}|\{\{knownCharacters\}\}|\{\{openIssues\}\}|\{\{text\}\}/g, placeholder => {
             if (placeholder === '{{maxCount}}') return String(maxCount);

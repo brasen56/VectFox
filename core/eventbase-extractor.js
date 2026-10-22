@@ -161,7 +161,7 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
     }
 
     try {
-        const { content } = await postChatCompletion({
+        const { content, finishReason } = await postChatCompletion({
             messages: [{ role: 'user', content: prompt }],
             model,
             provider: 'openrouter',
@@ -171,6 +171,7 @@ async function _callOpenRouter(prompt, settings, windowIndex) {
             contextLabel: 'EventBase',
             ...resolveModelParameterStyle(settings),
         });
+        _assertComplete(finishReason, windowIndex);
         return content;
     } catch (e) {
         throw _mapEventBaseError(e, windowIndex);
@@ -203,7 +204,7 @@ async function _callVLLM(prompt, settings, windowIndex) {
     }
 
     try {
-        const { content } = await postChatCompletion({
+        const { content, finishReason } = await postChatCompletion({
             messages: [{ role: 'user', content: prompt }],
             model,
             provider: 'vllm',
@@ -214,10 +215,18 @@ async function _callVLLM(prompt, settings, windowIndex) {
             contextLabel: 'EventBase',
             ...resolveModelParameterStyle(settings),
         });
+        _assertComplete(finishReason, windowIndex);
         return content;
     } catch (e) {
         throw _mapEventBaseError(e, windowIndex);
     }
+}
+
+function _assertComplete(finishReason, windowIndex) {
+    if (finishReason !== 'length' && finishReason !== 'max_tokens') return;
+    const message = `EventBase: Extraction output truncated for window ${windowIndex} (${finishReason}). No partial events saved. Raise Max Output Tokens, reduce the window size, or disable knowledge capture, then retry.`;
+    log.warn(message);
+    throw new EventBaseExtractionError(message, windowIndex);
 }
 
 /**
@@ -330,6 +339,7 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         renderKnownCharacters(getCharacterRoster(collectionIds, settings), settings),
         openIssues.text,
         resolveExtractionProfile(settings),
+        settings.eventbase_capture_knowledge !== false,
     );
     if (languageHint) {
         basePrompt = `DETECTED EXCERPT LANGUAGE: ${languageHint}. You MUST write ALL string fields in that language — no exceptions.\n\n${basePrompt}`;
@@ -436,8 +446,9 @@ export async function extractEvents({ messages, windowStart, windowEnd, settings
         // Narrow model-selected evidence to this exact immutable narrative window.
         // Invalid attribution must not invalidate otherwise usable event history.
         // Never restore reasoning-only content via the planner's empty fallback.
-        const knowledge = validateKnowledge(event.knowledge, { sourceCount: messages.length,
-            narratives: messages.map(m => evidenceNarrative(m.mes)) });
+        const knowledge = validateKnowledge(settings.eventbase_capture_knowledge === false ? null : event.knowledge,
+            { sourceCount: messages.length, discardInvalid: true,
+                narratives: messages.map(m => evidenceNarrative(m.mes)) });
         if (knowledge.knowledge) event.knowledge = knowledge.knowledge;
         else delete event.knowledge;
         knowledge.errors.forEach(error => log.warn(`[EventBase] Knowledge dropped: ${error}`));

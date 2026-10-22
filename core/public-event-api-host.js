@@ -57,9 +57,13 @@ export function installPublicEventAPI() {
         void eventSource.emit('vectfox:api-status-changed', api.getStatus());
     };
     for (const name of ['CHAT_CHANGED', 'MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED',
-        'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'SETTINGS_UPDATED']) {
+        'MESSAGE_SENT', 'MESSAGE_RECEIVED']) {
         if (event_types[name]) eventSource.on(event_types[name], notify);
     }
+    // snapshot() detects relevant settings changes; unrelated saves keep handles valid.
+    if (event_types.SETTINGS_UPDATED) eventSource.on(event_types.SETTINGS_UPDATED, () => {
+        void eventSource.emit('vectfox:api-status-changed', api.getStatus());
+    });
     for (const name of ['vectfox:collections-updated', 'vectfox:eventbase-synced']) document.addEventListener(name, notify);
     return { markReady() { ready = true; notify(); } };
 }

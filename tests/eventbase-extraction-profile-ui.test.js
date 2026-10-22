@@ -32,6 +32,21 @@ function setup(settings) {
 }
 
 describe('extraction profile settings controls', () => {
+    it('keeps the built-in preview consistent with knowledge capture without rewriting custom prompts', async () => {
+        const settings = { eventbase_capture_knowledge: false, vector_backend: 'qdrant' };
+        const { $ } = setup(settings);
+        await Promise.resolve();
+        expect($('#VectFox_eventbase_custom_prompt').val()).not.toContain('FACT-SPECIFIC KNOWLEDGE');
+        settings.eventbase_capture_knowledge = true;
+        await $('#VectFox_eventbase_capture_knowledge').handlers['change.eventbasePromptSync']();
+        expect($('#VectFox_eventbase_custom_prompt').val()).toContain('FACT-SPECIFIC KNOWLEDGE');
+        settings.eventbase_custom_prompt = 'CUSTOM {{text}}';
+        $('#VectFox_eventbase_custom_prompt').val(settings.eventbase_custom_prompt);
+        settings.eventbase_capture_knowledge = false;
+        await $('#VectFox_eventbase_capture_knowledge').handlers['change.eventbasePromptSync']();
+        expect($('#VectFox_eventbase_custom_prompt').val()).toBe('CUSTOM {{text}}');
+    });
+
     it('updates built-in previews, persists the profile, and resets to the selected language/profile', async () => {
         const settings = { cjk_tokenizer_mode: 'jieba_tw', vector_backend: 'qdrant' };
         const { $, saved, save } = setup(settings);

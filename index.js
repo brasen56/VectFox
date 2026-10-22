@@ -232,6 +232,7 @@ const defaultSettings = {
     // forward cleanly; new installs never see the fields at all.
     eventbase_temperature: 0.2,
     eventbase_max_tokens: 2048,
+    eventbase_capture_knowledge: true,
     eventbase_timeout_ms: 60000,
     eventbase_window_size: 2,                     // Chat messages per extraction window
     eventbase_window_overlap: 0,                  // Window overlap to avoid edge cuts

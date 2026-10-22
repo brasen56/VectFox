@@ -27,6 +27,25 @@ async function refs(messages) {
 const resolve = (references, chat, chatMetadata = {}) => resolveEventSources(references, { chatId: 'chat', chat, chatMetadata });
 afterEach(() => vi.unstubAllGlobals());
 
+describe('caller-asserted aliases and stock source edits', () => {
+    it('unions separate roster groups for a subject across history and candidate windows', async () => {
+        const { api } = fixture([event('full', { characters: ['Seraphine'], source_message_ids: [0] }),
+            event('short', { characters: ['Sera'], source_message_ids: [0] })]);
+        const subjects = [{ name: 'Seraphine', aliases: ['Sera'] }];
+        const history = await api.findEvents({ subjects });
+        expect(history.ok).toBe(true);
+        expect(history.events.map(e => e.event_id)).toEqual(['full', 'short']);
+        expect((await api.findCandidateWindows({ subjects })).ok).toBe(true);
+    });
+    it('flags a dated stock narrative edit without returning it as usable evidence', async () => {
+        const original = { name: 'Alex', mes: 'Original.', send_date: '2026-01-01' };
+        const references = await refs([original]);
+        const [changed] = await resolve(references, [{ ...original, mes: 'Rewritten.' }]);
+        expect(changed).toMatchObject({ status: 'changed', reason: 'narrative_changed', message: null });
+        expect((await resolve(references, [{ ...original, mes: 'Other.', send_date: '2026-01-02' }]))[0].status).toBe('unresolved');
+    });
+});
+
 describe('Phase 2 candidate-window API', () => {
     it('preserves earlier candidate pages when archive references exceed the cache', async () => {
         const originals = Array.from({ length: 20 }, (_, index) => message(`Source ${index}`, `id:${index}`));

@@ -97,7 +97,15 @@ export async function resolveEventSources(references, { chatId, chat, chatMetada
             // Undated legacy references therefore remain unverified without host IDs.
             if (reference.send_date == null) return { ...base, reason: candidates.length > 1 ? 'ambiguous_duplicate' : 'source_identity_unverified' };
             candidates = candidates.filter(leaf => leaf.message.send_date === reference.send_date);
-            if (!candidates.length) return { ...base, reason: 'source_not_located' };
+            if (!candidates.length) {
+                // Date + original position can flag an edit, but never prove usable evidence.
+                const dated = leaves.filter(leaf => leaf.message.send_date === reference.send_date);
+                if (dated.length === 1 && dated[0].index === reference.expanded_index) {
+                    return { ...base, status: 'changed', reason: 'narrative_changed',
+                        current_fingerprint: dated[0].fingerprint };
+                }
+                return { ...base, reason: 'source_not_located' };
+            }
         }
         if (candidates.length > 1) return { ...base, reason: 'ambiguous_duplicate' };
         let leaf = candidates[0];

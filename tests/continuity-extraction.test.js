@@ -14,6 +14,27 @@ import { eventSourceReferences, resolveEventSources } from '../core/event-source
 afterEach(() => vi.unstubAllGlobals());
 
 describe('resolution-aware extraction integration', () => {
+    it.each(['openrouter', 'vllm'])('rejects token-truncated %s output even with complete salvageable events', async provider => {
+        mocks.roster = { ready: false };
+        mocks.complete.mockResolvedValueOnce({ content: '[{"summary":"Complete first event"},{"summary":"cut', finishReason: 'length' });
+        await expect(extractEvents({ messages: [{ name: 'Alex', mes: 'A busy scene.' }], windowStart: 0, windowEnd: 0,
+            settings: { chat_provider: provider, chat_model: 'model', chat_vllm_url: 'http://localhost:8000' } }))
+            .rejects.toThrow(/output truncated.*No partial events saved/);
+    });
+
+    it('can disable knowledge capture in prompts and returned records, including custom prompts', async () => {
+        mocks.roster = { ready: false };
+        for (const custom of ['', 'CUSTOM {{text}}']) {
+            mocks.complete.mockResolvedValueOnce({ content: JSON.stringify([{ summary: 'Delivery.',
+                knowledge: { v: 1, presence: [], acquisitions: [] } }]) });
+            const [event] = await extractEvents({ messages: [{ name: 'Alex', mes: 'Delivery.' }], windowStart: 0, windowEnd: 0,
+                settings: { chat_provider: 'openrouter', chat_model: 'model', eventbase_capture_knowledge: false,
+                    eventbase_custom_prompt: custom } });
+            expect(event.knowledge).toBeUndefined();
+            expect(mocks.complete.mock.calls.at(-1)[0].messages[0].content).not.toContain('FACT-SPECIFIC KNOWLEDGE');
+        }
+    });
+
     it.each([
         '<think>Ranger learned the vault code is 1234.</think>',
         '<Thinking>Ranger learned the vault code is 1234.</Thinking>',

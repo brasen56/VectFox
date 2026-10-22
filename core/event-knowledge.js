@@ -15,13 +15,14 @@ Use [] when attribution was assessed but none is supported; omit knowledge if at
 `;
 
 const text = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
-const normalizeQuote = value => value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+const normalizeQuote = value => value.normalize('NFKC').replace(/[‘’‚‛]/gu, "'")
+    .replace(/[“”„‟]/gu, '"').replace(/\s+/gu, ' ').trim();
 
 /** The same contract is used for generation, persistence, imports and API reads.
  * source_index is an ordinal into the event's immutable source_messages array,
  * NOT a live chat position. Optional narratives enable extraction-time quote checks.
  */
-export function validateKnowledge(raw, { sourceCount, narratives } = {}) {
+export function validateKnowledge(raw, { sourceCount, narratives, discardInvalid = false } = {}) {
     if (raw === undefined || raw === null) return { ok: true, knowledge: null, errors: [] };
     const errors = [];
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.v !== KNOWLEDGE_VERSION
@@ -57,7 +58,10 @@ export function validateKnowledge(raw, { sourceCount, narratives } = {}) {
     const presence = raw.presence.map(entry => record(entry, false));
     const acquisitions = raw.acquisitions.map(entry => record(entry, true));
     if (presence.some(entry => !entry) || acquisitions.some(entry => !entry)) errors.push('Invalid knowledge entry or source evidence');
-    return { ok: !errors.length, errors, knowledge: errors.length ? null : { v: KNOWLEDGE_VERSION, presence, acquisitions } };
+    const retainedPresence = presence.filter(Boolean), retainedAcquisitions = acquisitions.filter(Boolean);
+    const retain = !errors.length || (discardInvalid && (retainedPresence.length || retainedAcquisitions.length));
+    return { ok: !errors.length, errors, knowledge: retain
+        ? { v: KNOWLEDGE_VERSION, presence: retainedPresence, acquisitions: retainedAcquisitions } : null };
 }
 
 export function validateEventKnowledge(event) {
