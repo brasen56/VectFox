@@ -31,6 +31,20 @@ const nextSave = () => { let done; const saved = new Promise(resolve => { done =
 afterEach(() => vi.useRealTimers());
 
 describe('source-grounded NPC cards', () => {
+    it('discards an in-flight response after identity changes', async () => {
+        const f = fixture('Identity invalidation');
+        let release;
+        const response = new Promise(resolve => { release = resolve; });
+        const complete = vi.fn(() => response);
+        const save = vi.fn();
+        getNpcCards({ ...f, complete, save });
+        await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
+        f.settings.eventbase_declared_continuity = { changed: true };
+        release([{ fact: 'Stale identity', source_ids: ['e0'] }]);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(save).not.toHaveBeenCalled();
+        expect(f.settings.eventbase_npc_cards).toEqual({});
+    });
     it('gates facts citing active duplicates without changing unrelated evidence', async () => {
         const f = fixture('Alex', 3);
         const initial = npcCardSnapshot(f.roster, f.group);

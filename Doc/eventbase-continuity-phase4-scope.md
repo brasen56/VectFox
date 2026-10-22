@@ -1,10 +1,15 @@
 # EventBase continuity: Phase 4 implementation scope
 
-**Status:** Draft for review, revision 2, 2026-10-15. Nothing in this document is an implementation claim. Measured numbers are quoted from the parent scope or from earlier NPC card measurements; new figures, such as the cost in §5, are projections.
+**Status:** Draft for review, revision 3, 2026-10-22. Nothing in this document is an implementation claim. Measured numbers are quoted from the parent scope or from earlier NPC card measurements; new figures, such as the cost in §5, are projections. Reports of duplicate volume below are user reports, not new collection measurements.
 **Parent scope:** [eventbase-continuity-scope.md](eventbase-continuity-scope.md), Phase 4.
 **Design background:** [eventbase-continuity-design.md](eventbase-continuity-design.md), especially §§3–5, 7.3 and 9.
 
-Revision 2 changes:
+Revision 3 changes:
+- Adds 4F, an explicit, backup-gated purge of reviewed duplicate marks, taking up the deferred action in the parent scope's §2B.
+- Expands 4B into a browsable NPC-card inspector/editor for existing historical facts as well as future pair state, with durable corrections and suppression.
+- Adds purge/editor dependencies, acceptance checks and implementation decisions. Phase 4 remains unimplemented; this does not change the Phase 2–3 testing gates.
+
+Revision 2 changes (retained):
 - §3.1 states what the branch-eligibility gate means for existing collections, adds a source-chat prerequisite and a user-declared continuity fallback, and defines its terms.
 - 4C now has a measurement gate before implementation, like 4D.
 - §5 adds a projected cost, says how evidence for current state is selected, and adds a cast-allocator precondition to the state budget.
@@ -22,19 +27,22 @@ Phase 4 extends the Phase 1–3 implementation; it does not restart that work. R
 | Work package | Deliverable | Dependency |
 |---|---|---|
 | 4A | Stable subject IDs, alias migration and explicit continuity scope | Foundation for relationship state |
-| 4B | Current relationship sections on NPC cards, user canon/pinning and reserved injection capacity | 4A |
+| 4B | User-visible NPC-card browser/editor, durable corrections/canon/pinning, current relationship sections and reserved injection capacity | 4A for durable identity/migration and pair state; existing-card inspection can be developed first |
 | 4C | Evidence-linked episode grouping and atomic episode rendering, only if measurements justify it | Existing resolution links; 4A scope rules; a post-Phase-2 multi-record baseline |
 | 4D | Optional exposure cooldown, only if measurements justify it | A post-Phase-2 exposure baseline; 4C episode IDs if 4C ships, otherwise event IDs |
 | 4E | Optional continuity-only InlineSummary backfill | Separate source inventory/checkpoint; 4A scope rules for new facts |
+| 4F | Explicit purge of reviewed, active duplicate marks, with backup, dependency checks and resumable deletion | Phase 2 duplicate review; complete inventory and verified targeted deletion/backup contracts; no dependency on 4A–4E |
 
 These are independently reviewable increments, not one all-or-nothing release. Recommended implementation order: 4A → 4B. Measure before starting 4C, and evaluate 4D after 4C or after deciding against it. The parent scope deferred episodes because resolution links and duplicate marking may already cover the visible symptoms, so 4C has the same kind of measurement gate as 4D. 4E can be developed separately once its source and persistence contracts are settled.
+
+4F can be developed in parallel as a separate maintenance increment: users report hundreds of suspected duplicates, roughly 5% of their Qdrant entries. Validate that against each selected collection; do not treat 5% as a deletion target or lower duplicate thresholds to reach it. Marking already suppresses active duplicates from retrieval; purge reclaims stored records and is not a substitute for fixing repeated extraction/insertion. The existing-card inspector should likewise not wait for episode grouping, cooldown or backfill.
 
 ### Not included
 
 - A parallel relationship-state database or general-purpose derived store. Extend NPC cards for state and the event `continuity` namespace for episode annotations.
 - Rewriting historical summaries, embeddings, importance or original `open_threads` during state/episode repair.
 - Numeric affection/trust scores, automatic personality diagnosis, or treating affection/silence as resolution.
-- Automatic full-history re-extraction, collection rebuilds, or permanent duplicate deletion.
+- Automatic full-history re-extraction, collection rebuilds, or automatic/unreviewed duplicate deletion. Permanent deletion is included only through the explicit 4F workflow (§8A).
 - Automatic canon ingestion from character cards/lorebooks. Users explicitly author or copy a constraint in this increment.
 - A general project/group-state engine. The first state UI supports relationship pairs; do not block future subject types in the identity contract.
 - A promise that every generation model will obey the supplied continuity.
@@ -53,6 +61,7 @@ These are repository observations as of this draft, not new requirements already
 | Summarizer Injection | `core/summarizer-injection.js` has a separate prompt slot and budget path. | Coordinate state ownership and preserve lifecycle rendering in summarizer-only configurations. |
 | Chronology | `core/event-chronology.js` supplies ordering; the parent scope documents incompatible source positions across shared/slimmed chats. | Ordering is not proof of branch eligibility. Introduce an explicit eligibility contract before calling synthesized state current. |
 | Repair | `core/continuity-repair.js`, `core/continuity-repair-service.js` and the repair UI provide proposals/checkpoints/review. | Reuse workflow patterns without mixing run types or overwriting existing resolution/duplicate annotations. |
+| Targeted deletion/export | `core/core-vector-api.js` exposes `deleteVectorItems` by hash; `backends/qdrant.js` also has whole-collection purge operations. `core/collection-export.js` provides vector-bearing inventory/export paths. | Prove exact event-to-stored-record mapping and backup completeness before 4F; never call whole-collection purge for duplicate cleanup. |
 
 ## 3. Cross-cutting contracts and release gates
 
@@ -101,7 +110,7 @@ Writes remain single-writer unless concurrency control is added. Re-read and mer
 
 ## 4. 4A — Stable subjects and alias migration
 
-The examples in §§4–8 are illustrative, in the style of the three-character fixture chat. They are not records from the measured collection.
+The examples in §§4–8A are illustrative, in the style of the three-character fixture chat. They are not records from the measured collection.
 
 **Example:** the roster groups "Hiro" and "Hiro-kun" as one subject. The user later renames the group to "Hiroshi", and the subject ID stays the same, so the Alex–Hiro pair state is untouched. A new NPC who is also called Hiro gets a separate subject, and stays separate unless the user confirms a merge in the preview.
 
@@ -156,7 +165,16 @@ Projection, not a measurement: if each pair gets its own read plan at the curren
 
 ### User controls
 
-Provide an editor reachable from the roster/NPC-card UI: inspect sources/as-of status, correct, pin/unpin, remove and rebuild generated facts. A correction creates user-authored state; preserve provenance instead of presenting it as model-supported text.
+Provide an **NPC cards** browser reachable from the EventBase tab and an **Inspect card** action on roster subjects. This covers the historical facts existing cards already hold, not just future relationship sections. Proposed workflow:
+
+1. **Browse without generation.** Search/filter by subject/name/alias and collection/continuity scope. List stored cards, last update, fact count and validity/refresh status. Distinguish no card, no eligible evidence, disabled generation, queued/failed refresh and unsupported legacy identity. Opening, filtering, inspecting and saving authored edits must make no model calls or trigger a rebuild. If cards are disabled, stored cards remain inspectable; explain that inspection does not enable injection or generation.
+2. **Inspect a card.** Separate historical facts, current pair state and user canon. Show each fact's origin, pin, active/inactive status and reason, scope, as-of information when available, and source event refs with inspectable summaries. Mark absent/changed sources and sampled/incomplete coverage; historical cards are not proof of verified current state. Include an injection preview using the existing dry-run/budget rules, without calls or writes.
+3. **Edit at fact granularity.** Add an explicitly user-authored fact/constraint, correct text, pin/unpin, suppress/remove, and restore a suppressed fact. Corrections retain the original generated text and provenance in an audit entry, but the replacement is user-authored, not a model-supported assertion with borrowed citations. Optional source refs are labelled as user-selected. Validate nonempty text and scope; display token cost and budget omissions rather than silently truncating or deleting authored text.
+4. **Make removal durable.** Removing a generated fact creates a scoped suppression record so the next refresh cannot immediately resurrect it. Corrections suppress the replaced assertion as well. Use stable fact identity through migration/refresh; exact identity matching alone cannot promise to catch every paraphrase, so surface suspected reintroductions for review. Deleting authored canon has its own confirmation and must not delete source events. Removing a fact from the card never deletes a Qdrant entry; 4F is a different action.
+5. **Save safely.** Offer Save/Cancel, show a before/after diff and persist only on Save. Bind edits to card/subject ID, scope and revision; reject stale saves after a branch, alias or background-refresh change with a reload/merge choice. Queued model responses must merge around authored facts, pins and suppressions rather than replace the saved card wholesale. Render fact/source text as untrusted text, not executable HTML.
+6. **Rebuild deliberately.** Separate **Refresh/rebuild generated facts** from **Reset generated cache** and **Delete user-authored content**. Explain model cost before rebuilding and reuse the bounded call/rate gates. Refresh/reset/eviction must preserve authored edits, pins and suppressions. Define export/import for that authored layer before offering durable editing; the current disposable-card reset behavior is not a suitable lifetime contract.
+
+An initial read-only inspector can ship before migration, but editing must wait for stable ownership and authored-data persistence. Generated facts may remain in the existing bounded cache; protected authored sections/suppressions need durable retention within the card design, not a second synthesized-state database.
 
 Pinning blocks automatic overwrite/removal, not scope/evidence validation. If a generated fact is pinned, preserve its text on source invalidation but mark it unverified and withhold it as verified current state. The user can explicitly convert it to authored canon. Conflicting evidence creates a review item; it does not silently change the pin or conceal the conflict.
 
@@ -179,6 +197,10 @@ All supported formats and compact fallbacks retain the distinction between canon
 - Conflicting evidence appears in review/debug; synthesis cannot turn scene anger into immutable personality.
 - Zero/tiny budgets do not overflow, produce dangling fact fragments or duplicate state blocks.
 - Dry-run shows the exact state text, sources, eligibility decisions and budget omissions without calls or writes.
+- Users can find and inspect an existing historical card even before pair synthesis is implemented, including disabled/empty/stale states; browsing does not generate cards.
+- Save/Cancel, add/correct/pin/suppress/restore, stale-save rejection and pending-refresh reconciliation work. A correction never gains fabricated model provenance, and suppressed facts do not immediately return on rebuild.
+- Authored facts, pins and suppressions survive refresh, generated-cache reset, the 100-card cache limit, migration and export/import. Explicit authored deletion is separate from generated-cache reset.
+- Source text is safely rendered; inspecting/editing a card neither edits historical events nor deletes backend records.
 
 ## 6. 4C — Episode grouping
 
@@ -253,6 +275,37 @@ Pause after a batch, resume, cancel, idempotent apply and run-scoped undo are re
 - Concurrent normal ingestion is rechecked for duplicates before apply; use a single writer or serialize conflicting writes.
 - Estimate versus actual calls/tokens is recorded; live-model work remains opt-in and rate-limited at repair priority.
 
+## 8A. 4F — Purge reviewed duplicates
+
+**Example:** a collection has 10,000 EventBase records and users suspect 500 copies. A fresh inventory finds 470 active duplicate marks; 430 pass review and dependency checks, while 40 are blocked or deselected. Preview shows each copy beside its retained canonical, exports a verified recovery package, and asks to permanently delete exactly the 430 selected records. Those numbers are illustrative, not a target or a prediction for reported collections.
+
+### Scope and safety boundary
+
+Implement **Purge marked duplicates** as a separate action in **Review and repair memory**, scoped to one backend-qualified logical collection. This fulfills the parent scope's deferred §2B action. Do not reuse a whole-collection **Purge** button or its API. No automatic cleanup on startup, retrieval, repair acceptance or backfill; no bulk deletion based on a raw similarity search.
+
+Only reviewed `continuity.v === 1` / `duplicate_of.status === "active"` records are candidates. Proposed/rejected marks, missing canonicals, self-links, cycles and duplicate chains are blocked. The canonical must still exist in the same qualified collection, remain non-duplicate, and never appear in the deletion set. Show the existing Phase 2 evidence (including source overlap and similarity when available); similarity ≥ 0.92 is a candidate rule, not proof that distinct perspectives or later similar incidents are expendable. Revalidation must catch changed copy/canonical content even though the existing duplicate mark does not itself store an evidence digest. Do not silently infer legacy branch identity from source-window overlap; ambiguous story scope requires review, and purge must not claim that it establishes branch eligibility.
+
+### Workflow
+
+1. **Inventory and preview, no model calls.** Read the complete collection, including payloads, vectors and stored deletion identifiers, with an explicit completeness check. The existing export inventory limit is 50,000 chunks; hitting a cap, incomplete pagination or missing required vectors/IDs blocks deletion rather than purging a partial sample. Show total records, marked/eligible/selected/blocked counts and percentages, reasons, and the exact collection/backend. Paginate/filter copy–canonical pairs with summaries, source windows and continuity annotations. Let users deselect any copy or return to duplicate review/unmark; preview defaults to no destructive action.
+2. **Dependency audit.** Check incoming/outgoing resolution links, manual closures, duplicate refs, repair manifests/checkpoints, existing card citations, authored/pinned source refs and any shipped episode/state/backfill refs. Phase 2 already avoids marking events that own/receive continuity links, but repeat the check because dependencies may have changed since acceptance. First release blocks deletion of records with nontrivial continuity/manifest/authored dependencies; do not silently move links, rewrite citations to a similar canonical, re-home episodes or delete more records. Generated-cache-only citations may be invalidated through the normal missing-source path, with an affected-fact count in preview. Unknown dependency types fail closed. Reject plans selecting a repair manifest anchor; purge's own checkpoint must live outside its deletion set.
+3. **Backup gate.** Before confirmation, create a downloadable, versioned recovery package for the exact selection: original text, full payload/metadata, dense and sparse/named vectors where present, stored IDs/hashes, backend/collection identity, embedding source/model/dimensions, and the copy–canonical plan with content revisions. Verify count/content completeness against the frozen selection and require explicit user acknowledgement that the package was saved. A download acknowledgement is not proof of filesystem durability; state that limitation. Existing generic exports are insufficient until full metadata/vector preservation is verified (§3.3). Do not claim a guaranteed one-click restore: validate the existing import path against this package and document any ID/vector remapping limitations before release. If faithful backup is unavailable, purge is unavailable; duplicate marking remains usable.
+4. **Explicit confirmation.** Show “Permanently delete N marked duplicate records from [collection]; retain M canonical records.” Require the collection name and a destructive-action acknowledgement. State that Phase 2 **Undo repair** only removes annotations from surviving records and cannot undo purge. Neither completion nor cancellation deletes the recovery package. Do not advertise predicted disk savings from record count; measure storage effects separately.
+5. **Freeze and revalidate.** Persist a separately versioned purge run/manifest containing exact qualified record identifiers, copy/canonical fingerprints, backup identity and per-record progress. Freeze the selection, not merely a filter to rerun later. Re-read marks, payloads, canonicals and dependencies before each bounded delete batch. Any change requires re-preview and renewed confirmation for affected records; newly arriving events are never added automatically. Serialize conflicting writes or enforce a single-writer maintenance window, including background extraction/repair. The existing cross-tab warning is not a database lock, and re-reading alone cannot close a concurrent-write race.
+6. **Targeted, resumable deletion.** Use the existing targeted deletion abstraction only after proving its event-ID → hash/point mapping deletes exactly the selected copies, including Qdrant multitenancy/content-type isolation. If a hash can address a retained canonical or unrelated chunk, block the batch unless a precise record-ID endpoint is available. Verify deleted IDs are absent and retained canonicals still present before advancing the checkpoint. Pause/cancel stops future batches; completed deletions stay deleted. After a timeout/crash, reconcile exact IDs against the backend before retrying, so a repeated apply/resume is idempotent. Report confirmed deletions, blocked/remaining records and ambiguous failures separately; never equate a successful request with verified completion.
+7. **Refresh and report.** Invalidate affected roster, retrieval/corpus statistics and generated card views using the normal deletion hooks. Withhold generated assertions whose sources vanished; preserve unrelated facts and authored data. Show a run report and recovery instructions. Normal extraction fingerprints, marker maps and vectorization tips remain byte-for-byte unchanged; retain coverage so ordinary auto-sync does not re-extract deleted copies merely because they are absent. Test that behavior and investigate recurring insertion duplicates separately rather than promising purge prevents them.
+
+No LLM or embedding calls are required for inventory/review/delete; network I/O, vector download size, local memory and deletion latency still need measurement. Restoring into an incompatible embedding configuration may require re-embedding and is not part of that no-call claim. Keep large backup payloads out of extension settings; settings may hold a small checkpoint locator. Settle durable manifest ownership and retention before implementation.
+
+### Acceptance
+
+- With three copies of one incident, only selected active duplicates are removed; the canonical and distinct perspectives remain byte-for-byte unchanged. Missing/cyclic/chained/proposed marks and changed canonicals are blocked.
+- Incoming/outgoing resolution links, manual closures, authored/pinned evidence, episode descriptors and manifest anchors block deletion. Unrelated links and authored content survive; generated-cache invalidation is visible and targeted.
+- Incomplete/capped inventory, missing vectors, an unverifiable backup, ambiguous hash mapping, wrong backend or multitenancy scope, and concurrent/stale revisions cannot authorize deletion.
+- Confirmation names the exact collection/count; cancel before execution deletes nothing. Partial completion, pause, timeout, crash/restart and repeated resume yield correct reconciled counts without expanding the plan.
+- Backup round-trip on a disposable collection preserves selected payloads, identities and vectors or explicitly reports unsupported restoration before purge is enabled. Phase 2 Undo is never presented as purge recovery.
+- No model/embedding calls occur during preview or purge, no collection-wide purge endpoint is used, coverage maps/tips remain unchanged, and normal auto-sync does not recreate the deleted copies solely due to cleanup.
+
 ## 9. Implementation map and validation
 
 Keep deterministic identity, evidence and formatting logic host-independent where practical, following existing unit-test patterns. New module names are not prescribed.
@@ -261,10 +314,12 @@ Keep deterministic identity, evidence and formatting logic host-independent wher
 |---|---|---|
 | Subjects/scope | `core/character-roster.js`, collection identity helpers, roster UI | Roster/alias fixtures plus new identity/migration tests |
 | State/canon | `core/npc-cards.js`, `core/npc-card-llm.js`, `core/eventbase-workflow.js`, settings/UI | `tests/npc-cards.test.js`, state/pinning/scope tests |
+| Card browser/editor | EventBase/roster UI, card contract and authored persistence, export/import | No-call browse/dry-run, safe rendering, Save/Cancel, suppression, reset/eviction, stale-edit/refresh and authored round-trip tests |
 | Budgets/routes | `core/eventbase-token-budget.js`, `core/eventbase-injection.js`, retrieval/Agent and Summarizer paths | `tests/eventbase-token-budget.test.js`, injection-order/debug tests, route parity tests |
 | Episodes | `core/continuity.js`, repair service/UI, metadata/export paths | `tests/continuity.test.js`, repair tests, episode grouping/reconciliation tests |
 | Cooldown | Final prompt commit lifecycle, route coordination, retrieval debug | Exposure/retry/rewind tests; no-write dry-run assertions |
 | Backfill | `core/ils-expander.js`, EventBase store/workflow, repair patterns | Source recovery, idempotent insert, restart/undo and coverage-invariance tests |
+| Duplicate purge | `core/continuity-repair-service.js`, repair UI, `core/core-vector-api.js`, backend deletion and `core/collection-export.js` | Active-mark/dependency gates, exact-ID/multitenancy deletion, backup round-trip, partial failure/resume and coverage-invariance tests |
 
 ### Automated gate
 
@@ -281,9 +336,11 @@ Use the existing three-character fixture concepts plus routines, boundaries and 
 - Before 4C, measure multi-record injection of one incident after Phase 2 (§6). If 4C ships, rerun the same scenes afterward.
 - Measure repeated episode exposure and explicit-recall coverage before/after cooldown, if implemented.
 - Measure source recovery, useful new facts, duplicate insertions and coverage invariance for backfill.
+- Validate 4F first on disposable restored copies of representative collections. Review selected copy–canonical pairs, compare confirmed deletions with preview, verify all retained records/links and backup restoration, and record actual duplicate counts, I/O, memory and latency. Reports of hundreds/~5% are motivation, not validated prevalence or permission to delete.
+- Exercise the card browser/editor manually with cards disabled, legacy/stale cards, a pending refresh, more than 100 generated cards, and save/reset/export/import; confirm authored edits and suppressions survive without surprise calls.
 - Log provider calls, input/output tokens, latency, refresh frequency and settings-store growth. Set final defaults only after these results; fixture success is not proof of universal generation behavior.
 
-Diagnostics should explain scope exclusions, subject identity, cited evidence, inactive facts, pin conflicts, episode membership, required outcomes, cooldown bypass/suppression and exact per-route budget use.
+Diagnostics should explain scope exclusions, subject identity, cited evidence, inactive facts, pin conflicts, suppressed/corrected assertions, editor revision conflicts, episode membership, required outcomes, cooldown bypass/suppression and exact per-route budget use. Purge reports additionally identify the frozen selection, backup, blocking dependencies and per-record reconciliation without dumping vectors into ordinary logs.
 
 ## 10. Decisions to settle before implementation
 
@@ -297,5 +354,7 @@ The following are proposed defaults or unresolved design gates, not decisions al
 6. **Episodes:** first, whether the post-Phase-2 measurement (§6) justifies them at all. If it does: descriptor ownership/re-homing, additive payload versioning, write reconciliation and export completeness.
 7. **Cooldown:** decide whether the measured repetition justifies shipping it at all, then choose the interval and commit lifecycle.
 8. **Backfill:** durable checkpoint/proposal location, explicit prompt precedence, source identity, accepted-event insertion and conflict-safe undo. Do not reuse ordinary extraction coverage.
+9. **Card editor:** stable fact/suppression identity, protected authored-section storage, audit retention, stale-save merge UX and export/import packaging. Read-only inspection can precede these decisions; durable editing cannot.
+10. **Purge:** exact targeted-deletion identifiers and backend/multitenancy guarantees; complete vector-bearing backup and tested recovery; durable manifest location outside deleted records; dependency inventory and maintenance serialization. Initially block dependent records rather than implementing automatic reference migration. No trustworthy backup/precise deletion means no purge release.
 
-**Suggested first implementation slice:** 4A plus the versioned 4B card contract and pin-preserving migration, with scope/rewind tests first. Include the 4B editor for the facts existing NPC cards already hold: inspect sources, pin, correct and remove. That gives the slice a visible result the co-author can judge. It also exercises the authored-data contract, because pins and corrections must survive reset, eviction and migration before any pair state exists. Then add pair state and budgeted state injection. Episodes, cooldown and backfill should not be prerequisites for validating that slice.
+**Suggested first implementation slice:** 4A plus the versioned 4B card contract and pin-preserving migration, with scope/rewind tests first. Include the 4B browser/editor for the facts existing NPC cards already hold: inspect sources, add, pin, correct, suppress and restore. That gives the slice a visible result the co-author can judge. It also exercises the authored-data contract, because pins, corrections and suppressions must survive reset, eviction and migration before any pair state exists. Then add pair state and budgeted state injection. Episodes, cooldown and backfill should not be prerequisites for validating that slice. In parallel, 4F can start with a no-delete inventory/dependency/backup preview; enable destructive execution only after its separate safety gates pass.

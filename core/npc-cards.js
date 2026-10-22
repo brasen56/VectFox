@@ -210,16 +210,22 @@ export function getNpcCards({ roster, cast, settings, dryRun = false, complete, 
             && !((failures.get(snapshot.key)?.until || 0) > Date.now())) {
             // Snapshot both evidence and generation settings before queueing.
             const generationSettings = { ...settings };
+            const identityRevision = () => JSON.stringify([settings.vector_backend, settings.qdrant_use_cloud, settings.qdrant_url,
+                settings.qdrant_host, settings.qdrant_port, settings.qdrant_multitenancy,
+                settings.eventbase_subject_registries, settings.eventbase_character_alias_overrides,
+                settings.eventbase_declared_continuity]);
+            const frozenIdentity = identityRevision();
             const task = refreshQueue.then(async () => {
                 // The queue can outlive a settings change; check before spending a call.
-                if (!settings.eventbase_npc_cards_enabled) return;
+                if (!settings.eventbase_npc_cards_enabled || identityRevision() !== frozenIdentity) return;
                 const card = await advanceNpcCard(settings.eventbase_npc_cards?.[snapshot.key], snapshot, group, generationSettings, complete);
-                if (!card || !settings.eventbase_npc_cards_enabled) return;
+                if (!card || !settings.eventbase_npc_cards_enabled || identityRevision() !== frozenIdentity) return;
                 // Copy on write: never mutate a cards object shared with defaults.
                 const stored = { ...settings.eventbase_npc_cards, [snapshot.key]: card };
                 // Bound settings storage across visited collections/characters.
                 const keys = Object.keys(stored).sort((a, b) => String(stored[a].updatedAt).localeCompare(String(stored[b].updatedAt)));
-                while (keys.length > STORED_CARD_LIMIT) delete stored[keys.shift()];
+                const disposable = keys.filter(key => stored[key]?.v !== 3);
+                while (disposable.length > STORED_CARD_LIMIT) delete stored[disposable.shift()];
                 settings.eventbase_npc_cards = stored;
                 failures.delete(snapshot.key);
                 save();

@@ -2,6 +2,10 @@
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
 import { ensureCharacterIndex, getCharacterRoster, getIgnoredCharacterTags, rosterCollectionId } from '../core/character-roster.js';
+import { continuityBackendNamespace, continuityCollectionKey, resolveContinuityScope } from '../core/continuity-scope.js';
+import { subjectRegistryKey, previewSubjectMigration, applySubjectMigration, readSubjectRegistry } from '../core/continuity-subjects.js';
+import { migrateNpcCard } from '../core/npc-card-migration.js';
+import { npcCardSnapshot } from '../core/npc-cards.js';
 
 export async function openCharacterRosterReview(settings) {
     const { getLockedCharacterCollections } = await import('../core/eventbase-workflow.js');
@@ -21,6 +25,9 @@ export async function openCharacterRosterReview(settings) {
         const token = ++generation;
         const key = selector.val();
         const id = rosterCollectionId(key);
+        const namespace = continuityBackendNamespace(key, settings);
+        // One collection is the initial explicit continuity boundary. No implicit cross-lock union.
+        const identityKey = subjectRegistryKey(namespace, id);
         body.text('Loading character index…');
         const entry = await ensureCharacterIndex(key, settings);
         if (token !== generation) return;
@@ -28,6 +35,17 @@ export async function openCharacterRosterReview(settings) {
         const roster = getCharacterRoster([id], settings);
         const ignoredTags = getIgnoredCharacterTags(id, settings);
         body.empty();
+        const declarationKey = continuityCollectionKey(namespace, id);
+        const declaration = $('<label>').css('display', 'block').appendTo(body);
+        $('<input type="checkbox">').prop('checked', settings.eventbase_declared_continuity?.[declarationKey] === true)
+            .on('change', function() {
+                settings.eventbase_declared_continuity = { ...settings.eventbase_declared_continuity,
+                    [declarationKey]: $(this).prop('checked') };
+                Object.assign(extension_settings.vectfox, settings);
+                saveSettingsDebounced();
+            }).appendTo(declaration);
+        declaration.append(document.createTextNode(' User-declared continuity: files sharing this collection are one linear story (not verified).'));
+        $('<small>').text('This declaration does not prove branch membership or map source positions. Unmapped evidence remains historical. Stable subject IDs below belong only to this backend and collection.').appendTo(body);
         $('<p>').text(`${roster.totalEvents} events · ${roster.groups.length} character groups. Ambiguous names are not automatically merged.`).appendTo(body);
         $('<small>').text('Select groups to merge their names or ignore all their stored spellings. Ignored tags are excluded from this collection’s roster and known-character extraction hints; stored entries stay unchanged.').css('display', 'block').appendTo(body);
         const rows = [];
@@ -45,6 +63,8 @@ export async function openCharacterRosterReview(settings) {
             void render();
         };
         const persist = groups => {
+            const existing = readSubjectRegistry(settings, identityKey);
+            if (existing.subjects.length && !confirm('Changing aliases invalidates dependent identity views. Review stable identities again after saving. Continue?')) return;
             settings.eventbase_character_alias_overrides ??= {};
             settings.eventbase_character_alias_overrides[id] = groups;
             save();
@@ -70,6 +90,46 @@ export async function openCharacterRosterReview(settings) {
         };
         const selected = () => rows.map((row, index) => row.checkbox.prop('checked') ? index : -1).filter(index => index >= 0);
         const actions = $('<div>').css({ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }).appendTo(body);
+        const identityPreview = $('<div>').css('marginTop', '8px').appendTo(body);
+        $('<button type="button" class="vectfox-btn vectfox-btn-secondary">').text('Preview stable subject identities').on('click', () => {
+            identityPreview.empty();
+            const preview = previewSubjectMigration(settings, identityKey,
+                rows.map(({ group, name }) => ({ ...group, name: String(name.val()).trim() || group.name })));
+            const survivors = {};
+            for (const row of preview.rows) {
+                $('<p>').text(`${row.name}: ${row.aliases.join(', ')} → ${row.candidates.join(', ') || 'new opaque ID'}${row.requiresConfirmation ? ' · confirmation required' : ''}`).appendTo(identityPreview);
+                if (row.candidates.length > 1) {
+                    const select = $('<select class="vectfox-select">').appendTo(identityPreview);
+                    const subjects = readSubjectRegistry(settings, identityKey).subjects;
+                    for (const candidate of row.candidates) $('<option>').val(candidate)
+                        .text(`${subjects.find(s => s.id === candidate)?.name || candidate} · ${candidate}`).appendTo(select);
+                    const mergeKey = row.candidates.slice().sort().join(',');
+                    survivors[mergeKey] = select.val();
+                    select.on('change', () => { survivors[mergeKey] = select.val(); });
+                }
+            }
+            $('<small>').text('Renames retain IDs. Merges retain conflicting references for review. Splits retire the old ID and leave its facts unverified until explicitly reassigned; facts are never copied to both subjects.').appendTo(identityPreview);
+            $('<button type="button" class="vectfox-btn vectfox-btn-secondary">').text('Confirm and apply identities').on('click', () => {
+                if (!confirm('Apply this exact identity preview? Ambiguous groups, merges and splits require your explicit confirmation.')) return;
+                try {
+                    const registry = applySubjectMigration(settings, preview, { confirmed: true, survivors });
+                    // No verified host horizon mapping exists in this UI. Migration retains originals
+                    // and conservatively rebuilds generated facts; it does not claim current state.
+                    const scope = resolveContinuityScope({ continuityId: id, namespace, collections: [id],
+                        chatId: 'migration-review', aliasRevision: registry.revision });
+                    for (const { group } of rows) {
+                        const subject = registry.subjects.find(s => !s.retired && s.aliases.length === group.aliases.length
+                            && s.aliases.every(alias => group.aliases.includes(alias)));
+                        if (!subject) continue; // A split/merge needs explicit fact reassignment, not name guessing.
+                        const snapshot = npcCardSnapshot(roster, group);
+                        if (!settings.eventbase_npc_cards?.[snapshot.key]) continue;
+                        migrateNpcCard({ settings, oldKey: snapshot.key, registryKey: identityKey,
+                            subjectId: subject.id, scope, snapshot, collection: id, confirmed: true });
+                    }
+                    save();
+                } catch (error) { toastr.warning(error.message); }
+            }).appendTo(identityPreview);
+        }).appendTo(actions);
         $('<button type="button" class="vectfox-btn vectfox-btn-secondary">').text('Save names').on('click', () => persist(snapshot())).appendTo(actions);
         $('<button type="button" class="vectfox-btn vectfox-btn-secondary">').text('Merge selected').on('click', () => {
             const indices = selected();

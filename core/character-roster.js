@@ -2,6 +2,8 @@
 import { parseEmbedText } from './eventbase-schema.js';
 import { log } from './log.js';
 import { buildResolvedBy, isActiveDuplicate } from './continuity.js';
+import { continuityBackendNamespace } from './continuity-scope.js';
+import { subjectRegistryKey } from './continuity-subjects.js';
 
 export const CHARACTER_ROSTER_DEFAULTS = Object.freeze({
     eventbase_lead_share_threshold: 0.25,
@@ -273,7 +275,20 @@ export function getCharacterRoster(collectionIds, settings = {}) {
         }
         overrides.push(...(settings.eventbase_character_alias_overrides?.[id] || []));
     }
-    return { ...buildCharacterRoster(rosterEvents, overrides, settings), events: [...events.values()], eventById: events,
+    const roster = buildCharacterRoster(rosterEvents, overrides, settings);
+    for (const group of roster.groups) {
+        const refs = [];
+        for (const collection of new Set(collectionIds)) {
+            const key = subjectRegistryKey(continuityBackendNamespace(collection, settings), rosterCollectionId(collection));
+            const registry = settings.eventbase_subject_registries?.[key];
+            // Pending alias edits must not silently reattach an old subject to a changed group.
+            const subject = registry?.subjects.find(s => !s.retired && s.aliases.length === group.aliases.length
+                && s.aliases.every(alias => group.aliases.includes(alias)));
+            if (subject) refs.push({ registryKey: key, subjectId: subject.id, revision: registry.revision });
+        }
+        if (refs.length) group.subjectRefs = refs;
+    }
+    return { ...roster, events: [...events.values()], eventById: events,
         resolvedBy: buildResolvedBy(events.values()), duplicateIds, pendingCollections, unsupportedCollections,
         continuitySupported: unsupportedCollections.length === 0, ready: pendingCollections.length === 0 };
 }

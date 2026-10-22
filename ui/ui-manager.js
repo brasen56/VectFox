@@ -4712,7 +4712,8 @@ function bindSettingsEvents(settings, callbacks) {
     $('#VectFox_eventbase_npc_cards_reset').on('click', () => {
         const count = Object.keys(settings.eventbase_npc_cards || {}).length;
         if (!confirm(`Delete ${count} saved NPC card(s)?\n\nEach in-play NPC's card is rebuilt on its next turns, using up to 4 summarization calls per NPC.`)) return;
-        settings.eventbase_npc_cards = {};
+        // Phase 4 identity migrations retain authored/unknown legacy content for recovery.
+        settings.eventbase_npc_cards = Object.fromEntries(Object.entries(settings.eventbase_npc_cards || {}).filter(([, card]) => card?.v === 3));
         Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
         toastr.success('NPC cards reset', 'VectFox');
