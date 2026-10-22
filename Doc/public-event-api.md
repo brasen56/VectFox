@@ -143,6 +143,8 @@ history is `{ ok: true, events: [], coverage, scope_token }`. Loading, disabled,
 unsupported and backend failures are not empty successes. Partial successes expose
 unavailable portions. The global master switch disables this integration API.
 
-Semantic question research is deliberately unavailable (`unsupported`), advertised
-separately from history, until Phase 3 implements its research policy. This API
-does not generate answers, profiles, lorebook writes, or MWT receipts.
+Question research uses bounded semantic, lexical, and chronological retrieval.
+Semantic search availability is advertised separately; when it is unavailable,
+question research uses lexical and chronological retrieval and reports the gap
+in coverage. This read-only API does not generate answers, profiles, lorebook
+writes, or MWT receipts.

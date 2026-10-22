@@ -183,7 +183,13 @@ export function openAskStoryPanel(settings, saveSettings) {
             if (!closed) status.textContent = 'Copied research, evidence, citations, and coverage.';
         } catch { if (!closed) status.textContent = 'Clipboard unavailable.'; }
     });
-    button('Close', () => { closed = true; controller?.abort(); clearInterval(poll); host.remove(); });
+    const dispose = () => {
+        closed = true;
+        controller?.abort();
+        document.removeEventListener('vectfox:api-status-changed', statusChanged);
+        observer.disconnect();
+    };
+    button('Close', () => { dispose(); host.remove(); });
     enabled.addEventListener('change', () => {
         settings.ask_story_enabled = enabled.checked;
         saveSettings();
@@ -203,12 +209,15 @@ export function openAskStoryPanel(settings, saveSettings) {
     };
     scopeKind.addEventListener('change', changeScope);
     collections.addEventListener('change', changeScope);
-    const poll = setInterval(() => {
-        if (!host.isConnected) { closed = true; controller?.abort(); clearInterval(poll); return; }
+    const statusChanged = () => {
+        if (!host.isConnected) { dispose(); return; }
         refresh();
-    }, 500);
+    };
+    const observer = new MutationObserver(() => { if (!host.isConnected) dispose(); });
+    document.addEventListener('vectfox:api-status-changed', statusChanged);
     document.getElementById('VectFox_ask_story').closest('.vectfox-card')?.append(host);
     if (!host.isConnected) document.getElementById('VectFox_ask_story').parentElement.after(host);
+    observer.observe(document.body, { childList: true, subtree: true });
     refresh();
     host.scrollIntoView?.({ block: 'nearest' });
     question.focus();

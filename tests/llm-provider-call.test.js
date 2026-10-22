@@ -95,6 +95,23 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('postChatCompletion — isolated keys', () => {
+    it('supports cancellation without AbortSignal.any or AbortSignal.timeout', async () => {
+        const any = AbortSignal.any, timeout = AbortSignal.timeout;
+        const controller = new AbortController();
+        AbortSignal.any = undefined;
+        AbortSignal.timeout = undefined;
+        try {
+            global.fetch = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+                signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            }));
+            const pending = postChatCompletion(baseArgs({ signal: controller.signal }));
+            controller.abort();
+            await expect(pending).rejects.toThrow();
+        } finally {
+            AbortSignal.any = any;
+            AbortSignal.timeout = timeout;
+        }
+    });
     it('combines caller cancellation with the existing request timeout', async () => {
         const controller = new AbortController();
         const fetchMock = vi.fn(async (_url, options) => {

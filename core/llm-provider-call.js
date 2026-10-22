@@ -283,11 +283,17 @@ export async function postChatCompletion({
         requestBody = body;
     }
 
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs);
+    try {
     const response = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(requestBody),
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+        signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -411,6 +417,10 @@ export async function postChatCompletion({
         usage,
         data,
     };
+    } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+    }
 }
 
 // ---------------------------------------------------------------------------

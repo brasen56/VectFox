@@ -10,7 +10,7 @@ export function selectCaptureWindows(events, maxWindows = 4, offset = 0) {
         const overlaps = groups.filter(group => [...keys].some(k => group.keys.has(k)));
         const group = { keys, sources: refs.slice(), events: [event], event_refs: [event.event_ref],
             position: event.source_window_start ?? Infinity,
-            score: (/dialogue|decision|conflict|relationship|revelation/i.test(event.event_type || '') ? 3 : 0)
+            score: (/^(dialogue_significant|combat|promise_or_oath|betrayal|relationship_change|revelation)$/.test(event.event_type || '') ? 3 : 0)
                 + Math.min(10, Math.max(0, Number(event.importance) || 0)) * 0.3 };
         for (const other of overlaps) {
             group.sources.push(...other.sources);
@@ -38,7 +38,7 @@ export function selectCaptureWindows(events, maxWindows = 4, offset = 0) {
             chunks.push({ sources, event_refs: events.map(event => event.event_ref),
                 position: sources[0].expanded_index ?? group.position,
                 score: Math.max(...events.map(event =>
-                    (/dialogue|decision|conflict|relationship|revelation/i.test(event.event_type || '') ? 3 : 0)
+                    (/^(dialogue_significant|combat|promise_or_oath|betrayal|relationship_change|revelation)$/.test(event.event_type || '') ? 3 : 0)
                     + Math.min(10, Math.max(0, Number(event.importance) || 0)) * 0.3)),
                 truncated: sources.length < group.sources.length });
         }

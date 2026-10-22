@@ -22,8 +22,20 @@ function publicMessage(message, depth = 0) {
         } } : {}) } };
 }
 
+/** Host changes that fire no event: /hide and /unhide flip is_system in place, and an
+ * InlineSummary collapse can swap a message (or its ILS data) at the same length.
+ * Text edits arrive through MESSAGE_EDITED / MESSAGE_UPDATED / MESSAGE_SWIPED.
+ */
+function changedWithoutEvent(hostChat, hostMessages, copies) {
+    return hostChat.some((message, index) => message !== hostMessages[index]?.message
+        || message?.extra?.ILS_Data !== hostMessages[index].ils
+        || message?.is_system !== copies[index]?.is_system || message?.name !== copies[index]?.name);
+}
+
 export function installPublicEventAPI() {
     let ready = false;
+    let chatRevision = 0, cachedRevision = -1, cachedChat, cachedMetadata, cachedChatId, cachedHostChat;
+    let cachedHostMessages = [], cachedOriginals, cachedOriginalCount = 0;
     const api = createPublicEventAPI({
         readState() {
             const settings = extension_settings.vectfox || {};
@@ -34,11 +46,25 @@ export function installPublicEventAPI() {
                 .filter(c => [COLLECTION_PREFIXES.VECTFOX_EVENTBASE, COLLECTION_PREFIXES.VECTFOX_ARCHIVE_EVENT].some(p => c.collectionId.startsWith(p)))
                 .filter(c => isCollectionEnabled(c.registryKey) && isCollectionEnabled(c.collectionId));
             const collections = availableCollections.filter(c => isCollectionActiveForContextAnyKey([c.registryKey, c.collectionId], { chatId }));
+            const hostChat = getContext()?.chat || [];
+            const originals = chat_metadata?.ILS_Originals;
+            if (cachedRevision !== chatRevision || cachedChatId !== chatId || cachedHostChat !== hostChat
+                || cachedChat?.length !== hostChat.length || cachedOriginals !== originals
+                || Object.keys(originals || {}).length !== cachedOriginalCount
+                || changedWithoutEvent(hostChat, cachedHostMessages, cachedChat)) {
+                cachedRevision = ++chatRevision;
+                cachedChatId = chatId;
+                cachedHostChat = hostChat;
+                cachedHostMessages = hostChat.map(message => ({ message, ils: message?.extra?.ILS_Data }));
+                cachedOriginals = originals;
+                cachedOriginalCount = Object.keys(originals || {}).length;
+                cachedChat = hostChat.map(m => publicMessage(m));
+                cachedMetadata = { ILS_Originals: Object.fromEntries(Object.entries(originals || {})
+                    .map(([key, messages]) => [key, Array.isArray(messages) ? messages.map(m => publicMessage(m)) : []])) };
+            }
             return { ready, enabled: isVectFoxEnabled(settings), chatId, settings, collections, availableCollections,
                 archiveRevision: getEventArchiveRevision(),
-                chat: (getContext()?.chat || []).map(m => publicMessage(m)),
-                chatMetadata: { ILS_Originals: Object.fromEntries(Object.entries(chat_metadata?.ILS_Originals || {})
-                    .map(([key, messages]) => [key, Array.isArray(messages) ? messages.map(m => publicMessage(m)) : []])) } };
+                chatRevision, chat: cachedChat, chatMetadata: cachedMetadata };
         },
         async loadBackend(collection, settings) {
             const resolved = resolveBackendForCollection(collection.registryKey);
@@ -53,8 +79,10 @@ export function installPublicEventAPI() {
         findEvents: api.findEvents, resolveSources: api.resolveSources,
         findCandidateWindows: api.findCandidateWindows });
     const notify = () => {
+        chatRevision++;
         api.invalidate();
         void eventSource.emit('vectfox:api-status-changed', api.getStatus());
+        document.dispatchEvent(new CustomEvent('vectfox:api-status-changed'));
     };
     for (const name of ['CHAT_CHANGED', 'MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED',
         'MESSAGE_SENT', 'MESSAGE_RECEIVED']) {
@@ -63,6 +91,7 @@ export function installPublicEventAPI() {
     // snapshot() detects relevant settings changes; unrelated saves keep handles valid.
     if (event_types.SETTINGS_UPDATED) eventSource.on(event_types.SETTINGS_UPDATED, () => {
         void eventSource.emit('vectfox:api-status-changed', api.getStatus());
+        document.dispatchEvent(new CustomEvent('vectfox:api-status-changed'));
     });
     for (const name of ['vectfox:collections-updated', 'vectfox:eventbase-synced']) document.addEventListener(name, notify);
     return { markReady() { ready = true; notify(); } };

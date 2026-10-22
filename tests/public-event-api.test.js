@@ -28,6 +28,23 @@ const resolve = (references, chat, chatMetadata = {}) => resolveEventSources(ref
 afterEach(() => vi.unstubAllGlobals());
 
 describe('caller-asserted aliases and stock source edits', () => {
+    it('reuses fingerprints but rehashes edited messages', async () => {
+        const originals = [message('Original', 'a'), message('Other', 'b')];
+        const references = await refs(originals);
+        const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+        const cache = new Map();
+        try {
+            const state = { chatId: 'chat', chat: originals, chatMetadata: {} };
+            await resolveEventSources(references, state, cache);
+            expect(digest).toHaveBeenCalledTimes(2);
+            await resolveEventSources(references, state, cache);
+            expect(digest).toHaveBeenCalledTimes(2);
+            originals[0].mes = 'Edited';
+            const changed = await resolveEventSources(references, state, cache);
+            expect(digest).toHaveBeenCalledTimes(3);
+            expect(changed[0].status).toBe('changed');
+        } finally { digest.mockRestore(); }
+    });
     it('unions separate roster groups for a subject across history and candidate windows', async () => {
         const { api } = fixture([event('full', { characters: ['Seraphine'], source_message_ids: [0] }),
             event('short', { characters: ['Sera'], source_message_ids: [0] })]);
@@ -101,6 +118,7 @@ describe('Phase 2 candidate-window API', () => {
         expect(first.windows.flatMap(window => window.event_refs)).toHaveLength(4);
         expect(new Set([...first.windows, ...second.windows].flatMap(window => window.event_refs)).size).toBe(8);
         expect(second.next_offset).toBeNull();
+        expect(f.backend.listChunks).toHaveBeenCalledTimes(1);
         expect((await f.api.findCandidateWindows({ offset: -1 })).error.code).toBe('invalid_request');
     });
     it('keeps scenes beyond the public 500-event history sample eligible', async () => {

@@ -38,6 +38,19 @@ afterEach(() => {
 });
 
 describe('Ask panel', () => {
+    it('refreshes on status events without polling and unsubscribes on close', () => {
+        const status = vi.spyOn(window.VectFoxAPI, 'getStatus');
+        openAskStoryPanel(settings, vi.fn());
+        status.mockClear();
+        vi.advanceTimersByTime(5000);
+        expect(status).not.toHaveBeenCalled();
+        document.dispatchEvent(new Event('vectfox:api-status-changed'));
+        expect(status).toHaveBeenCalledTimes(1);
+        click('Close');
+        status.mockClear();
+        document.dispatchEvent(new Event('vectfox:api-status-changed'));
+        expect(status).not.toHaveBeenCalled();
+    });
     it.each([
         ['provider', new Error('HTTP 429: rate limited')],
         ['malformed JSON / answer structure', 'not JSON'],
@@ -60,7 +73,7 @@ describe('Ask panel', () => {
         await settle();
         expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('Stored evidence [ref:e]'));
         token = 'changed';
-        vi.advanceTimersByTime(500);
+        document.dispatchEvent(new Event('vectfox:api-status-changed'));
         expect(document.querySelector('details')).toBeNull();
     });
     it('explains excluded unknown-source entries rather than implying they were searched', async () => {
@@ -126,7 +139,7 @@ describe('Ask panel', () => {
         expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('ref:e'));
         expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('Coverage:'));
         token = 'changed';
-        vi.advanceTimersByTime(500);
+        document.dispatchEvent(new Event('vectfox:api-status-changed'));
         expect(document.body.textContent).not.toContain('Alex met Ranger.');
         expect([...document.querySelectorAll('button')].find(b => b.textContent === 'Copy').disabled).toBe(true);
     });

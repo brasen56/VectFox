@@ -74,13 +74,22 @@ export function eventSourceReferences(event, collectionId, eventRef, scopeToken)
 }
 
 /** Indices and djb2 hashes are hints, never sufficient proof of identity. */
-export async function resolveEventSources(references, { chatId, chat, chatMetadata }) {
+export async function resolveEventSources(references, { chatId, chat, chatMetadata }, fingerprints = new Map()) {
     const prepared = prepareMessagesForEventBase(chat, chatMetadata);
-    const leaves = (await Promise.all(prepared.messages.map(async (message, index) => ({
-        message, index, container: prepared.sourceIndices[index],
-        fingerprint: await narrativeFingerprint(message), legacyHash: legacySourceHash(message),
-        rawHash: rawSourceHash(message),
-    })))).filter(leaf => !leaf.message.extra?.ILS_Data);
+    const leaves = (await Promise.all(prepared.messages.map(async (message, index) => {
+        const name = String(message.name || ''), mes = String(message.mes || '');
+        let cached = fingerprints.get(index);
+        if (!cached || cached.name !== name || cached.mes !== mes || cached.crypto !== globalThis.crypto?.subtle) {
+            cached = { name, mes, crypto: globalThis.crypto?.subtle, fingerprint: narrativeFingerprint(message),
+                legacyHash: legacySourceHash(message), rawHash: rawSourceHash(message) };
+            fingerprints.set(index, cached);
+        }
+        return {
+            message, index, container: prepared.sourceIndices[index],
+            fingerprint: await cached.fingerprint, legacyHash: cached.legacyHash, rawHash: cached.rawHash,
+        };
+    }))).filter(leaf => !leaf.message.extra?.ILS_Data);
+    for (const index of fingerprints.keys()) if (index >= prepared.messages.length) fingerprints.delete(index);
     return references.map(reference => {
         const base = { ...reference, status: 'unresolved', reason: null, current_fingerprint: null, message: null };
         if (!reference.source_chat_id || reference.source_chat_id !== chatId) {

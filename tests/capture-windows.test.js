@@ -6,6 +6,16 @@ const ref = index => ({ ref: `source:${index}`, source_chat_id: 'chat', host_id:
 const event = index => ({ event_ref: `event:${index}`, source_window_start: index,
     event_type: 'dialogue_significant', source_refs: [ref(index)] });
 describe('Targeted candidate scenes', () => {
+    it('boosts actual schema events, not nonexistent decision or conflict types', () => {
+        for (const type of ['combat', 'promise_or_oath', 'betrayal']) {
+            const windows = selectCaptureWindows([
+                { ...event(0), event_type: 'decision' },
+                { ...event(1), event_type: type },
+                { ...event(2), event_type: 'conflict' },
+            ], 1);
+            expect(windows[0].event_refs).toEqual(['event:1']);
+        }
+    });
     it('ranks the full importance scale within each temporal stratum', () => {
         const events = Array.from({ length: 8 }, (_, index) => ({ ...event(index), importance: index % 2 ? 10 : 4 }));
         expect(selectCaptureWindows(events).map(window => window.ranking.temporal_position)).toEqual([1, 3, 5, 7]);

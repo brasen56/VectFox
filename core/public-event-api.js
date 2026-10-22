@@ -57,6 +57,8 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
         ? globalThis.crypto.randomUUID() : `${Date.now().toString(36)}-${++sessionSequence}-${Math.random().toString(36).slice(2)}`;
     const sourceCache = new Map();
     const backendSupport = new Map();
+    const fingerprints = new Map();
+    const candidateHistory = new Map();
     function snapshot() {
         const state = readState();
         // Track all embedding model settings conservatively without importing host
@@ -70,12 +72,13 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             state.settings.qdrant_use_cloud, state.settings.qdrant_url,
             state.settings.qdrant_host, state.settings.qdrant_port, state.settings.qdrant_multitenancy,
             state.settings.eventbase_character_alias_overrides, state.settings.eventbase_character_ignored_tags,
-            state.chat, state.chatMetadata, state.archiveRevision]);
+            state.chatRevision ?? [state.chat, state.chatMetadata], state.archiveRevision]);
         if (signature !== previous) {
             previous = signature;
             token = `${session}:${++sequence}`;
             sourceCache.clear();
             backendSupport.clear();
+            candidateHistory.clear();
         }
         return { ...state, token };
     }
@@ -126,7 +129,7 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
         const invalid = validate(input);
         if (invalid) return failure('invalid_request', invalid);
         const request = clone(input);
-        const state = clone(snapshot());
+        const state = snapshot();
         const status = getStatus();
         if (!status.ready) return failure(status.state, `VectFox is ${status.state}`);
         if (request.scope_token != null && request.scope_token !== state.token) return failure('stale_scope', 'Scope changed');
@@ -330,14 +333,14 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
     }
     async function resolveSources(request) {
         if (!request || !Array.isArray(request.sources) || request.sources.length > 500) return failure('invalid_request', 'sources must contain at most 500 references');
-        const state = clone(snapshot());
+        const state = snapshot();
         const status = getStatus();
         if (!status.ready) return failure(status.state, `VectFox is ${status.state}`);
         if (request.scope_token !== state.token) return failure('stale_scope', 'Scope changed');
         const refs = request.sources.map(ref => sourceCache.get(typeof ref === 'string' ? ref : ref?.ref));
         if (refs.some(ref => !ref)) return failure('invalid_reference', 'Use source references returned by findEvents in this scope');
         try {
-            const sources = await resolveEventSources(clone(refs), state);
+            const sources = await resolveEventSources(clone(refs), state, fingerprints);
             if (stale(state)) return failure('stale_scope', 'Scope changed during source resolution');
             return clone({ ok: true, scope_token: state.token, sources });
         } catch (error) {
@@ -361,10 +364,15 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
         // provenance. The consumer's bounded plan is at most 120 sources.
         const retained = (request.retain_sources || []).map(ref => sourceCache.get(typeof ref === 'string' ? ref : ref?.ref));
         if (retained.some(ref => !ref)) return failure('invalid_reference', 'Retained sources must be issued in this scope');
-        const history = await findEvents({ subjects: request.subjects, match: request.match,
+        const historyKey = JSON.stringify([state.token, request.subjects, request.match]);
+        let history = candidateHistory.get(historyKey);
+        if (!history) history = await findEvents({ subjects: request.subjects, match: request.match,
             scope_token: request.scope_token, scope: { kind: 'current_chat' },
             mode: 'history', history_selection: 'representative', limit: 500 }, true);
         if (!history.ok) return history;
+        if (stale(state)) return failure('stale_scope', 'Scope changed during candidate retrieval');
+        candidateHistory.set(historyKey, history);
+        while (candidateHistory.size > 8) candidateHistory.delete(candidateHistory.keys().next().value);
         const size = request.max_windows ?? 4;
         const offset = request.offset ?? 0;
         const windows = selectCaptureWindows(history.events, size, offset);
