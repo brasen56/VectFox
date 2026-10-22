@@ -465,7 +465,10 @@ export function formatCastHistoryDetailed({ roster, cast, diagnosticCast = cast,
             noteCard(history, 'no_events');
             continue;
         }
-        const whole = estimateCastTokens(history.header) + events.reduce((sum, e) => sum + costs.get(e), 0);
+        const remainingFacts = history.facts.filter(f => f.source_ids.every(id => !claimed.has(id)));
+        const remainingCard = renderCardFacts(history.group.name, remainingFacts);
+        const whole = remainingCard ? estimateCastTokens(remainingCard)
+            : estimateCastTokens(history.header) + events.reduce((sum, e) => sum + costs.get(e), 0);
         const slice = whole + estimateCastTokens('\n') <= remaining ? remaining : Math.floor(remaining / histories.slice(i).filter(h => h.events.some(e => !claimed.has(e.event_id))).length);
         if (!allocate(history, slice)) skipped.push(history);
     }

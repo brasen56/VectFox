@@ -17,7 +17,7 @@
  * ============================================================================
  */
 
-import { setExtensionPrompt, chat_metadata } from '../../../../../script.js';
+import { setExtensionPrompt, chat_metadata, getCurrentChatId } from '../../../../../script.js';
 import { getContext } from '../../../../extensions.js';
 import { getWorldInfoSettings, getSortedEntries } from '../../../../world-info.js';
 import { getBackend } from '../backends/backend-manager.js';
@@ -44,10 +44,29 @@ export async function runSummarizerInjection(settings) {
 
     if (!settings?.summarizer_injection_enabled) { clear(); return { injected: 0 }; }
 
-    const { text, count } = await buildSummarizerInjection(settings);
+    let { text, count } = await buildSummarizerInjection(settings);
+    let stateDebug;
+    if (settings.eventbase_npc_state_enabled) {
+        const [{ getLockedCharacterCollections }, { getCharacterRoster }, { detectSceneCast },
+            { buildNpcStateContexts }, { formatNpcState }] = await Promise.all([
+            import('./eventbase-workflow.js'), import('./character-roster.js'), import('./scene-cast.js'),
+            import('./npc-state-context.js'), import('./npc-card-state.js'),
+        ]);
+        const collections = getLockedCharacterCollections();
+        const roster = getCharacterRoster(collections.map(c => c.collectionId), settings);
+        const cast = roster.ready ? detectSceneCast({ roster, chat: getContext()?.chat || [], chatId: getCurrentChatId(), settings, dryRun: true, includeAll: true }) : [];
+        const contexts = buildNpcStateContexts({ settings, roster, cast, collections, chatId: getCurrentChatId() });
+        const maxChars = Math.max(0, Number(settings.summarizer_injection_max_chars ?? 10000) || 0);
+        const stateLimit = Math.max(0, Number(settings.eventbase_npc_state_tokens ?? 350) || 0);
+        const { combineNpcSummarizerState } = await import('./npc-state-routes.js');
+        const result = combineNpcSummarizerState({ text, maxChars, stateLimit, contexts, settings, formatState: formatNpcState });
+        text = result.text;
+        stateDebug = result;
+        if (!text.includes('<VectFoxSummarizer>')) count = 0;
+    }
     setExtensionPrompt(SUMMARIZER_PROMPT_TAG, text, settings.position, settings.depth, false);
     if (count > 0) log.domain('injection', 'trace', `[Summarizer] Injected ${count} event(s) under ${SUMMARIZER_PROMPT_TAG}`);
-    return { injected: count };
+    return { injected: count, ...(stateDebug ? { npcState: stateDebug } : {}) };
 }
 
 // Deepest per-entry WI `scanDepth` across the active world books. Entries can override the

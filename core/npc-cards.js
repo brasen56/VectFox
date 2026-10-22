@@ -3,6 +3,7 @@ import { estimateCastTokens, selectHistorySpine, compareCastChronology } from '.
 import { resolveEventBaseTokenBudget } from './eventbase-token-budget.js';
 import { resolveCastSetting } from './scene-cast-settings.js';
 import { annotateContinuity, getContinuityView, renderResolution, isActiveDuplicate } from './continuity.js';
+import { resolveNpcCardBinding, mergeNpcCardRefresh, npcFactId, upgradeNpcCard } from './npc-card-state.js';
 
 export const NPC_CARD_DEFAULTS = Object.freeze({
     eventbase_npc_cards_enabled: false,
@@ -82,6 +83,20 @@ export function validateNpcFacts(records, sourceIds, tokenBudget) {
  * changes an event's digest, so its new content counts as unread.
  */
 export function readNpcCard(stored, snapshot, budget) {
+    if (stored?.v === 4) {
+        const view = readNpcCard(stored.generated, snapshot, budget);
+        if (!view) return null;
+        const suppressed = new Set(stored.suppressions.map(s => s.id));
+        const facts = view.facts.filter(f => !suppressed.has(npcFactId(f)));
+        for (const pin of stored.pins) {
+            if (pin.pairKey || suppressed.has(pin.id) || !pin.source_ids?.every(id => snapshot.digests.has(id)
+                && snapshot.digests.get(id) === pin.cited?.[id])) continue;
+            const index = facts.findIndex(f => npcFactId(f) === pin.id);
+            if (index >= 0) facts.splice(index, 1);
+            facts.unshift({ fact: pin.fact, source_ids: pin.source_ids });
+        }
+        return { ...view, facts };
+    }
     if (stored?.v !== 2) return null; // Pre-incremental formats are rebuilt.
     const digest = event => snapshot.digests.get(event.event_id);
     const cited = stored.cited || {};
@@ -114,6 +129,8 @@ Return ONLY a JSON array of {"fact":"concise factual sentence", "source_ids":["s
  * charged for again. Returns null when there is nothing to read.
  */
 export async function advanceNpcCard(stored, snapshot, group, settings, complete) {
+    // Generated work is disposable; protected sections are reconciled at commit.
+    if (stored?.v === 4) stored = stored.generated;
     const budget = npcCardSetting(settings, 'eventbase_npc_card_tokens');
     const view = readNpcCard(stored, snapshot, budget);
     const digest = event => snapshot.digests.get(event.event_id);
@@ -187,7 +204,8 @@ function npcCardStatus(group, key, stored, view, minEvents) {
  * events listed after it; dry-runs are read-only. When `report` is an array,
  * one npcCardStatus entry per cast member is pushed onto it.
  */
-export function getNpcCards({ roster, cast, settings, dryRun = false, complete, save = () => {}, onError = () => {}, report = null }) {
+export function getNpcCards({ roster, cast, settings, dryRun = false, complete, save = () => {}, onError = () => {}, report = null,
+    stateContexts = [], readStateContexts }) {
     const cards = new Map();
     if (!settings.eventbase_npc_cards_enabled || !roster.ready) return cards;
     const budget = npcCardSetting(settings, 'eventbase_npc_card_tokens');
@@ -200,7 +218,10 @@ export function getNpcCards({ roster, cast, settings, dryRun = false, complete, 
             continue;
         }
         const snapshot = npcCardSnapshot(roster, group);
-        const storedCard = settings.eventbase_npc_cards?.[snapshot.key];
+        const binding = resolveNpcCardBinding(settings, snapshot, group);
+        if (binding) snapshot.key = binding.key;
+        const rawCard = settings.eventbase_npc_cards?.[snapshot.key];
+        const storedCard = rawCard?.v === 3 && binding ? upgradeNpcCard(rawCard, binding) : rawCard;
         const view = readNpcCard(storedCard, snapshot, budget);
         // Injection gates and renders individual facts, so no text is prebuilt.
         if (view?.facts.length) cards.set(group.name, { facts: view.facts, pendingEventIds: [...view.uncovered, ...view.planned].map(e => e.event_id) });
@@ -218,13 +239,22 @@ export function getNpcCards({ roster, cast, settings, dryRun = false, complete, 
             const task = refreshQueue.then(async () => {
                 // The queue can outlive a settings change; check before spending a call.
                 if (!settings.eventbase_npc_cards_enabled || identityRevision() !== frozenIdentity) return;
-                const card = await advanceNpcCard(settings.eventbase_npc_cards?.[snapshot.key], snapshot, group, generationSettings, complete);
+                const prior = settings.eventbase_npc_cards?.[snapshot.key];
+                const frozenGenerated = JSON.stringify(prior?.v === 4 ? prior.generated : prior);
+                const card = await advanceNpcCard(prior?.v === 3 && binding ? upgradeNpcCard(prior, binding) : prior,
+                    snapshot, group, generationSettings, complete);
                 if (!card || !settings.eventbase_npc_cards_enabled || identityRevision() !== frozenIdentity) return;
+                const current = settings.eventbase_npc_cards?.[snapshot.key];
+                // Reset/rebuild or another generation wins. Authored edits merge around this response.
+                if (JSON.stringify(current?.v === 4 ? current.generated : current) !== frozenGenerated) return;
+                const fresh = npcCardSnapshot(roster, group);
+                if (JSON.stringify([...fresh.digests]) !== JSON.stringify([...snapshot.digests])) return;
                 // Copy on write: never mutate a cards object shared with defaults.
-                const stored = { ...settings.eventbase_npc_cards, [snapshot.key]: card };
+                const protectedCard = current?.v === 3 && binding ? upgradeNpcCard(current, binding) : current;
+                const stored = { ...settings.eventbase_npc_cards, [snapshot.key]: mergeNpcCardRefresh(protectedCard, card) };
                 // Bound settings storage across visited collections/characters.
                 const keys = Object.keys(stored).sort((a, b) => String(stored[a].updatedAt).localeCompare(String(stored[b].updatedAt)));
-                const disposable = keys.filter(key => stored[key]?.v !== 3);
+                const disposable = keys.filter(key => stored[key]?.v !== 3 && stored[key]?.v !== 4);
                 while (disposable.length > STORED_CARD_LIMIT) delete stored[disposable.shift()];
                 settings.eventbase_npc_cards = stored;
                 failures.delete(snapshot.key);
@@ -241,6 +271,42 @@ export function getNpcCards({ roster, cast, settings, dryRun = false, complete, 
             pending.set(snapshot.key, task);
         }
         report?.push(npcCardStatus(group, snapshot.key, storedCard, view, minEvents));
+    }
+    // A pair step replaces its owner's history allowance, never adds an uncapped loop.
+    // Explicit live scope readers are mandatory before spending model calls.
+    if (!dryRun && complete && injectable && settings.eventbase_npc_state_enabled && readStateContexts) {
+        for (const context of stateContexts) {
+            for (const ownerId of [...context.subjectIds].sort()) {
+                const key = JSON.stringify(['subject-card', 1, context.registryKey, ownerId]);
+                const card = settings.eventbase_npc_cards?.[key];
+                if (card?.v !== 4 || pending.has(key) || (failures.get(key)?.until || 0) > Date.now()) continue;
+                const task = refreshQueue.then(async () => {
+                    const { npcPairReadPlan, refreshNpcPair } = await import('./npc-relationship-state.js');
+                    const readContext = () => readStateContexts().find(c => c.registryKey === context.registryKey);
+                    if (readContext()?.scope.key !== context.scope.key) return;
+                    const plans = context.subjectIds.filter(id => id > ownerId).map(other => {
+                        const subjectIds = [ownerId, other], snapshot = context.snapshots.get(ownerId);
+                        return { subjectIds, snapshot, groups: subjectIds.map(id => context.groups.get(id)),
+                            plan: npcPairReadPlan({ card, snapshot, subjectIds, groups: subjectIds.map(id => context.groups.get(id)), scope: context.scope }) };
+                    }).filter(p => p.plan.due).sort((a, b) => String(card.pairs[a.plan.pairKey]?.updatedAt || '').localeCompare(String(card.pairs[b.plan.pairKey]?.updatedAt || '')));
+                    const selected = plans[0];
+                    if (!selected) return;
+                    const result = await refreshNpcPair({ ...selected, settings: { ...settings }, card, scope: context.scope,
+                        readScope: () => readContext()?.scope, readSnapshot: () => readContext()?.snapshots.get(ownerId) || { digests: new Map() }, complete });
+                    if (!result || !settings.eventbase_npc_cards_enabled || !settings.eventbase_npc_state_enabled) return;
+                    const current = settings.eventbase_npc_cards?.[key];
+                    if (current?.v !== 4 || JSON.stringify(current.pairs[result.pairKey]) !== JSON.stringify(card.pairs[result.pairKey])
+                        || JSON.stringify(current.generated) !== JSON.stringify(card.generated)) return;
+                    settings.eventbase_npc_cards = { ...settings.eventbase_npc_cards, [key]: { ...current,
+                        revision: current.revision + 1, pairs: { ...current.pairs, [result.pairKey]: result.section } } };
+                    save();
+                }).catch(error => {
+                    failures.set(key, { count: 1, until: Date.now() + 60000, error: String(error.message).slice(0, 200) });
+                    onError(error);
+                }).finally(() => pending.delete(key));
+                pending.set(key, task); refreshQueue = task;
+            }
+        }
     }
     return cards;
 }

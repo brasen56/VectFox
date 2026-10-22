@@ -83,6 +83,16 @@ export function applySubjectMigration(settings, preview, { confirmed = false, su
     registry.revision++;
     registry.audit.push({ revision: registry.revision, action: 'alias_migration', before, after: copy(registry.subjects),
         remaps: [...remaps], splitIds: [...splitIds], at: new Date().toISOString() });
+    // Preserve ownership on merges/splits and withhold affected authored/pinned
+    // facts until reviewed, rather than silently transferring them to another pair.
+    const affected = new Set([...splitIds, ...remaps.keys(), ...remaps.values()]);
+    if (affected.size) settings.eventbase_npc_cards = Object.fromEntries(Object.entries(settings.eventbase_npc_cards || {}).map(([key, card]) => {
+        if (card.v !== 4 || card.registryKey !== preview.key) return [key, card];
+        const invalidate = fact => fact.subjectIds?.some(id => affected.has(id))
+            ? { ...fact, validity: 'unverified', reason: 'identity_review_required' } : fact;
+        return [key, { ...card, revision: card.revision + 1, authored: card.authored.map(invalidate), pins: card.pins.map(invalidate),
+            pairs: Object.fromEntries(Object.entries(card.pairs).map(([pairKey, pair]) => [pairKey, { ...pair, facts: pair.facts.map(invalidate) }])) }];
+    }));
     settings.eventbase_subject_registries = { ...settings.eventbase_subject_registries, [preview.key]: registry };
     return copy(registry);
 }

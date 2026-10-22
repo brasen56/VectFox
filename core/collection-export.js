@@ -40,6 +40,8 @@ import { progressTracker } from '../ui/progress-tracker.js';
 import { getStringHash } from '../../../../utils.js';
 import { log } from './log.js';
 import { assertKnowledgeChunks, validateEventKnowledge } from './event-knowledge.js';
+import { exportNpcCardData, importNpcCardData } from './npc-card-state.js';
+import { continuityBackendNamespace } from './continuity-scope.js';
 
 // ============================================================================
 // HELPERS
@@ -179,6 +181,7 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
         const chunksWithVectors = chunks.filter(c => c.vector).length;
 
         const exportData = {
+            npcCards: exportNpcCardData(exportSettings, continuityBackendNamespace(collectionId, exportSettings), collectionId),
             // Header
             version: EXPORT_VERSION,
             exportDate: new Date().toISOString(),
@@ -862,6 +865,10 @@ export async function importCollection(exportData, settings, options = {}) {
 
         // Register collection with backend prefix so parseRegistryKey resolves the right backend
         registerCollection(registryKey);
+        const cardImport = importNpcCardData(settings, exportData.npcCards, continuityBackendNamespace(registryKey, settings), collectionId);
+        if (cardImport.reviewRequired) log.warn('[VectFox Import] NPC card package retained; remapped identities/local conflicts require review.');
+        Object.assign(extension_settings.vectfox, { eventbase_npc_cards: settings.eventbase_npc_cards,
+            eventbase_subject_registries: settings.eventbase_subject_registries, eventbase_npc_card_imports: settings.eventbase_npc_card_imports });
         saveSettingsDebounced();
 
         // EventBase imports: rebuild the LOCAL dedup state (auto-sync marker +
@@ -1110,6 +1117,9 @@ async function importCollectionSilent(exportData, settings, options = {}) {
     }
 
     registerCollection(registryKey);
+    importNpcCardData(settings, exportData.npcCards, continuityBackendNamespace(registryKey, settings), collectionId);
+    Object.assign(extension_settings.vectfox, { eventbase_npc_cards: settings.eventbase_npc_cards,
+        eventbase_subject_registries: settings.eventbase_subject_registries, eventbase_npc_card_imports: settings.eventbase_npc_card_imports });
     saveSettingsDebounced();
 
     return {

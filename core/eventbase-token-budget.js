@@ -2,6 +2,7 @@
 import { estimateCastTokens, formatEventsForInjectionDetailed, formatCastHistoryDetailed } from './eventbase-injection.js';
 import { resolveCastSetting } from './scene-cast-settings.js';
 import { annotateContinuity } from './continuity.js';
+import { formatNpcState } from './npc-card-state.js';
 
 export const EVENTBASE_TOKEN_BUDGET_DEFAULT = 4000;
 
@@ -23,7 +24,16 @@ export function formatBudgetedEventBase({ events = [], settings = {}, globalCont
     // Reserve wrapper and lane separator costs. An oversized wrapper means no
     // injection, rather than silently exceeding the configured envelope.
     const overhead = estimateCastTokens(wrap('x')) + estimateCastTokens('\n\n');
-    const available = Math.max(0, budget - overhead);
+    const envelope = Math.max(0, budget - overhead);
+    const stateLimit = Math.min(envelope, Math.max(0, Number(settings.eventbase_npc_state_tokens ?? 350) || 0));
+    const state = { text: '', included: [], omitted: [], excluded: [], estimatedTokens: 0 };
+    for (const context of castOptions.stateContexts || (castOptions.stateOptions ? [castOptions.stateOptions] : [])) {
+        const result = formatNpcState({ settings, ...context, tokenBudget: Math.max(0, stateLimit - estimateCastTokens(state.text) - 1) });
+        if (result.text) state.text = [state.text, result.text].filter(Boolean).join('\n');
+        for (const key of ['included', 'omitted', 'excluded']) state[key].push(...result[key]);
+    }
+    state.estimatedTokens = estimateCastTokens(state.text);
+    const available = Math.max(0, envelope - estimateCastTokens(state.text) - (state.text ? estimateCastTokens('\n\n') : 0));
     const castReserve = castOptions.roster?.ready && castOptions.cast?.length
         ? Math.min(available, resolveCastSetting(settings, 'eventbase_cast_token_budget')) : 0;
     const makeMain = limit => events.length ? formatEventsForInjectionDetailed(events, settings, limit)
@@ -39,6 +49,6 @@ export function formatBudgetedEventBase({ events = [], settings = {}, globalCont
     // against the ACTUAL final main selection, not the retrieval Top-K.
     main = makeMain(Math.max(0, available - estimateCastTokens(cast.text)));
     cast = makeCast(main);
-    const text = wrap([main.text, cast.text].filter(Boolean).join('\n\n'));
-    return { text, main, cast, budget, estimatedTokens: estimateCastTokens(text) };
+    const text = wrap([state.text, main.text, cast.text].filter(Boolean).join('\n\n'));
+    return { text, main, cast, state, budget, estimatedTokens: estimateCastTokens(text) };
 }

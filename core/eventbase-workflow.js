@@ -14,6 +14,7 @@
 import { setExtensionPrompt, extension_prompts, getCurrentChatId, substituteParams, chat_metadata, saveSettingsDebounced } from '../../../../../script.js';
 import { formatBudgetedEventBase } from './eventbase-token-budget.js';
 import { getNpcCards } from './npc-cards.js';
+import { buildNpcStateContexts } from './npc-state-context.js';
 import { completeNpcCard } from './npc-card-llm.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getChatUUID, parseRegistryKey, COLLECTION_PREFIXES, buildRegistryKey } from './collection-ids.js';
@@ -1318,11 +1319,19 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         plannerCharacters: debug?.plannerCharacters, chatId: `${currentChatId}:${uuid}`, settings, dryRun, testMessage, includeAll: true }) : [];
     const cast = inPlay.slice(0, resolveCastSetting(settings, 'eventbase_cast_max_characters'));
     const npcCardStatus = [];
+    // Deliberately no implicit branch/horizon mapping from effectiveChatLength.
+    const stateContexts = buildNpcStateContexts({ settings, roster, cast: inPlay,
+        collections: [...lockedLiveCollections, ...archiveCollections], chatId: currentChatId });
     const cards = getNpcCards({ roster, cast, settings, dryRun, complete: completeNpcCard,
+        stateContexts,
+        readStateContexts: () => getCurrentChatId() === currentChatId
+            ? buildNpcStateContexts({ settings, roster, cast: inPlay, collections: getLockedCharacterCollections(), chatId: getCurrentChatId() }) : [],
         save: () => { extension_settings.vectfox.eventbase_npc_cards = settings.eventbase_npc_cards; saveSettingsDebounced(); },
         onError: error => log.warn('[NPC card] Refresh failed; using history spine:', error.message),
         report: npcCardStatus });
+    // Summarizer is the sole state owner when enabled, including summarizer-only turns.
     const budgeted = formatBudgetedEventBase({ events: events || [], roster, cast, diagnosticCast: inPlay, cards,
+        stateContexts: settings.summarizer_injection_enabled ? [] : stateContexts,
         settings, chatLength: effectiveChatLength, recallPastEvent: debug?.recallPastEvent === true,
         globalContext: settings.rag_context ? substituteParams(settings.rag_context) : '', xmlTag: settings.rag_xml_tag || '',
         currentCollectionIds: lockedLiveCollections.filter(c => c.collectionId.endsWith(`_${uuid}`)).map(c => c.collectionId) });
@@ -1340,11 +1349,12 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         castEventCount: castResult.includedCount, zeroInjectionCharacters: castResult.zeroInjectionCharacters,
         npcCardCharacters: castResult.cardCharacters, npcCardsEnabled: !!settings.eventbase_npc_cards_enabled,
         npcCardStatus, npcCardOutcomes: castResult.cardOutcomes || [], eventbaseTokenBudget: budgeted.budget,
+        npcState: budgeted.state,
         estimatedInjectionTokens: budgeted.estimatedTokens, compactMainEventIds: mainResult.compactEventIds,
         budgetCutEventIds: (events || []).filter(e => !mainInjectedEvents.includes(e)).map(eventDebugKey) });
     if (castResult.zeroInjectionCharacters.length) log.lifecycle(`[EventBase] In play with zero events injected: ${castResult.zeroInjectionCharacters.map(c => `${c.name} (${c.signals.join(' + ')})`).join(', ')}`);
 
-    if (!events?.length && !castResult.text) {
+    if (!events?.length && !castResult.text && !budgeted.state?.text) {
         log.lifecycle('[EventBase] No events to inject');
         log.verbose(`[EventBase Popup] no-events branch gate: retrieval_popup_on_result=${settings.retrieval_popup_on_result} → fire=${!!settings.retrieval_popup_on_result}`);
         if (settings.retrieval_popup_on_result) {

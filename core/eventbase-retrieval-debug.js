@@ -81,10 +81,16 @@ function describeNpcCard(status, outcome) {
 
 /** One line per scene-cast character: whether a card exists, and why it was or was not injected. */
 function formatNpcCardStatus(debug) {
-    if (debug.npcCardsEnabled === false) return ['NPC card status: disabled in settings.'];
-    if (!debug.npcCardStatus?.length) return [];
+    // State text and exact eligibility/budget decisions are included without generation.
+    const state = debug.npcState;
+    const stateLines = state ? [`NPC continuity state: ${state.included?.length || 0} facts, ${state.estimatedTokens || 0} estimated tokens; ${state.omitted?.length || 0} budget omissions; ${state.excluded?.length || 0} evidence/scope exclusions.`,
+        ...(state.omitted || []).map(f => `  Omitted ${f.id}: ${f.reason}`),
+        ...(state.excluded || []).map(f => `  Withheld ${f.id}: ${f.reason}`),
+        ...(state.text ? [state.text] : [])] : [];
+    if (debug.npcCardsEnabled === false) return [...stateLines, 'NPC card status: disabled in settings.'];
+    if (!debug.npcCardStatus?.length) return stateLines;
     const outcomes = new Map((debug.npcCardOutcomes || []).map(outcome => [outcome.name, outcome]));
-    return ['NPC card status:', ...debug.npcCardStatus.map(status =>
+    return [...stateLines, 'NPC card status:', ...debug.npcCardStatus.map(status =>
         `  ${status.name}: ${describeNpcCard(status, outcomes.get(status.name))}`)];
 }
 

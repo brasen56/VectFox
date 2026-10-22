@@ -55,6 +55,11 @@ export async function openCharacterRosterReview(settings) {
             const name = $('<input type="text" class="vectfox-input">').val(group.name).css({ width: '65%', marginLeft: '8px' }).appendTo(row);
             $('<small>').text(`${group.eventCount} events · ${(group.share * 100).toFixed(1)}%${group.isLead ? ' · Lead' : ''}${group.ambiguous ? ' · Ambiguous alias' : ''}${group.manual ? ' · Manual' : ''}`).css('display', 'block').appendTo(row);
             $('<small>').text(`Stored spellings: ${group.aliases.join(', ')}`).css('display', 'block').appendTo(row);
+            $('<button type="button" class="vectfox-btn vectfox-btn-secondary">').text('Inspect card').on('click', async () => {
+                const { openNpcCardBrowser } = await import('./npc-card-browser.js');
+                await openNpcCardBrowser(settings, { collectionKey: key, name: group.name });
+                document.getElementById('VectFox_npc_card_browser')?.scrollIntoView?.({ block: 'nearest' });
+            }).appendTo(row);
             rows.push({ group, checkbox, name });
         }
         const save = () => {
