@@ -1330,7 +1330,6 @@ export function renderSettings(containerId, settings, callbacks) {
                                 </div>
                                 <button type="button" id="VectFox_character_roster_refresh" class="vectfox-btn vectfox-btn-secondary">Characters and NPC cards</button>
                                 <button type="button" id="VectFox_continuity_repair" class="vectfox-btn vectfox-btn-secondary">Review and repair memory</button>
-                                <div id="VectFox_continuity_repair_panel" style="margin-top:8px;"></div>
                                 <label class="vectfox-label" style="margin-top:12px;">Scene-cast history</label>
                                 <label>Shared EventBase token budget <input id="VectFox_eventbase_token_budget" type="number" class="vectfox-input" min="0" step="100" style="width:100px;" /></label>
                                 <small class="VectFox_hint">Caps main events, cast history/cards and context/XML wrappers together using a conservative estimate (default 4000). Lower-ranked main events use compact summaries. Zero disables this injection; summarizer injection has its own budget.</small>

@@ -23,6 +23,51 @@ const makeEngine = (context = fixture(), extra = {}) => {
     return { engine, writes, checkpoints };
 };
 
+describe('repair run recovery and cleanup', () => {
+    it('restores a saved running checkpoint as paused, or uses a durable terminal status', () => {
+        const { engine } = makeEngine();
+        const saved = { run: 'old', status: 'running' };
+        engine.restoreState(saved);
+        expect(engine.state.status).toBe('paused');
+        expect(saved.status).toBe('running');
+        engine.events.get('conflict').continuity = { v: 1, repair_runs: [{ run: 'old', status: 'complete' }] };
+        engine.restoreState(saved);
+        expect(engine.state.status).toBe('complete');
+    });
+    it('stops a stale manifest, protects annotations, and clears only an empty record', async () => {
+        const { engine, checkpoints } = makeEngine();
+        engine.state = { run: 'old', status: 'paused' };
+        engine.events.get('conflict').continuity = { v: 1, repair_runs: [{ run: 'old', status: 'running', plan: [] }],
+            closed_threads: { run: 'old', status: 'active', threads: 'all' } };
+        await expect(engine.clearRun('old')).rejects.toThrow('Stop');
+        await engine.stopRun('old');
+        await expect(engine.clearRun('old')).rejects.toThrow('accepted repairs');
+        await engine.undo('old');
+        await engine.clearRun('old');
+        expect(engine.state).toBeNull();
+        expect(checkpoints.at(-1)).toBeNull();
+        expect(engine.events.size).toBe(4);
+        expect(engine.listRuns()).toEqual([]);
+    });
+    it('does not label stale historical manifests as active workers', () => {
+        const { engine } = makeEngine();
+        engine.events.get('conflict').continuity = { v: 1, repair_runs: [{ run: 'old', status: 'running' }] };
+        expect(engine.listRuns()[0].status).toBe('interrupted');
+    });
+    it('refuses cleanup while a worker is active', async () => {
+        const { engine } = makeEngine(); engine.running = true;
+        await expect(engine.stopRun('old')).rejects.toThrow('current batch');
+        await expect(engine.clearRun('old')).rejects.toThrow('current batch');
+    });
+    it('retains undo history for an accepted closure displaced by a manual mark', async () => {
+        const { engine } = makeEngine();
+        engine.events.get('conflict').continuity = { v: 1, repair_runs: [{ run: 'old', status: 'complete' }],
+            user_previous_closure: { run: 'old', status: 'active', threads: 'all' } };
+        await expect(engine.clearRun('old')).rejects.toThrow('accepted repairs');
+        expect(engine.listRuns()).toHaveLength(1);
+    });
+});
+
 describe('continuity repair inventory and validation', () => {
     it('uses language-independent types, adjustable floors, aliases, pair and range scopes', () => {
         const events = [event('one', 10), event('two', 20, { importance: 5 }), event('three', 30, { event_type: 'discovery' })];

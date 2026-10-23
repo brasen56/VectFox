@@ -23,11 +23,11 @@ New events extracted from now on get resolution links automatically during extra
 
 ## How to run a repair
 
-### 1. Open the repair panel
+### 1. Open the repair window
 
 In SillyTavern, open the VectFox extension → **EventBase** tab → scroll to the **Character roster and aliases** section → click **Review and repair memory**.
 
-The panel that opens starts with a reminder worth reading: metadata-only repair, one writer, pause takes effect after the current batch, token estimates are approximate.
+The fixed-height window uses the same list/detail layout as Characters and NPC cards: proposals and evidence scroll independently. Setup can be collapsed, and message-range/provider overrides are under Advanced. Repair is metadata-only; use one writer, pause takes effect after the current batch, and token estimates are approximate.
 
 ### 2. Choose a collection and scope
 
@@ -51,18 +51,19 @@ Click **Inventory and estimate (no LLM)**. This loads the stored vectors (no emb
 ### 4. Start, pause, resume, cancel
 
 - **Start** begins judging. Batches of 4 conflicts are sent per call; each batch's proposals are written immediately, so an interrupted run resumes instead of starting over.
-- **Pause** stops after the current batch finishes (queued calls don't contact the provider). **Load / Resume run** continues from the checkpoint. Pause and resume are safe to repeat.
-- **Cancel** ends the run; the proposals already made stay for review.
+- **Pause** stops after the current batch finishes (queued calls don't contact the provider). **Load saved runs (no LLM)** loads checkpoints and proposals without resuming paid work; **Resume current run** continues the selected current checkpoint. Pause and resume are safe to repeat.
+- **Stop interrupted run** ends a paused/interrupted run without removing its proposals or accepted repairs. A stale historical manifest is labelled **Interrupted — not running**; a restored running checkpoint becomes paused rather than claiming a worker is active.
 - The status line shows live progress: `running: 240 conflicts processed · 60 calls · 212,000 input tokens · <model>`, plus a count of skipped batches if any.
 - A batch whose model response is unusable (truncated or malformed) twice is **skipped and recorded**, not re-billed on every resume. If you see skips reported, that's useful feedback — tell us.
 
 ### 5. Review the proposals
 
-Below the controls, the preview lists every proposal for the current run, 20 per page:
+Choose a **Repair run** by date/status/model. The list and all review/undo actions apply to that selected run, including historical runs. The proposal list shows 50 entries per page:
 
-- Each entry shows the field (`resolves` or `duplicate_of`), its status, the owner event's summary, the target event's summary, **which thread texts it closes** (shown as text, not bare indices), and the judge's short "how" note. The "how" note is written in the collection's extraction language (English by default, or your CJK mode's language; with a custom extraction prompt it matches each conflict's own summary). If a note mixes languages, that's a bug — tell us.
-- Use the **filter box** to narrow by character name.
-- **Accept** or **Reject** individual entries, or use **Accept all** / **Reject all proposals**.
+- Each list entry has a readable type (resolves earlier event, closes own threads, or duplicate event), status, summary and characters. Selecting it shows source/target evidence, event IDs, message ranges, **which thread texts it closes**, and the judge's short "how" note. The "how" note is written in the collection's extraction language (English by default, or your CJK mode's language; with a custom extraction prompt it matches each conflict's own summary). If a note mixes languages, that's a bug — tell us.
+- **Search proposals** matches characters, summaries, event IDs, types and reasoning. The status filter defaults to **Needs review**, with **Accepted** and **All statuses** also available.
+- Use **Accept proposal** / **Reject proposal**, or **Accept all pending** / **Reject all pending**. Bulk review confirms that hidden results in the selected run are included.
+- **Clear empty run record** removes only finished/stopped records with no remaining annotations. Reject pending proposals first. Accepted repairs (including closures saved beneath manual marks) retain their undo history; use **Undo selected run** only if you intend to remove those repairs. Clearing never deletes event text or vectors.
 - Only **accepted** entries take effect. A `proposed` entry influences nothing until you accept it.
 
 Read the threads being closed carefully — that's where judge mistakes (if any) will be visible. If a link looks wrong, rejecting it is free and final for that run.
@@ -106,7 +107,7 @@ Note for testers with tweaked custom prompts: the settings textarea saves a froz
 
 1. **Link quality:** after accepting links, do a few generations in a long chat. Are resolved conflicts staying downranked / shown with their outcome instead of as open?
 2. **Estimate accuracy:** how close were the estimated vs. actual calls and input tokens (status line after a run)?
-3. **Resume behavior:** pause mid-run, reload the page, then *Load / Resume run*. Did it pick up where it left off without duplicate proposals?
+3. **Resume behavior:** pause mid-run, reload the page, then *Load saved runs (no LLM)* and *Resume current run*. Did it pick up where it left off without duplicate proposals?
 4. **Undo:** did undo restore the pre-run state cleanly?
 5. **Skipped batches:** did any appear in the status line, and were the affected conflicts ones you'd have wanted linked?
 6. **Duplicates only** scope: was the duplicate review sensible (right copy chosen as canonical)?

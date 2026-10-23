@@ -85,7 +85,8 @@ export async function createContinuityRepair(collectionKey, settings, override =
         },
         checkpoint: state => {
             settings.eventbase_continuity_repair ??= {};
-            settings.eventbase_continuity_repair[context.id] = JSON.parse(JSON.stringify(state));
+            if (state) settings.eventbase_continuity_repair[context.id] = JSON.parse(JSON.stringify(state));
+            else delete settings.eventbase_continuity_repair[context.id];
             extension_settings.vectfox.eventbase_continuity_repair = settings.eventbase_continuity_repair;
             saveSettingsDebounced();
         },
@@ -108,7 +109,7 @@ export async function createContinuityRepair(collectionKey, settings, override =
                 throw error;
             }
         } });
-    engine.state = settings.eventbase_continuity_repair?.[context.id];
+    engine.restoreState(settings.eventbase_continuity_repair?.[context.id]);
     return engine;
 }
 

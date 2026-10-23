@@ -329,14 +329,61 @@ export class ContinuityRepair {
         });
     }
 
+    /** Restore a checkpoint without treating a previous page's worker as live. */
+    restoreState(state) {
+        this.state = state ? clone(state) : null;
+        if (!this.state) return;
+        const manifest = [...this.events.values()].flatMap(event => event.continuity?.repair_runs || [])
+            .find(item => item.run === this.state.run);
+        if (['complete', 'cancelled'].includes(manifest?.status)) this.state.status = manifest.status;
+        else if (this.state.status === 'running') this.state.status = 'paused';
+        this.checkpoint(this.state);
+    }
+
+    /** Stop an interrupted run without removing its annotations. */
+    async stopRun(run) {
+        if (this.running) throw new Error('Pause repair and wait for the current batch first');
+        return this.serialize(async () => {
+            await this.compactManifest(run, 'cancelled');
+            if (this.state?.run === run) {
+                this.state.status = 'cancelled';
+                this.checkpoint(this.state);
+            }
+        });
+    }
+
+    /** Accepted repairs retain their undo history; only empty inactive records can be cleared. */
+    async clearRun(run) {
+        if (this.running) throw new Error('Pause repair and wait for the current batch first');
+        return this.serialize(async () => {
+            await this.refreshEvents();
+            const record = this.listRuns().find(item => item.run === run);
+            if (!record || !['complete', 'cancelled', 'undone'].includes(record.status)) throw new Error('Stop the interrupted run before clearing it');
+            if (listRepairEntries(this.events.values(), run).length
+                || [...this.events.values()].some(event => event.continuity?.user_previous_closure?.run === run)) {
+                throw new Error('Reject remaining proposals or undo accepted repairs before clearing this record');
+            }
+            for (const event of this.events.values()) {
+                if (!event.continuity?.repair_runs?.some(item => item.run === run)) continue;
+                await this.mutate(event.event_id, continuity => {
+                    continuity.repair_runs = continuity.repair_runs.filter(item => item.run !== run);
+                    if (!continuity.repair_runs.length) delete continuity.repair_runs;
+                });
+            }
+            if (this.state?.run === run) { this.state = null; this.checkpoint(null); }
+        });
+    }
+
     /** Runs known from manifests or entries, newest first. */
     listRuns() {
         const runs = new Map();
         for (const event of this.events.values()) {
-            for (const item of event.continuity?.repair_runs || []) runs.set(item.run, { run: item.run, model: item.model, status: item.status ?? null });
+            for (const item of event.continuity?.repair_runs || []) runs.set(item.run, { run: item.run, model: item.model, created: item.created,
+                status: item.status === 'running' ? 'interrupted' : item.status ?? null });
             for (const { entry } of listRepairEntries([event])) if (entry.run && !runs.has(entry.run)) runs.set(entry.run, { run: entry.run, status: null });
         }
-        if (this.state?.run) runs.set(this.state.run, { ...runs.get(this.state.run), run: this.state.run, model: this.state.model, status: this.state.status });
+        if (this.state?.run) runs.set(this.state.run, { ...runs.get(this.state.run), run: this.state.run, model: this.state.model,
+            status: this.state.status === 'running' && !this.running ? 'paused' : this.state.status });
         return [...runs.values()].sort((a, b) => String(b.run).localeCompare(String(a.run)));
     }
 
