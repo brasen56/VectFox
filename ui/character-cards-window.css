@@ -1,0 +1,520 @@
+/* ============================================================================
+ * CHARACTERS AND NPC CARDS WINDOW
+ * ============================================================================
+ * Setup checklist, character list and card editor (ui/character-cards-window.js).
+ * The list and the card scroll independently; the window itself never scrolls.
+ * ============================================================================ */
+
+.vectfox-modal-content.vf-cc {
+    max-width: 1100px;
+    width: 95%;
+    height: 90vh;
+    height: 90dvh;
+    color: var(--SmartThemeBodyColor);
+}
+
+.vf-cc-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid color-mix(in srgb, var(--vectfox-primary) 20%, transparent);
+    flex-shrink: 0;
+}
+
+.vf-cc-header h3 {
+    margin: 0;
+    flex: 1;
+    font-size: 1.15em;
+}
+
+.vf-cc-header .vectfox-select {
+    max-width: 260px;
+}
+
+.vf-cc-notice {
+    padding: 6px 16px;
+    font-size: 0.85em;
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 50%, transparent);
+    flex-shrink: 0;
+}
+
+.vf-cc-notice:empty {
+    display: none;
+}
+
+.vf-cc-steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 50%, transparent);
+    flex-shrink: 0;
+}
+
+.vf-cc-step {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.vf-cc-step-todo {
+    border-color: color-mix(in srgb, var(--vectfox-warning) 55%, transparent);
+    background: color-mix(in srgb, var(--vectfox-warning) 10%, transparent);
+}
+
+.vf-cc-step-done {
+    border-color: color-mix(in srgb, var(--vectfox-success) 55%, transparent);
+    background: color-mix(in srgb, var(--vectfox-success) 10%, transparent);
+}
+
+.vf-cc-step-title {
+    font-weight: 600;
+    font-size: 0.92em;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.vf-cc-step-done .vf-cc-step-title i {
+    color: var(--vectfox-success);
+}
+
+.vf-cc-step-detail {
+    font-size: 0.8em;
+    opacity: 0.8;
+}
+
+.vf-cc-step-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: auto;
+}
+
+.vf-cc-step-actions .vectfox-btn {
+    padding: 3px 10px;
+    font-size: 0.8em;
+}
+
+.vf-cc-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.vf-cc-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    padding: 10px;
+    border-right: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 50%, transparent);
+}
+
+.vf-cc-list > .vectfox-input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.vf-cc-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.vf-cc-chip {
+    font: inherit;
+    font-size: 0.78em;
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.vf-cc-chip.vf-cc-on {
+    border-color: var(--vectfox-primary);
+    background: color-mix(in srgb, var(--vectfox-primary) 25%, transparent);
+}
+
+.vf-cc-items {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.vf-cc-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border-radius: 6px;
+}
+
+.vf-cc-row:hover {
+    background: color-mix(in srgb, var(--SmartThemeBodyColor) 6%, transparent);
+}
+
+.vf-cc-row.vf-cc-selected {
+    background: color-mix(in srgb, var(--vectfox-primary) 20%, transparent);
+}
+
+.vf-cc-name {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    padding: 3px 0;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vf-cc-selected .vf-cc-name {
+    font-weight: 600;
+}
+
+.vf-cc-card-icon {
+    color: var(--vectfox-primary-bright);
+    font-size: 0.8em;
+}
+
+.vf-cc-count {
+    font-size: 0.78em;
+    opacity: 0.6;
+}
+
+.vf-cc-badge {
+    display: inline-block;
+    font-size: 0.72em;
+    padding: 1px 7px;
+    margin-left: 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--vectfox-primary) 20%, transparent);
+    white-space: nowrap;
+}
+
+.vf-cc-badge-warn {
+    background: color-mix(in srgb, var(--vectfox-warning) 25%, transparent);
+}
+
+.vf-cc-bulk {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding-top: 6px;
+    border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 50%, transparent);
+}
+
+.vf-cc-bulk:empty {
+    display: none;
+}
+
+.vf-cc-bulk .vectfox-btn {
+    padding: 3px 10px;
+    font-size: 0.8em;
+}
+
+.vf-cc-more {
+    font-size: 0.85em;
+}
+
+.vf-cc-more > summary {
+    cursor: pointer;
+    opacity: 0.8;
+}
+
+.vf-cc-more[open] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.vf-cc-pane {
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.vf-cc-pane h4 {
+    margin: 0;
+    font-size: 1.1em;
+}
+
+.vf-cc-card-title {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.vf-cc-card-title .vectfox-btn {
+    margin-left: auto;
+    padding: 3px 10px;
+    font-size: 0.8em;
+}
+
+.vf-cc-section {
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 80%, transparent);
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+
+.vf-cc-section > summary,
+.vf-cc-section-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+    cursor: default;
+}
+
+.vf-cc-section > summary {
+    cursor: pointer;
+}
+
+.vf-cc-fact {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    padding: 5px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 40%, transparent);
+}
+
+.vf-cc-fact:last-child {
+    border-bottom: none;
+}
+
+.vf-cc-fact-text {
+    flex: 1 1 200px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.vf-cc-hidden .vf-cc-fact-text {
+    text-decoration: line-through;
+    opacity: 0.55;
+}
+
+.vf-cc-editing {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.vf-cc-editing textarea {
+    min-height: 60px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.vf-cc-sources > summary {
+    font-size: 0.75em;
+    opacity: 0.7;
+    cursor: pointer;
+}
+
+.vf-cc-sources[open] {
+    flex-basis: 100%;
+    order: 10;
+    padding-left: 8px;
+}
+
+.vf-cc-icon {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: inherit;
+    opacity: 0.7;
+    padding: 3px 6px;
+    cursor: pointer;
+}
+
+.vf-cc-icon:hover,
+.vf-cc-icon:focus-visible {
+    opacity: 1;
+    border-color: var(--SmartThemeBorderColor);
+}
+
+.vf-cc-icon.vf-cc-on {
+    opacity: 1;
+    color: var(--vectfox-primary-bright);
+}
+
+.vf-cc-link {
+    background: none;
+    border: none;
+    color: var(--vectfox-primary-bright);
+    font: inherit;
+    font-size: 0.85em;
+    padding: 2px 4px;
+    cursor: pointer;
+    text-decoration: underline;
+    align-self: flex-start;
+}
+
+.vf-cc-add {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.vf-cc-add .vectfox-input {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.vf-cc-add .vf-cc-pair {
+    flex: 0 1 170px;
+}
+
+.vf-cc-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.vf-cc-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.vf-cc-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+}
+
+.vf-cc-setup-row {
+    padding: 2px 0;
+    font-size: 0.9em;
+}
+
+.vf-cc-warning {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--vectfox-warning) 50%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--vectfox-warning) 12%, transparent);
+    font-size: 0.9em;
+}
+
+.vf-cc-muted {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+
+.vf-cc-empty {
+    margin: auto;
+    opacity: 0.7;
+}
+
+.vf-cc-footer {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: auto;
+    padding: 10px 0;
+    border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 60%, transparent);
+    background: var(--SmartThemeBlurTintColor);
+}
+
+.vf-cc-footer:empty {
+    display: none;
+}
+
+.vf-cc-footer > span {
+    margin-right: auto;
+}
+
+.vf-cc-dirty {
+    color: var(--vectfox-warning);
+    font-size: 0.85em;
+}
+
+.vf-cc pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 0.8em;
+    max-height: 240px;
+    overflow: auto;
+}
+
+.vf-cc-package {
+    width: 100%;
+    min-height: 80px;
+    box-sizing: border-box;
+}
+
+.vf-cc-back {
+    display: none;
+}
+
+/* Narrow screens: one column, list or card at a time. */
+@media (max-width: 768px) {
+    .vf-cc-steps {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+        padding: 8px 10px;
+    }
+
+    /* Compact rows: title and detail on the left, the action on the right. */
+    .vf-cc-step {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 2px 8px;
+        padding: 6px 8px;
+    }
+
+    .vf-cc-step-actions {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+        margin-top: 0;
+    }
+
+    .vf-cc-body {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .vf-cc-list {
+        border-right: none;
+    }
+
+    .vf-cc .vf-cc-pane,
+    .vf-cc.vf-cc-show-pane .vf-cc-list,
+    .vf-cc.vf-cc-show-pane .vf-cc-steps {
+        display: none;
+    }
+
+    .vf-cc.vf-cc-show-pane .vf-cc-pane {
+        display: flex;
+        padding: 10px 12px 0;
+    }
+
+    .vf-cc-back {
+        display: inline;
+    }
+}

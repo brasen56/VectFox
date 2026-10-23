@@ -1323,12 +1323,12 @@ export function renderSettings(containerId, settings, callbacks) {
                             <!-- Extraction Prompt -->
                             <div class="vectfox-form-group">
                                 <label class="vectfox-label">Character roster and aliases</label>
-                                <small class="VectFox_hint">Review names in enabled collections locked to this chat. Merge, split, rename, and reversible ignore choices are saved per collection; stored events are not changed. Ignored tags are omitted from the roster and known-character extraction hints.</small>
+                                <small class="VectFox_hint">Opens one window for the collections locked to this chat: declare the story so far, set up character IDs, merge, split, rename or ignore names, and edit NPC cards and canon. Choices are saved per collection; stored events are not changed. Ignored names are left out of the roster and known-character extraction hints.</small>
                                 <div style="display:flex; gap:8px; margin:8px 0;">
                                     <label>Lead share <input id="VectFox_eventbase_lead_share_threshold" type="number" class="vectfox-input" min="0" max="1" step="0.05" style="width:70px;" /></label>
                                     <label>Minimum collection events <input id="VectFox_eventbase_lead_min_events" type="number" class="vectfox-input" min="1" step="1" style="width:70px;" /></label>
                                 </div>
-                                <button type="button" id="VectFox_character_roster_refresh" class="vectfox-btn vectfox-btn-secondary">Review / Refresh roster</button>
+                                <button type="button" id="VectFox_character_roster_refresh" class="vectfox-btn vectfox-btn-secondary">Characters and NPC cards</button>
                                 <button type="button" id="VectFox_continuity_repair" class="vectfox-btn vectfox-btn-secondary">Review and repair memory</button>
                                 <div id="VectFox_continuity_repair_panel" style="margin-top:8px;"></div>
                                 <label class="vectfox-label" style="margin-top:12px;">Scene-cast history</label>
@@ -1339,7 +1339,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <label>Minimum events <input id="VectFox_eventbase_npc_card_min_events" type="number" class="vectfox-input" min="1" style="width:80px;" /></label>
                                     <label>Card tokens <input id="VectFox_eventbase_npc_card_tokens" type="number" class="vectfox-input" min="1" step="50" style="width:90px;" /></label>
                                     <button type="button" id="VectFox_eventbase_npc_cards_reset" class="vectfox-btn vectfox-btn-secondary">Reset NPC cards</button>
-                                    <button type="button" id="VectFox_npc_cards_browse" class="vectfox-btn vectfox-btn-secondary">NPC cards</button>
+                                    <button type="button" id="VectFox_npc_cards_browse" class="vectfox-btn vectfox-btn-secondary">Browse and edit cards</button>
                                 </div>
                                 <small class="VectFox_hint">Uses the Core summarization model, at most one background call per in-play NPC per turn. The first build reads up to 4 batches; longer histories are sampled. Afterwards a card updates from new events only, once 5 have arrived, and is shown with those newer events until then. Cards are source-linked LLM summaries, not guaranteed lossless; Reset rebuilds them if they drift. Dry-runs do not generate cards.</small>
                                 <div style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0;">
@@ -1348,11 +1348,9 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <label>Token budget <input id="VectFox_eventbase_cast_token_budget" type="number" class="vectfox-input" min="0" step="50" style="width:90px;" /></label>
                                 </div>
                                 <small class="VectFox_hint">Recall minor characters' history from the roster, independently of the current topic. Leads are excluded. Small histories fit first; larger histories use a chronological spine. Budget uses a conservative token estimate, not a model tokenizer. Set budget or maximum characters to 0 to disable.</small>
-                                <div id="VectFox_character_roster_review" style="margin-top:8px;"></div>
                                 <label><input id="VectFox_eventbase_npc_state_enabled" type="checkbox" /> Inject user canon and eligible relationship state (opt-in)</label>
                                 <label>State reserve (total tokens) <input id="VectFox_eventbase_npc_state_tokens" type="number" class="vectfox-input" min="0" step="50" style="width:90px;" /></label>
-                                <small>State uses the shared EventBase envelope. Authored canon can render without historical generation. Automatic state requires verified source mappings; legacy evidence remains historical.</small>
-                                <div id="VectFox_npc_card_browser" style="max-height:650px; overflow:auto; width:100%;"></div>
+                                <small>State uses the shared EventBase envelope. Authored canon can render without historical generation. Automatic state needs verified source mappings or a story-so-far declaration (in the Characters and NPC cards window); other evidence stays historical.</small>
                             </div>
                             <div class="vectfox-setting-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
                                 <label style="font-weight:600;">Extraction Prompt</label>
@@ -4714,9 +4712,9 @@ function bindSettingsEvents(settings, callbacks) {
         Object.assign(extension_settings.vectfox, settings);
         saveSettingsDebounced();
     });
-    $('#VectFox_npc_cards_browse').on('click', async () => {
-        const { openNpcCardBrowser } = await import('./npc-card-browser.js');
-        await openNpcCardBrowser(settings);
+    $('#VectFox_npc_cards_browse, #VectFox_character_roster_refresh').on('click', async () => {
+        const { openCharacterCardsWindow } = await import('./character-cards-host.js');
+        await openCharacterCardsWindow(settings);
     });
     $('#VectFox_eventbase_npc_state_enabled').prop('checked', !!settings.eventbase_npc_state_enabled).on('change', function() {
         settings.eventbase_npc_state_enabled = $(this).prop('checked');
@@ -4755,10 +4753,6 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
     }
-    $('#VectFox_character_roster_refresh').on('click', async () => {
-        const { openCharacterRosterReview } = await import('./character-roster-review.js');
-        await openCharacterRosterReview(settings);
-    });
     $('#VectFox_continuity_repair').on('click', async () => {
         const { openContinuityRepair } = await import('./continuity-repair.js');
         await openContinuityRepair(settings);

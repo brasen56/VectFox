@@ -77,9 +77,8 @@ history has no usable source provenance. The motivating collection has 5,771 eve
 only 143 carry `source_chat_id`, and the text behind about 5,300 of them is no longer
 in any chat file on disk.
 
-- **Control:** roster review has a **Story so far** box with **Declare story so far**,
-  **Update to include everything stored now** and **Remove declaration**.
-  Declaring records the newest ingestion time (`created_at`, falling back to
+- **Control:** step 1 of the Characters and NPC cards window (below) offers
+  **Declare**, **Update** and **Remove**. Declaring records the newest ingestion time (`created_at`, falling back to
   `inserted_at`) among the collection's non-duplicate events. The setting is
   `eventbase_story_so_far`, keyed per backend and collection:
   `{ v: 1, cutoff, eventCount, declaredAt, revision }`.
@@ -112,8 +111,51 @@ pending co-author review. The host-provenance frame for events stored after the
 cutoff is still open.
 
 Validation: `npx vitest run`: 79 files, 1,592 tests passed (7 new, in
-`tests/continuity-subjects.test.js` and `tests/npc-card-state.test.js`). The roster
-review UI has not been exercised in live SillyTavern.
+`tests/continuity-subjects.test.js` and `tests/npc-card-state.test.js`).
+
+## Follow-up: Characters and NPC cards window (2026-10-22)
+
+Live testing showed the inline roster review and card browser were hard to use. On a
+453-name collection, every name rendered as a row, and the identity buttons sat below
+all of them inside a nested scroll box. The browser also mounted an editor for every
+character at once. Both panels are replaced by one modal, `ui/character-cards-window.js`
+(host wiring in `ui/character-cards-host.js`, styles in `ui/character-cards-window.css`).
+Both settings buttons open it.
+
+- **Setup checklist:** 1. story so far, 2. character IDs, 3. use in prompts. Story
+  so far comes first because ID setup migrates legacy cards with the declaration in
+  scope. Old generated facts then carry over instead of being rebuilt with model calls.
+  ID setup is one summarised preview with only the rows that need attention: new,
+  renamed, spellings changed, split, merge survivor and names to check.
+- **Character list:** searchable. It is filtered by default to characters at or above
+  the card minimum (30 events), with chips for *Has card*, *All* and *Ignored*. It
+  pages 100 rows at a time. Ticking characters enables **Merge** and **Ignore**.
+  Card snapshots are built only for the character that is opened.
+- **Card pane:** your canon (add, edit, delete), relationship state and generated facts
+  (pin, correct, hide, restore). Facts on pair cards stored on another card appear
+  read-only with an **Open** link. Adding pair canon on the non-owner card opens the
+  owner card with the text carried over. **Names** handles rename, split and ignore.
+  The prompt preview, raw diff and per-card reset are under *Advanced*. Save and
+  Cancel stay pinned to the bottom with an unsaved-change count. Switching character,
+  collection or a scope-changing setting asks before discarding a draft.
+- **Recheck:** a card migrated before the story was declared, and still an untouched
+  v3 envelope, offers **Recheck with story so far**. This re-runs the conservative
+  migration. Edited (v4) cards are never replaced.
+- **More options:** the sibling-file continuity checkbox, restoring automatic name
+  grouping, and the card backup JSON export/import.
+- **Narrow screens:** the steps become compact rows, and the list and card show one at
+  a time with an *All characters* back link.
+
+Removed: `ui/character-roster-review.js`, `ui/npc-card-browser.js`,
+`ui/npc-card-editor.js` and `tests/npc-card-browser.test.js`.
+`tests/character-cards-window.test.js` (7 tests) replaces the last one. It covers
+no-call browsing, text-only rendering, one-step ID setup, legacy fact carry-over after
+declaring, hide/restore/correct, pair-owner routing, unsaved-change guards, stale-save
+rejection, merge/ignore/restore and the steps.
+
+Validation: `npx vitest run`: 79 files, 1,596 tests passed. A static preview with
+synthetic data was checked at desktop and phone widths. The window has not been
+exercised in live SillyTavern.
 
 ## Validation
 
