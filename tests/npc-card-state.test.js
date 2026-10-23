@@ -3,7 +3,9 @@ import { subjectCardKey, npcFactId, upgradeNpcCard, beginNpcCardEdit, editNpcCar
     inspectNpcCard, mergeNpcCardRefresh, resetNpcGeneratedCards, formatNpcState, selectNpcPairEvidence,
     exportNpcCardData, importNpcCardData, resolveNpcCardBinding } from '../core/npc-card-state.js';
 import { npcCardSnapshot, readNpcCard, getNpcCards } from '../core/npc-cards.js';
-import { resolveContinuityScope, continuityBackendNamespace } from '../core/continuity-scope.js';
+import { resolveContinuityScope, continuityBackendNamespace, declareStorySoFar, removeStorySoFar,
+    readStorySoFar } from '../core/continuity-scope.js';
+import { buildNpcStateContexts } from '../core/npc-state-context.js';
 import { refreshNpcPair, npcPairReadPlan } from '../core/npc-relationship-state.js';
 import { formatBudgetedEventBase } from '../core/eventbase-token-budget.js';
 import { estimateCastTokens, formatCastHistoryDetailed } from '../core/eventbase-injection.js';
@@ -206,6 +208,54 @@ describe('relationship evidence and state budgets', () => {
         expect(state.text).toContain('User canon'); expect(state.text).toContain('Loan unpaid');
         expect(state.text).not.toContain('Reconciled'); expect(state.excluded).toHaveLength(1);
         expect(formatNpcState({ settings: f.settings, ...f.stateOptions, subjectIds: ['a', 'c'], tokenBudget: 350 }).text).toBe('');
+    });
+    it('story so far admits legacy pair evidence up to its cutoff; removal withholds what relied on it', async () => {
+        const f = fixture();
+        f.events.forEach((e, i) => { delete e.source_chat_id; e.created_at = 100 + i; });
+        const pair = f.groups.slice(0, 2);
+        const contexts = () => buildNpcStateContexts({ settings: f.settings, roster: f.roster, cast: pair.map(group => ({ group })),
+            collections: [{ registryKey: 'events', collectionId: 'events' }], chatId: 'chat' });
+        const select = context => selectNpcPairEvidence({ snapshot: context.snapshots.get('a'), groups: pair, scope: context.scope });
+        expect(select(contexts()[0]).events).toEqual([]);
+        declareStorySoFar(f.settings, f.namespace, 'events', f.events.slice(0, 2)); // e2 is stored after the cutoff.
+        const [context] = contexts();
+        const plan = select(context);
+        expect(plan.events.map(e => e.event_id)).toEqual(['e1', 'e0']);
+        expect(plan.diagnostics.find(d => d.event_id === 'e2').reason).toBe('after_declared_story_so_far');
+        const card = f.settings.eventbase_npc_cards[f.binding.key];
+        const result = await refreshNpcPair({ settings: f.settings, card, snapshot: context.snapshots.get('a'), groups: pair,
+            subjectIds: ['a', 'b'], scope: context.scope, readScope: () => contexts()[0].scope,
+            readSnapshot: () => contexts()[0].snapshots.get('a'), complete: async () => [{ fact: 'Loan unpaid', source_ids: ['e0'] }] });
+        card.pairs[result.pairKey] = result.section;
+        const state = c => formatNpcState({ settings: f.settings, scope: c.scope, registryKey: c.registryKey,
+            subjectIds: c.subjectIds, snapshots: c.snapshots, tokenBudget: 350 });
+        expect(state(contexts()[0]).text).toContain('Loan unpaid');
+        removeStorySoFar(f.settings, f.namespace, 'events');
+        const withdrawn = state(contexts()[0]);
+        expect(withdrawn.text).not.toContain('Loan unpaid');
+        expect(withdrawn.excluded).toContainEqual(expect.objectContaining({ reason: 'source_or_scope_changed' }));
+    });
+    it('carries the story-so-far declaration through export/import without overwriting a local one', () => {
+        const f = fixture();
+        declareStorySoFar(f.settings, f.namespace, 'events', [10, 11, 12].map(created_at => ({ created_at })));
+        const data = JSON.parse(JSON.stringify(exportNpcCardData(f.settings, f.namespace, 'events')));
+        expect(data.storySoFar.cutoff).toBe(12);
+        const target = {};
+        importNpcCardData(target, data, f.namespace, 'events');
+        expect(readStorySoFar(target, f.namespace, 'events')).toEqual(readStorySoFar(f.settings, f.namespace, 'events'));
+        const local = {};
+        declareStorySoFar(local, f.namespace, 'events', [{ created_at: 1 }]);
+        importNpcCardData(local, data, f.namespace, 'events');
+        expect(readStorySoFar(local, f.namespace, 'events').cutoff).toBe(1);
+        const remapped = {};
+        importNpcCardData(remapped, data, 'new server', 'remapped');
+        expect(remapped.eventbase_story_so_far).toBeUndefined();
+    });
+    it('rejects a card save drafted before the story-so-far declaration changed', () => {
+        const f = fixture(), draft = beginNpcCardEdit(f.settings, f.binding, 'chat');
+        editNpcCardFact(draft, 'add', null, { text: 'Loft', idFactory: () => 'loft' });
+        declareStorySoFar(f.settings, f.namespace, 'events', [{ created_at: 1 }]);
+        expect(() => saveNpcCardEdit(f.settings, draft, 'chat')).toThrow('changed');
     });
     it('honors tiny/shared budgets atomically, returns unused reserve and works with generation disabled', () => {
         const f = fixture(), draft = beginNpcCardEdit(f.settings, f.binding, 'chat');

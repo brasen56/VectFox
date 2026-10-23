@@ -2,7 +2,7 @@
 import { mountNpcCardEditor } from './npc-card-editor.js';
 import { resolveNpcCardBinding, exportNpcCardData, importNpcCardData } from '../core/npc-card-state.js';
 import { npcCardSnapshot } from '../core/npc-cards.js';
-import { continuityBackendNamespace, resolveContinuityScope } from '../core/continuity-scope.js';
+import { continuityBackendNamespace, continuityDeclarations, readStorySoFar, resolveContinuityScope } from '../core/continuity-scope.js';
 const element = (tag, text, parent) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -48,8 +48,12 @@ export async function openNpcCardBrowser(settings, { collectionKey, name = '' } 
         const readContext = () => JSON.stringify([getCurrentChatId(), selector.value, continuityBackendNamespace(key, settings),
             (getContext()?.chat || []).map(m => [m.mes, m.swipe_id])]);
         const contextKey = readContext();
-        const scope = resolveContinuityScope({ namespace, continuityId: collection, collections: [collection], chatId: getCurrentChatId() || 'inspection' });
-        element('p', 'No verified host source-frame mapping: generated current-state assertions remain withheld.', content);
+        const scope = resolveContinuityScope({ namespace, continuityId: collection, collections: [collection], chatId: getCurrentChatId() || 'inspection',
+            ...continuityDeclarations(settings, namespace, collection) });
+        const story = readStorySoFar(settings, namespace, collection);
+        element('p', story
+            ? `Story so far declared (user-declared continuity, not verified): events stored up to ${new Date(story.cutoff).toLocaleString()} can support relationship state. Later events stay withheld until you update the declaration in roster review.`
+            : 'No verified host source-frame mapping: generated current-state assertions remain withheld.', content);
         for (const group of roster.groups.filter(g => [g.name, ...g.aliases].join(' ').toLowerCase().includes(search.value.toLowerCase()))) {
             const snapshot = npcCardSnapshot(roster, group);
             const binding = resolveNpcCardBinding(settings, snapshot, group, namespace);

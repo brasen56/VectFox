@@ -234,7 +234,7 @@ export function getNpcCards({ roster, cast, settings, dryRun = false, complete, 
             const identityRevision = () => JSON.stringify([settings.vector_backend, settings.qdrant_use_cloud, settings.qdrant_url,
                 settings.qdrant_host, settings.qdrant_port, settings.qdrant_multitenancy,
                 settings.eventbase_subject_registries, settings.eventbase_character_alias_overrides,
-                settings.eventbase_declared_continuity]);
+                settings.eventbase_declared_continuity, settings.eventbase_story_so_far]);
             const frozenIdentity = identityRevision();
             const task = refreshQueue.then(async () => {
                 // The queue can outlive a settings change; check before spending a call.

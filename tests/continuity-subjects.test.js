@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolveContinuityScope, continuityEvidenceEligibility, continuityBackendNamespace,
-    isContinuityScopeCurrent } from '../core/continuity-scope.js';
+    isContinuityScopeCurrent, declareStorySoFar, readStorySoFar, removeStorySoFar, continuityDeclarations,
+    eventIngestionTime } from '../core/continuity-scope.js';
 import { subjectRegistryKey, previewSubjectMigration, applySubjectMigration, relationshipPairKey,
     reassignSubjectReference } from '../core/continuity-subjects.js';
 import { migrateNpcCard } from '../core/npc-card-migration.js';
@@ -45,6 +46,63 @@ describe('Phase 4A scope eligibility', () => {
         }
         expect(continuityBackendNamespace('qdrant:events', { qdrant_url: 'one' }))
             .not.toBe(continuityBackendNamespace('qdrant:events', { qdrant_url: 'two' }));
+    });
+});
+
+describe('story-so-far declaration', () => {
+    const declared = (settings, extra = {}) => scope({ frames: [], ...continuityDeclarations(settings, 'backend', 'events'), ...extra });
+    it('freezes at the newest stored ingestion time and revises on update', () => {
+        const settings = {};
+        expect(() => declareStorySoFar(settings, 'backend', 'events', [{ created_at: undefined }])).toThrow('ingestion time');
+        expect(settings).toEqual({});
+        const first = declareStorySoFar(settings, 'backend', 'events',
+            [{ created_at: 100 }, { inserted_at: 300 }, { created_at: '1970-01-01T00:00:00.200Z' }, {}], new Date(0));
+        expect(first).toEqual({ v: 1, cutoff: 300, eventCount: 3, declaredAt: '1970-01-01T00:00:00.000Z', revision: 1 });
+        expect(declareStorySoFar(settings, 'backend', 'events', [{ created_at: 500 }]).revision).toBe(2);
+        expect(readStorySoFar(settings, 'backend', 'events').cutoff).toBe(500);
+        expect(readStorySoFar(settings, 'other backend', 'events')).toBeNull();
+        settings.eventbase_story_so_far[JSON.stringify(['backend', 'events'])].v = 2;
+        expect(readStorySoFar(settings, 'backend', 'events')).toBeNull();
+        expect(eventIngestionTime({ created_at: 'not a date' })).toBeNull();
+    });
+    it('admits stored legacy, sibling and unpositioned events but not later or undated ones', () => {
+        const settings = {};
+        declareStorySoFar(settings, 'backend', 'events', [{ created_at: 100 }]);
+        const s = declared(settings);
+        for (const event of [{ created_at: 50 }, { created_at: 100, source_chat_id: 'sibling', source_window_end: 9000 },
+            { created_at: 100, source_window_end: null }]) {
+            expect(continuityEvidenceEligibility(event, 'events', s)).toMatchObject({ eligible: true,
+                label: 'user-declared continuity', basis: 'story_so_far' });
+        }
+        expect(continuityEvidenceEligibility({ created_at: 101, source_window_end: 3 }, 'events', s))
+            .toEqual({ eligible: false, reason: 'after_declared_story_so_far' });
+        expect(continuityEvidenceEligibility({ source_chat_id: 'active', source_window_end: 3 }, 'events', s))
+            .toEqual({ eligible: false, reason: 'unknown_ingestion_time' });
+        // A later event can still qualify through a verified per-file mapping.
+        const mapped = declared(settings, { frames: [{ collection: 'events', chatId: 'active', frameId: 'expanded-active', horizon: 10 }] });
+        expect(continuityEvidenceEligibility({ created_at: 101, source_chat_id: 'active', source_window_end: 3 }, 'events', mapped).label).toBe('verified');
+        expect(continuityEvidenceEligibility({ created_at: 101, source_chat_id: 'active', source_window_end: 11 }, 'events', mapped).reason).toBe('beyond_horizon');
+    });
+    it('stays inside its own locked collection and backend', () => {
+        const settings = {};
+        declareStorySoFar(settings, 'backend', 'events', [{ created_at: 100 }]);
+        const s = declared(settings, { collections: ['events', 'archive'] });
+        expect(continuityEvidenceEligibility({ created_at: 1, source_window_end: 1 }, 'archive', s).reason).toBe('ambiguous_legacy_source');
+        expect(continuityEvidenceEligibility({ created_at: 1, backend_namespace: 'other' }, 'events', s).reason).toBe('backend_mismatch');
+        expect(continuityEvidenceEligibility({ created_at: 1 }, 'events', declared(settings, { collections: ['archive'] })).reason).toBe('collection_not_locked');
+        expect(continuityDeclarations(settings, 'other backend', 'events').storySoFar).toEqual([]);
+    });
+    it('changes scope identity on declare, update and removal', () => {
+        const settings = {};
+        const none = declared(settings);
+        declareStorySoFar(settings, 'backend', 'events', [{ created_at: 100 }]);
+        const first = declared(settings);
+        expect(isContinuityScopeCurrent(none, () => first)).toBe(false);
+        declareStorySoFar(settings, 'backend', 'events', [{ created_at: 100 }]);
+        expect(isContinuityScopeCurrent(first, () => declared(settings))).toBe(false);
+        removeStorySoFar(settings, 'backend', 'events');
+        expect(declared(settings).key).toBe(none.key);
+        expect(continuityEvidenceEligibility({ created_at: 1, source_window_end: 1 }, 'events', declared(settings)).reason).toBe('ambiguous_legacy_source');
     });
 });
 

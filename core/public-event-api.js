@@ -73,6 +73,7 @@ export function createPublicEventAPI({ readState, loadBackend, querySemantic }) 
             state.settings.qdrant_host, state.settings.qdrant_port, state.settings.qdrant_multitenancy,
             state.settings.eventbase_character_alias_overrides, state.settings.eventbase_character_ignored_tags,
             state.settings.eventbase_subject_registries, state.settings.eventbase_declared_continuity,
+            state.settings.eventbase_story_so_far,
             state.chatRevision ?? [state.chat, state.chatMetadata], state.archiveRevision]);
         if (signature !== previous) {
             previous = signature;

@@ -2,7 +2,8 @@
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
 import { ensureCharacterIndex, getCharacterRoster, getIgnoredCharacterTags, rosterCollectionId } from '../core/character-roster.js';
-import { continuityBackendNamespace, continuityCollectionKey, resolveContinuityScope } from '../core/continuity-scope.js';
+import { continuityBackendNamespace, continuityCollectionKey, resolveContinuityScope, readStorySoFar,
+    declareStorySoFar, removeStorySoFar, eventIngestionTime } from '../core/continuity-scope.js';
 import { subjectRegistryKey, previewSubjectMigration, applySubjectMigration, readSubjectRegistry } from '../core/continuity-subjects.js';
 import { migrateNpcCard } from '../core/npc-card-migration.js';
 import { npcCardSnapshot } from '../core/npc-cards.js';
@@ -46,6 +47,31 @@ export async function openCharacterRosterReview(settings) {
             }).appendTo(declaration);
         declaration.append(document.createTextNode(' User-declared continuity: files sharing this collection are one linear story (not verified).'));
         $('<small>').text('This declaration does not prove branch membership or map source positions. Unmapped evidence remains historical. Stable subject IDs below belong only to this backend and collection.').appendTo(body);
+        const story = readStorySoFar(settings, namespace, id);
+        const storyBox = $('<div>').css({ margin: '8px 0', padding: '6px', border: '1px solid #666' }).appendTo(body);
+        $('<strong>').text('Story so far').appendTo(storyBox);
+        $('<small>').css('display', 'block').text(story
+            ? `Declared ${new Date(story.declaredAt).toLocaleString()}: ${story.eventCount} events stored up to ${new Date(story.cutoff).toLocaleString()} count as one story that happened before now (user-declared continuity, not verified). Events stored later are not included until you update.`
+            : 'Not declared. Events stored here remain history only and cannot support relationship state.').appendTo(storyBox);
+        const storyEvents = roster.events.filter(event => eventIngestionTime(event) !== null);
+        const saveStory = () => {
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+            void render();
+        };
+        $('<button type="button" class="vectfox-btn vectfox-btn-secondary">').text(story ? 'Update to include everything stored now' : 'Declare story so far').on('click', () => {
+            if (!storyEvents.length) { toastr.info('No stored events with an ingestion time to declare.'); return; }
+            const calls = settings.eventbase_npc_state_enabled
+                ? '\n\nRelationship state is on, so this can start model calls: about one per character pair (up to ~6,000 input tokens) when the pair is next in a scene and again when its evidence changes, through the existing card queue.' : '';
+            if (!confirm(`Treat all ${storyEvents.length} events stored in ${id} as one linear story that happened before now?\n\nThey become eligible evidence for relationship state, labelled "user-declared continuity", not verified. Anything already stored from an abandoned branch or discarded swipe is included too. Events stored after this point stay excluded until you update.${calls}`)) return;
+            declareStorySoFar(settings, namespace, id, storyEvents);
+            saveStory();
+        }).appendTo(storyBox);
+        if (story) $('<button type="button" class="vectfox-btn vectfox-btn-secondary">').text('Remove declaration').on('click', () => {
+            if (!confirm('Remove the story-so-far declaration? Generated relationship facts that relied on it will be withheld. Your authored canon is not affected.')) return;
+            removeStorySoFar(settings, namespace, id);
+            saveStory();
+        }).appendTo(storyBox);
         $('<p>').text(`${roster.totalEvents} events · ${roster.groups.length} character groups. Ambiguous names are not automatically merged.`).appendTo(body);
         $('<small>').text('Select groups to merge their names or ignore all their stored spellings. Ignored tags are excluded from this collection’s roster and known-character extraction hints; stored entries stay unchanged.').css('display', 'block').appendTo(body);
         const rows = [];

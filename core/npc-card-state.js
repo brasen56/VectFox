@@ -39,7 +39,7 @@ export function upgradeNpcCard(stored, binding) {
 export function npcEditorRevision(settings, key, contextKey) {
     return JSON.stringify([contextKey, settings.eventbase_npc_cards?.[key] || null,
         settings.eventbase_subject_registries, settings.eventbase_character_alias_overrides,
-        settings.eventbase_declared_continuity]);
+        settings.eventbase_declared_continuity, settings.eventbase_story_so_far]);
 }
 
 export function beginNpcCardEdit(settings, binding, contextKey, legacyKey) {
@@ -244,8 +244,10 @@ export function exportNpcCardData(settings, namespace, collection) {
         const identity = JSON.parse(key);
         return identity[0] === namespace && identity[1] === collection;
     }));
+    const storySoFar = settings.eventbase_story_so_far?.[JSON.stringify([namespace, collection])];
     return { v: 1, namespace, collection, registries: copy(registries),
-        cards: copy(Object.fromEntries(Object.entries(settings.eventbase_npc_cards || {}).filter(([, card]) => card.v >= 3 && registries[card.registryKey]))) };
+        cards: copy(Object.fromEntries(Object.entries(settings.eventbase_npc_cards || {}).filter(([, card]) => card.v >= 3 && registries[card.registryKey]))),
+        ...(storySoFar ? { storySoFar: copy(storySoFar) } : {}) };
 }
 
 export function importNpcCardData(settings, data, namespace, collection) {
@@ -264,6 +266,11 @@ export function importNpcCardData(settings, data, namespace, collection) {
     // Always retain the original package, including conflicting local edits.
     settings.eventbase_npc_card_imports = { ...settings.eventbase_npc_card_imports, [recoveryKey]: copy(data) };
     if (data.namespace !== namespace || data.collection !== collection) return { restored: 0, reviewRequired: true };
+    // A local declaration wins; a malformed one stays only in the retained package.
+    const storyKey = JSON.stringify([namespace, collection]), story = data.storySoFar;
+    if (story?.v === 1 && Number.isFinite(story.cutoff) && Number.isInteger(story.revision) && !settings.eventbase_story_so_far?.[storyKey]) {
+        settings.eventbase_story_so_far = { ...settings.eventbase_story_so_far, [storyKey]: copy(story) };
+    }
     let restored = 0;
     for (const [key, registry] of Object.entries(data.registries)) {
         if (key !== JSON.stringify([namespace, collection]) || registry.v !== 1) throw new Error('NPC registry scope mismatch');

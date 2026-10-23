@@ -70,6 +70,51 @@ Further scope items still requiring follow-up:
   The editor does not require backend annotation writes; metadata-dependent pair
   operations must remain unavailable where source inventory is unsupported.
 
+## Follow-up: story-so-far declaration (2026-10-22)
+
+This makes the §3.1 user-declared continuity fallback work for collections whose
+history has no usable source provenance. The motivating collection has 5,771 events:
+only 143 carry `source_chat_id`, and the text behind about 5,300 of them is no longer
+in any chat file on disk.
+
+- **Control:** roster review has a **Story so far** box with **Declare story so far**,
+  **Update to include everything stored now** and **Remove declaration**.
+  Declaring records the newest ingestion time (`created_at`, falling back to
+  `inserted_at`) among the collection's non-duplicate events. The setting is
+  `eventbase_story_so_far`, keyed per backend and collection:
+  `{ v: 1, cutoff, eventCount, declaredAt, revision }`.
+- **Eligibility:** `continuityEvidenceEligibility` admits any event in that locked
+  collection whose ingestion time is at or before the cutoff. These events are
+  labelled `user-declared continuity` (`basis: 'story_so_far'`), never `verified`.
+  Positions and source chat files are not consulted, because the user asserts the
+  whole set precedes now. Locked-collection and backend checks still apply.
+- **Later events:** events stored after the cutoff are rejected as
+  `after_declared_story_so_far` unless a real per-file frame admits them, and that
+  frame wiring is still unbuilt. Events with no ingestion time are rejected as
+  `unknown_ingestion_time`. A later rewind or branch can therefore never enter the
+  declared set without an explicit **Update**.
+- **Invalidation:** the declaration (cutoff and revision) is part of the scope key,
+  the editor revision, the queued-work identity and the public API signature.
+  Declaring, updating or removing it discards in-flight pair results and rejects
+  stale card saves. After removal, generated pair facts that relied on it are
+  withheld at injection (`source_or_scope_changed`). Authored canon is unaffected.
+- **Portability:** the protected-card package carries the declaration. An
+  exact-scope import restores it only when no local declaration exists.
+- **Cost:** when relationship state is enabled, the declare confirmation warns that
+  pair model calls can start. There is still no per-pair preflight estimate; see
+  the limitations above.
+- **Dry run on the motivating collection** (read-only): 0 of 5,572 non-duplicate
+  events were eligible before declaring. 5,571 were eligible after; the remaining
+  one has no ingestion time.
+
+This settles the labelling half of §10 decision 1 for the no-provenance case,
+pending co-author review. The host-provenance frame for events stored after the
+cutoff is still open.
+
+Validation: `npx vitest run`: 79 files, 1,592 tests passed (7 new, in
+`tests/continuity-subjects.test.js` and `tests/npc-card-state.test.js`). The roster
+review UI has not been exercised in live SillyTavern.
+
 ## Validation
 
 Automated fixtures cover durable edits/suppression/reset, stale saves, source text

@@ -1,5 +1,5 @@
 /** Host-independent assembly. Host frames must be explicit: never infer them from chat length. */
-import { continuityBackendNamespace, resolveContinuityScope } from './continuity-scope.js';
+import { continuityBackendNamespace, continuityDeclarations, resolveContinuityScope } from './continuity-scope.js';
 import { resolveNpcCardBinding } from './npc-card-state.js';
 import { npcCardSnapshot } from './npc-cards.js';
 
@@ -20,8 +20,7 @@ export function buildNpcStateContexts({ settings, roster, cast, collections, cha
         }
         const scope = resolveContinuityScope({ namespace, continuityId: collection.collectionId,
             collections: [collection.collectionId], chatId, frames, aliasRevision: registry.revision,
-            declaredCollections: settings.eventbase_declared_continuity?.[JSON.stringify([namespace, collection.collectionId])]
-                ? [collection.collectionId] : [] });
+            ...continuityDeclarations(settings, namespace, collection.collectionId) });
         contexts.push({ registryKey, scope, snapshots, groups, subjectIds: [...snapshots.keys()] });
     }
     return contexts;

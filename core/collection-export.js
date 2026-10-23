@@ -868,7 +868,8 @@ export async function importCollection(exportData, settings, options = {}) {
         const cardImport = importNpcCardData(settings, exportData.npcCards, continuityBackendNamespace(registryKey, settings), collectionId);
         if (cardImport.reviewRequired) log.warn('[VectFox Import] NPC card package retained; remapped identities/local conflicts require review.');
         Object.assign(extension_settings.vectfox, { eventbase_npc_cards: settings.eventbase_npc_cards,
-            eventbase_subject_registries: settings.eventbase_subject_registries, eventbase_npc_card_imports: settings.eventbase_npc_card_imports });
+            eventbase_subject_registries: settings.eventbase_subject_registries, eventbase_npc_card_imports: settings.eventbase_npc_card_imports,
+            eventbase_story_so_far: settings.eventbase_story_so_far });
         saveSettingsDebounced();
 
         // EventBase imports: rebuild the LOCAL dedup state (auto-sync marker +
@@ -1119,7 +1120,8 @@ async function importCollectionSilent(exportData, settings, options = {}) {
     registerCollection(registryKey);
     importNpcCardData(settings, exportData.npcCards, continuityBackendNamespace(registryKey, settings), collectionId);
     Object.assign(extension_settings.vectfox, { eventbase_npc_cards: settings.eventbase_npc_cards,
-        eventbase_subject_registries: settings.eventbase_subject_registries, eventbase_npc_card_imports: settings.eventbase_npc_card_imports });
+        eventbase_subject_registries: settings.eventbase_subject_registries, eventbase_npc_card_imports: settings.eventbase_npc_card_imports,
+        eventbase_story_so_far: settings.eventbase_story_so_far });
     saveSettingsDebounced();
 
     return {
