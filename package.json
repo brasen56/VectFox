@@ -4,6 +4,7 @@
   "description": "Automated tests for VectFox RAG extension",
   "type": "module",
   "scripts": {
+    "measure:episodes": "node scripts/measure-episode-baseline.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

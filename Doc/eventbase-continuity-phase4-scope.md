@@ -210,6 +210,8 @@ All supported formats and compact fallbacks retain the distinction between canon
 
 Apply Phase 2 resolution links and duplicate marks to the measured collection. Then dry-run the same five representative scenes used for the parent scope's verification. Count how often two or more distinct, non-duplicate records of one incident are injected in the same prompt, and whether any of them shows the incident without its outcome. Implement 4C only if this shows a material problem. Otherwise record the result and leave episodes deferred.
 
+**2026-10-23 tooling update:** Query Tester now exports main/cast dry-run captures, with an offline five-scene human-review report. See [Phase 4C measurement instructions and limits](eventbase-continuity-phase4c-measurement.md). No live baseline or episode grouping is claimed by this update.
+
 ### Scope
 
 - Group records of the same incident, not every disagreement involving the same people. Candidate selection narrows by eligible scope, source overlap/proximity and subject/topic evidence; a model or user must establish nontrivial membership. No automatic connected-component grouping from shared characters alone.

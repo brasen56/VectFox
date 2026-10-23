@@ -1566,6 +1566,7 @@ export function openQueryTestModal() {
                         <i class="fa-solid fa-spinner fa-spin"></i>&nbsp;Running retrieval…
                     </div>
                     <div id="VectFox_qtester_result" style="display:none; flex-direction:column; gap:14px;">
+                        <button id="VectFox_qtester_export_baseline" class="menu_button" disabled>Export Phase 4C measurement JSON</button>
                         <div style="${sectionStyle} border-color:#4a9eff;">
                             <small style="font-weight:bold; color:#4a9eff;">EventBase <span id="VectFox_qtester_meta_eb" style="font-weight:normal; color:var(--SmartThemeQuoteColor,#999);"></span></small>
                             <textarea id="VectFox_qtester_output_eb" readonly rows="8"
@@ -1596,6 +1597,16 @@ export function openQueryTestModal() {
     $('body').append(html);
 
     $('#VectFox_query_tester_modal').on('mousedown touchstart', e => e.stopPropagation());
+    let baselineCapture = null;
+    $('#VectFox_qtester_export_baseline').on('click', () => {
+        if (!baselineCapture) return;
+        const url = URL.createObjectURL(new Blob([JSON.stringify(baselineCapture, null, 2)], { type: 'application/json' }));
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'phase4c-scene-capture.json';
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
     $('#VectFox_qtester_close').on('click', _closeQueryTester);
     $('#VectFox_query_tester_modal').on('click', function (e) {
         if (e.target === this) _closeQueryTester();
@@ -1609,6 +1620,8 @@ export function openQueryTestModal() {
         }
 
         $('#VectFox_qtester_run').prop('disabled', true);
+        baselineCapture = null;
+        $('#VectFox_qtester_export_baseline').prop('disabled', true);
         $('#VectFox_qtester_status').show();
         $('#VectFox_qtester_result').hide().css('display', 'none');
 
@@ -1651,6 +1664,8 @@ export function openQueryTestModal() {
             }
 
             // --- EventBase diagnostics ---
+            baselineCapture = ebResult?.debug?.episodeBaseline || null;
+            $('#VectFox_qtester_export_baseline').prop('disabled', !baselineCapture);
             const diagnostics = formatRetrievalDiagnostics(ebResult?.debug);
             $('#VectFox_qtester_queries_eb').text([diagnostics.queryText, diagnostics.castText].filter(Boolean).join('\n\n'));
             $('#VectFox_qtester_cuts_eb').prop('open', false);

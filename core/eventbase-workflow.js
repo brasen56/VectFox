@@ -30,6 +30,7 @@ import { retrieveEvents } from './eventbase-retrieval.js';
 import { resolveEventBaseOverfetch } from './eventbase-retrieval-settings.js';
 import { retrieveEventsWithAgent } from './agentic-retrieval.js';
 import { eventDebugKey } from './eventbase-retrieval-debug.js';
+import { captureEpisodeBaseline } from './episode-baseline.js';
 import { getCharacterRoster } from './character-roster.js';
 import { getContinuityView } from './continuity.js';
 import { detectSceneCast } from './scene-cast.js';
@@ -1338,6 +1339,14 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
     const mainResult = budgeted.main, castResult = budgeted.cast;
     const mainInjectedEvents = mainResult.events || [];
     const castInjectedEventIds = (castResult.events || []).map(eventDebugKey);
+    if (dryRun) dryRunDebug.episodeBaseline = captureEpisodeBaseline({
+        main: mainInjectedEvents, cast: castResult.events || [], roster, text: budgeted.text,
+        context: { capturedAt: new Date().toISOString(), chatId: currentChatId, testMessage,
+            collections: [...lockedLiveCollections, ...archiveCollections].map(c => c.registryKey),
+            settings: Object.fromEntries(['eventbase_token_budget', 'eventbase_cast_token_budget',
+                'eventbase_resolved_downrank', 'eventbase_injection_format', 'eventbase_npc_cards_enabled',
+                'summarizer_injection_enabled'].map(key => [key, settings[key] ?? null])) },
+    });
     Object.assign(dryRunDebug, { castIndexReady: roster.ready, castPendingCollections: roster.pendingCollections,
         continuity: [...mainInjectedEvents, ...(castResult.events || [])].map(e => ({ event_id: e.event_id,
             ...(e._continuityView || getContinuityView(e, roster)), downranked: !!e._continuityDownranked })),
