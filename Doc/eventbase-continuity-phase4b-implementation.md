@@ -157,6 +157,41 @@ Validation: `npx vitest run`: 79 files, 1,596 tests passed. A static preview wit
 synthetic data was checked at desktop and phone widths. The window has not been
 exercised in live SillyTavern.
 
+### Roster clean-up suggestions (2026-10-22)
+
+Two more chips in the character list help clean up a noisy roster. Both compare
+spellings only (no model calls), and nothing changes until the user clicks and confirms.
+The matching is in `core/character-cleanup.js`, which is host-independent.
+
+- **Possible duplicates:** groups of spellings that are probably one person:
+  - case, Latin-accent, title, hyphenated Japanese honorific and punctuation variants
+    ("Hiro" / "Hiro-kun");
+  - small typos, by edit distance on longer names ("Brennan" / "Brenan"). Typo matches
+    are skipped when the two spellings appear in the same event;
+  - short forms of one full name ("Howard" / "Howard Brennan"). A short name that fits
+    several full names is offered once per option, with a warning.
+  Each suggestion lists its names with event counts, all ticked. **Merge** confirms,
+  then writes `eventbase_character_alias_overrides` through the same path as bulk
+  Merge, so hidden ignored spellings stay with their group. Unticked names stay
+  separate and are remembered as not the same. With character IDs set up, the confirm
+  includes the step 2 warning, and step 2 then shows the pending change.
+  **Not the same** stores the spelling pairs in `eventbase_character_cleanup_dismissed`
+  for that collection. A dismissed pair also keeps the two groups apart through a third
+  similar name.
+- **Generic roles:** groups whose every spelling looks like an unnamed role: a job or
+  role word with no proper-name word ("nurse", "Delivery Driver", "Head Nurse"),
+  an article or possessive with a description ("the old man"), or no capital letters
+  at all. The list starts unticked, with **Select all**. Ignoring confirms first and
+  uses `eventbase_character_ignored_tags`. **Keep** removes a name from the list for
+  that collection. Kept names take part in duplicate matching again.
+
+Both views can show dismissed suggestions again after a confirm.
+`tests/character-cleanup.test.js` (14 tests) covers the matcher, and six new tests in
+`tests/character-cards-window.test.js` cover the views.
+
+Validation: `npx vitest run`: 80 files, 1,616 tests passed. Not yet tried on the live
+453-name collection.
+
 ## Validation
 
 Automated fixtures cover durable edits/suppression/reset, stale saves, source text

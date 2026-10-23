@@ -258,7 +258,7 @@ All defaults as written in `index.js` / bound in `ui-manager.js` (lazy `??=` mig
 | Scene cast | `eventbase_cast_sticky_messages` / `_max_characters` / `_token_budget` | 30 / 3 / 700 |
 | NPC cards | `eventbase_npc_cards_enabled` / `eventbase_npc_card_min_events` / `eventbase_npc_card_tokens` (storage: `eventbase_npc_cards`) | false / 30 / 350 |
 | Continuity | `eventbase_resolved_downrank` / `eventbase_open_issues_max` | 0.85 / 6 |
-| Roster | `eventbase_lead_share_threshold` / `eventbase_lead_min_events` / `eventbase_known_characters_limit` / `eventbase_known_characters_max_chars` / `eventbase_character_alias_overrides` / `eventbase_character_ignored_tags` | 0.25 / 20 / 40 / 4000 / {} / {} |
+| Roster | `eventbase_lead_share_threshold` / `eventbase_lead_min_events` / `eventbase_known_characters_limit` / `eventbase_known_characters_max_chars` / `eventbase_character_alias_overrides` / `eventbase_character_ignored_tags` / `eventbase_character_cleanup_dismissed` | 0.25 / 20 / 40 / 4000 / {} / {} / {} |
 | Extraction | `eventbase_extraction_profile` / `eventbase_capture_knowledge` | `story` / **true** |
 | Retrieval | `eventbase_retrieval_overfetch` / `eventbase_recency_source` / `agentic_importance_hard_filter` | 40 / `index` / **false** |
 | Cross-encoder | `eventbase_cross_encoder_enabled` / `_api_url` / `_api_key` / `_model` / `_max_documents` / `_timeout_ms` | false / '' / '' / '' / 50 / 10000 |

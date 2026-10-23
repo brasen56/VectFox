@@ -209,6 +209,37 @@
     background: color-mix(in srgb, var(--vectfox-warning) 25%, transparent);
 }
 
+/* Possible duplicates: one box per suggestion, its names ticked for merging by default. */
+.vf-cc-suggestion {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 80%, transparent);
+    border-radius: 8px;
+}
+
+.vf-cc-suggestion .vf-cc-actions {
+    margin-top: 4px;
+}
+
+.vf-cc-suggestion .vectfox-btn {
+    padding: 3px 10px;
+    font-size: 0.8em;
+}
+
+.vf-cc-why {
+    font-size: 0.78em;
+    opacity: 0.75;
+    overflow-wrap: anywhere;
+}
+
+.vf-cc-why-warn {
+    color: var(--vectfox-warning);
+    opacity: 1;
+}
+
 .vf-cc-bulk {
     display: flex;
     flex-wrap: wrap;

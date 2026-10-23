@@ -13,7 +13,7 @@ const { subjectCardKey } = await import('../core/npc-card-state.js');
 const COLLECTION = 'events';
 const event = (id, characters, i) => ({ event_id: id, summary: `Summary ${id}`, characters, source_window_end: i, created_at: 1000 + i });
 
-function setup({ legacyCard = false } = {}) {
+function setup({ legacyCard = false, extra = [], settings: saved = null } = {}) {
     document.body.replaceChildren();
     const root = document.createElement('div');
     document.body.append(root);
@@ -22,8 +22,9 @@ function setup({ legacyCard = false } = {}) {
         ...Array.from({ length: 35 }, (_, i) => event(`b${i}`, ['Brennan', 'Alex'], 100 + i)),
         event('d0', ['Derek'], 200), event('h0', ['Hiro-kun'], 201),
         event('x0', ['<img src=x onerror=alert(1)>'], 202),
+        ...extra,
     ];
-    const settings = { eventbase_npc_cards_enabled: false, eventbase_npc_cards: {} };
+    const settings = saved || { eventbase_npc_cards_enabled: false, eventbase_npc_cards: {} };
     const context = { value: 'chat' };
     const deps = {
         ensureIndex: vi.fn(async () => ({ ready: true })),
@@ -67,6 +68,14 @@ const addCanon = (value, pair = '') => {
 };
 const subjectId = (f, name) => f.settings.eventbase_subject_registries[f.identityKey].subjects.find(s => s.name === name).id;
 const card = (f, name) => f.settings.eventbase_npc_cards[subjectCardKey(f.identityKey, subjectId(f, name))];
+// Typos of Brennan, plus unnamed roles beside the fixture's own Hiro-kun variant and junk tag.
+const cleanupEvents = [
+    event('t0', ['Brenan'], 300), event('t1', ['Brenan'], 301), event('t2', ['Brennen'], 302),
+    event('n0', ['nurse', 'Alex'], 303), event('n1', ['nurse'], 304), event('v0', ['Delivery Driver'], 305),
+];
+const suggestion = name => [...document.querySelectorAll('.vf-cc-suggestion')].find(box => [...box.querySelectorAll('.vf-cc-name')].some(n => n.textContent === name));
+const listed = parent => [...parent.querySelectorAll('.vf-cc-row')].map(r => [r.querySelector('.vf-cc-name').textContent, r.querySelector('.vf-cc-count').textContent]);
+const lastConfirm = f => f.deps.confirm.mock.calls.at(-1)[0];
 
 describe('Characters and NPC cards window', () => {
     it('opens without model calls or writes, filters the list and renders untrusted names as text', async () => {
@@ -180,6 +189,121 @@ describe('Characters and NPC cards window', () => {
         click('Ignored 1');
         click('Restore');
         expect(f.settings.eventbase_character_ignored_tags[COLLECTION]).toEqual([]);
+    });
+
+    it('suggests possible duplicates and generic roles with event counts, without writing anything', async () => {
+        const f = setup({ extra: cleanupEvents }), before = structuredClone(f.settings);
+        await f.ready;
+        click('Possible duplicates 2');
+        expect(text()).toContain('"Brennan" and "Brenan" are 1 letter apart');
+        expect(text()).toContain('"Hiro" and "Hiro-kun" differ only in case, accents, titles or punctuation');
+        expect(listed(suggestion('Brenan'))).toEqual([['Brennan', '35'], ['Brenan', '2'], ['Brennen', '1']]);
+        expect([...suggestion('Brenan').querySelectorAll('input')].every(input => input.checked)).toBe(true);
+        click('Generic roles 3');
+        expect(listed(document.querySelector('.vf-cc-items'))).toEqual([['nurse', '2'], ['Delivery Driver', '1'], ['<img src=x onerror=alert(1)>', '1']]);
+        expect([...document.querySelectorAll('.vf-cc-items input')].some(input => input.checked)).toBe(false);
+        expect(document.querySelector('img,script')).toBeNull();
+        expect(f.settings).toEqual(before);
+        expect(f.deps.save).not.toHaveBeenCalled();
+        expect(f.deps.confirm).not.toHaveBeenCalled();
+    });
+
+    it('merges an accepted suggestion through the alias overrides only after confirming', async () => {
+        const f = setup({ extra: cleanupEvents });
+        await f.ready;
+        click('Possible duplicates 2');
+        f.deps.confirm.mockReturnValueOnce(false);
+        click('Merge Brennan, Brenan, Brennen');
+        expect(f.settings.eventbase_character_alias_overrides).toBeUndefined();
+        expect(f.deps.save).not.toHaveBeenCalled();
+        document.querySelector('[aria-label="Include Brennen"]').click();
+        click('Merge Brennan, Brenan, Brennen');
+        expect(lastConfirm(f)).toContain('Merge Brennan, Brenan into one character, Brennan?');
+        expect(lastConfirm(f)).toContain("Brennen will stay separate and won't be suggested with them again.");
+        const overrides = f.settings.eventbase_character_alias_overrides[COLLECTION];
+        expect(overrides.find(g => g.aliases.includes('Brenan'))).toEqual({ name: 'Brennan', aliases: ['Brennan', 'Brenan'] });
+        expect(overrides.find(g => g.aliases.includes('Brennen')).aliases).toEqual(['Brennen']);
+        expect(f.settings.eventbase_character_cleanup_dismissed[COLLECTION].pairs).toEqual([['Brennan', 'Brennen']]);
+        expect(f.deps.save).toHaveBeenCalledTimes(1);
+        expect(text()).toContain('Possible duplicates 1');
+        expect(suggestion('Brennen')).toBeUndefined();
+        expect(suggestion('Hiro-kun')).toBeTruthy();
+    });
+
+    it('keeps an ignored spelling with its group when a suggestion is merged', async () => {
+        const f = setup({ extra: [...cleanupEvents, event('r0', ['Bren'], 306)] });
+        f.settings.eventbase_character_alias_overrides = { [COLLECTION]: [{ name: 'Brennan', aliases: ['Brennan', 'Bren'] }] };
+        f.settings.eventbase_character_ignored_tags = { [COLLECTION]: ['Bren'] };
+        await f.ready;
+        click('Possible duplicates 2');
+        document.querySelector('[aria-label="Include Brennen"]').click();
+        click('Merge Brennan, Brenan, Brennen');
+        const merged = f.settings.eventbase_character_alias_overrides[COLLECTION].find(g => g.aliases.includes('Brenan'));
+        expect(merged.aliases.sort()).toEqual(['Bren', 'Brenan', 'Brennan']);
+    });
+
+    it('remembers dismissed suggestions per collection until asked to show them again', async () => {
+        const f = setup({ extra: cleanupEvents });
+        await f.ready;
+        click('Possible duplicates 2');
+        click('Not the same: Hiro, Hiro-kun');
+        expect(f.settings.eventbase_character_cleanup_dismissed).toEqual({ [COLLECTION]: { pairs: [['Hiro', 'Hiro-kun']], roles: [] } });
+        expect(f.settings.eventbase_character_alias_overrides).toBeUndefined();
+        expect(f.deps.save).toHaveBeenCalledTimes(1);
+        expect(suggestion('Hiro-kun')).toBeUndefined();
+
+        const reopened = setup({ extra: cleanupEvents, settings: structuredClone(f.settings) });
+        await reopened.ready;
+        click('Possible duplicates 1');
+        expect(suggestion('Hiro-kun')).toBeUndefined();
+        reopened.deps.confirm.mockReturnValueOnce(false);
+        click('Show dismissed suggestions again');
+        expect(reopened.settings.eventbase_character_cleanup_dismissed[COLLECTION].pairs).toHaveLength(1);
+        click('Show dismissed suggestions again');
+        expect(reopened.settings.eventbase_character_cleanup_dismissed[COLLECTION].pairs).toEqual([]);
+        expect(text()).toContain('Possible duplicates 2');
+
+        const elsewhere = setup({ extra: cleanupEvents, settings: { eventbase_character_cleanup_dismissed: { other: { pairs: [['Hiro', 'Hiro-kun']] } } } });
+        await elsewhere.ready;
+        expect(findButton('Possible duplicates 2')).toBeTruthy();
+    });
+
+    it('reviews generic role names, keeps some and ignores the ticked ones after confirming', async () => {
+        const f = setup({ extra: cleanupEvents });
+        await f.ready;
+        click('Generic roles 3');
+        click('Keep <img src=x onerror=alert(1)>');
+        expect(f.settings.eventbase_character_cleanup_dismissed[COLLECTION].roles).toEqual(['<img src=x onerror=alert(1)>']);
+        expect(text()).toContain('Generic roles 2');
+        click('Select all 2');
+        f.deps.confirm.mockReturnValueOnce(false);
+        click('Ignore');
+        expect(f.settings.eventbase_character_ignored_tags).toBeUndefined();
+        click('Ignore');
+        expect(lastConfirm(f)).toContain('Ignore nurse, Delivery Driver?');
+        expect(f.settings.eventbase_character_ignored_tags[COLLECTION]).toEqual(['nurse', 'Delivery Driver']);
+        expect(text()).toContain('Ignored 2');
+        expect(text()).toContain('No more role names to review.');
+        click('Suggest kept names as roles again');
+        expect(f.settings.eventbase_character_cleanup_dismissed[COLLECTION].roles).toEqual([]);
+        expect(text()).toContain('Generic roles 1');
+    });
+
+    it('shows the pending ID change in step 2 after accepting a merge, with one confirmation', async () => {
+        const f = setup({ extra: cleanupEvents });
+        await f.ready;
+        click('Set up 10 characters');
+        click('Apply IDs');
+        expect(text()).toContain('Character IDs ready');
+        click('Possible duplicates 2');
+        f.deps.confirm.mockClear();
+        click('Merge Hiro, Hiro-kun');
+        expect(f.deps.confirm).toHaveBeenCalledTimes(1);
+        expect(lastConfirm(f)).toContain('updating character IDs (step 2)');
+        expect(text()).toContain('Update character IDs');
+        expect(text()).toContain('1 name change to apply');
+        click('Review 1 change');
+        expect(text()).toContain('Merged characters: choose which existing ID to keep');
     });
 
     it('declares and removes the story so far and toggles prompt injection', async () => {

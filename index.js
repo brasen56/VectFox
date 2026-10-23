@@ -368,6 +368,7 @@ const defaultSettings = {
     eventbase_declared_continuity: {},            // Backend-qualified, explicit linear-story declarations
     eventbase_story_so_far: {},                   // Frozen "stored events are one story before now" declarations
     eventbase_character_ignored_tags: {},          // Per-collection reversible roster exclusions
+    eventbase_character_cleanup_dismissed: {},     // Per-collection dismissed duplicate pairs and kept role names
     // Re-rank weights (sum is normalized to 1.0 at runtime)
     eventbase_rerank_w_cosine: 0.55,
     eventbase_rerank_w_importance: 0.20,

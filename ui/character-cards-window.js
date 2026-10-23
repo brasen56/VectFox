@@ -10,8 +10,15 @@ import { npcCardSnapshot } from '../core/npc-cards.js';
 import { subjectCardKey, resolveNpcCardBinding, beginNpcCardEdit, editNpcCardFact, saveNpcCardEdit, inspectNpcCard,
     formatNpcState, exportNpcCardData, importNpcCardData } from '../core/npc-card-state.js';
 import { estimateCastTokens } from '../core/eventbase-injection.js';
+import { suggestRosterCleanup, readCleanupDismissals, separationPairs } from '../core/character-cleanup.js';
 
 const LIST_PAGE = 100;
+const ID_CHANGE_WARNING = 'Changing spellings means updating character IDs (step 2) before affected cards can be edited again.';
+const ROLE_REASONS = {
+    role: ['role word', 'Looks like a job or role, not a name'],
+    article: ['description', 'Starts with "the", "a" or a possessive, so it describes someone rather than naming them'],
+    lowercase: ['no capitals', 'Written without capital letters, so probably not a name'],
+};
 
 const element = (tag, text, parent, className) => {
     const node = document.createElement(tag);
@@ -37,10 +44,17 @@ const aliasKey = aliases => JSON.stringify([...aliases].sort());
 const sameAliases = (a, b) => a.length === b.length && a.every(alias => b.includes(alias));
 const formatDate = time => new Date(time).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 const plural = (count, word) => `${count.toLocaleString()} ${word}${count === 1 ? '' : 's'}`;
+const listNames = groups => {
+    const names = groups.map(group => group.name);
+    return names.length > 10 ? `${names.slice(0, 10).join(', ')} and ${(names.length - 10).toLocaleString()} more` : names.join(', ');
+};
+const describeLink = link => link.kind === 'variant' ? `"${link.a}" and "${link.b}" differ only in case, accents, titles or punctuation`
+    : link.kind === 'typo' ? `"${link.a}" and "${link.b}" are ${plural(link.distance, 'letter')} apart`
+        : `"${link.a}" is part of "${link.b}"`;
 
 export function mountCharacterCardsWindow({ root, settings, collections, deps }) {
-    const state = { key: collections[0]?.registryKey || null, filter: 'frequent', checked: new Set(), selected: null,
-        view: 'card', limit: LIST_PAGE, draft: null, editing: null, prefill: null, ctx: null };
+    const state = { key: collections[0]?.registryKey || null, filter: 'frequent', checked: new Set(), unticked: new Set(),
+        selected: null, view: 'card', limit: LIST_PAGE, draft: null, editing: null, prefill: null, ctx: null };
     let generation = 0;
     root.classList.add('vf-cc');
     root.replaceChildren();
@@ -85,7 +99,7 @@ export function mountCharacterCardsWindow({ root, settings, collections, deps })
         const id = deps.collectionId(state.key);
         const namespace = continuityBackendNamespace(state.key, settings);
         return { id, namespace, identityKey: subjectRegistryKey(namespace, id), roster: deps.getRoster([id], settings),
-            ignoredTags: deps.ignoredTags(id, settings), snapshots: new Map() };
+            ignoredTags: deps.ignoredTags(id, settings), snapshots: new Map(), cleanup: null };
     };
     const load = async () => {
         const token = ++generation;
@@ -206,11 +220,11 @@ export function mountCharacterCardsWindow({ root, settings, collections, deps })
     };
 
     // ------------------------------------------------------------ character list
-    const persistGroups = (next, { aliasChange = true } = {}) => {
-        if (aliasChange && registry().subjects.length
-            && !deps.confirm('Changing spellings means updating character IDs (step 2) before affected cards can be edited again. Continue?')) return false;
+    const persistGroups = (next, { aliasChange = true, confirmed = false } = {}) => {
+        if (aliasChange && !confirmed && registry().subjects.length && !deps.confirm(`${ID_CHANGE_WARNING} Continue?`)) return false;
         settings.eventbase_character_alias_overrides = { ...settings.eventbase_character_alias_overrides, [state.ctx.id]: next };
         state.checked.clear();
+        state.unticked.clear();
         refreshRoster();
         return true;
     };
@@ -234,17 +248,130 @@ export function mountCharacterCardsWindow({ root, settings, collections, deps })
         return next;
     };
     const visibleAliases = group => group.aliases.filter(alias => !state.ctx.ignoredTags.includes(alias));
+    // Merges groups (keys of their visible spellings) into one manual group; hidden ignored
+    // spellings stay with it. Used by bulk Merge and by accepted duplicate suggestions.
+    const mergeGroups = (keys, { name, confirmed = false } = {}) => {
+        const all = currentGroups();
+        const picked = all.filter(group => keys.has(aliasKey(visibleAliases(group))));
+        const merged = { name: name || picked[0].name, aliases: [...new Set(picked.flatMap(group => group.aliases))] };
+        const anchor = visibleAliases(picked[0])[0];
+        if (!persistGroups([...all.filter(group => !picked.includes(group)), merged], { confirmed })) return null;
+        resetDraft();
+        state.selected = aliasKey(groups().find(group => group.aliases.includes(anchor))?.aliases || []);
+        return merged;
+    };
     const threshold = () => Math.max(1, Number(settings.eventbase_npc_card_min_events) || 30);
+
+    // Clean-up suggestions compare spellings only. They are worked out once per roster and
+    // change nothing until the user merges, ignores or dismisses one.
+    const dismissals = () => readCleanupDismissals(settings.eventbase_character_cleanup_dismissed?.[state.ctx.id]);
+    const persistDismissals = next => {
+        settings.eventbase_character_cleanup_dismissed = { ...settings.eventbase_character_cleanup_dismissed, [state.ctx.id]: readCleanupDismissals(next) };
+        state.ctx.cleanup = null;
+    };
+    const cleanup = () => (state.ctx.cleanup ||= suggestRosterCleanup(groups(), dismissals()));
+    const tickKey = (suggestion, group) => JSON.stringify([suggestion.key, aliasKey(group.aliases)]);
+    const acceptSuggestion = suggestion => {
+        const ticked = suggestion.groups.filter(group => !state.unticked.has(tickKey(suggestion, group)));
+        const left = suggestion.groups.filter(group => !ticked.includes(group));
+        if (ticked.length < 2) { notify('Tick at least two names to merge.'); return; }
+        if (!discardOk()) return;
+        const name = ticked[0].name;
+        if (!deps.confirm([`Merge ${listNames(ticked)} into one character, ${name}?`,
+            left.length ? `${listNames(left)} will stay separate and won't be suggested with them again.` : '',
+            registry().subjects.length ? ID_CHANGE_WARNING : '',
+            'Stored events are unchanged. You can split them again from Names.'].filter(Boolean).join('\n\n'))) return;
+        const merged = mergeGroups(new Set(ticked.map(group => aliasKey(group.aliases))), { name, confirmed: true });
+        if (!merged) return;
+        if (left.length) {
+            const current = dismissals();
+            persistDismissals({ ...current, pairs: [...current.pairs, ...separationPairs(ticked.slice(0, 1), left)] });
+        }
+        commit(`Merged into ${merged.name}.`);
+        renderAll();
+    };
+    const dismissSuggestion = suggestion => {
+        const current = dismissals();
+        persistDismissals({ ...current, pairs: [...current.pairs, ...separationPairs(suggestion.groups)] });
+        commit(`${listNames(suggestion.groups)} won't be suggested as one character again.`);
+        renderList();
+    };
+    const keepName = group => {
+        const current = dismissals();
+        persistDismissals({ ...current, roles: [...current.roles, ...group.aliases] });
+        state.checked.delete(aliasKey(group.aliases));
+        commit(`Kept ${group.name}. It won't be suggested as a role again.`);
+        renderList();
+    };
+    const restoreDismissed = (field, question) => {
+        if (!deps.confirm(question)) return;
+        persistDismissals({ ...dismissals(), [field]: [] });
+        commit('Dismissed suggestions are shown again.');
+        renderList();
+    };
+
+    const renderRow = (parent, group, subjects, checked, label, onCheck, badge = null) => {
+        const row = element('div', undefined, parent, `vf-cc-row${state.selected === aliasKey(group.aliases) ? ' vf-cc-selected' : ''}`);
+        const check = element('input', undefined, row);
+        check.type = 'checkbox';
+        check.checked = checked;
+        check.setAttribute('aria-label', label);
+        check.addEventListener('change', () => onCheck(check.checked));
+        const name = button(group.name, row, () => select(group), 'vf-cc-name');
+        if (group.aliases.length > 1) {
+            name.title = `Also: ${group.aliases.filter(a => a !== group.name).join(', ')}`;
+            name.setAttribute('aria-label', group.name);
+        }
+        if (hasCard(group, subjects)) element('i', undefined, row, 'fa-solid fa-id-card vf-cc-card-icon').setAttribute('aria-label', 'Has card');
+        if (group.isLead) element('span', 'Lead', row, 'vf-cc-badge');
+        if (badge) element('span', badge[0], row, 'vf-cc-badge').title = badge[1];
+        element('span', group.eventCount.toLocaleString(), row, 'vf-cc-count');
+        return row;
+    };
+    const showMore = remaining => {
+        if (remaining > 0) button(`Show ${Math.min(LIST_PAGE, remaining)} more of ${remaining}`, items,
+            () => { state.limit += LIST_PAGE; renderList(); }, 'vf-cc-link');
+    };
+    const renderDuplicates = (duplicates, query, subjects) => {
+        element('p', 'Spellings that may be one person, found by comparing names only (no model calls). Nothing changes until you merge.', items, 'vf-cc-muted');
+        const shown = duplicates.filter(suggestion => suggestion.groups.some(group => [group.name, ...group.aliases].join(' ').toLowerCase().includes(query)));
+        if (!shown.length) element('p', query ? 'No suggestions match that search.' : 'No more suggestions.', items, 'vf-cc-muted');
+        for (const suggestion of shown.slice(0, state.limit)) {
+            const box = element('div', undefined, items, 'vf-cc-suggestion');
+            for (const link of suggestion.links.slice(0, 3)) element('div', describeLink(link), box, 'vf-cc-why');
+            if (suggestion.links.length > 3) element('div', `…and ${(suggestion.links.length - 3).toLocaleString()} more`, box, 'vf-cc-why');
+            if (suggestion.ambiguous) element('div', `Also part of ${suggestion.alsoMatches.join(', ')}. Merge only if this is the same person.`, box, 'vf-cc-why vf-cc-why-warn');
+            for (const group of suggestion.groups) {
+                const tick = tickKey(suggestion, group);
+                renderRow(box, group, subjects, !state.unticked.has(tick), `Include ${group.name}`, on => {
+                    if (on) state.unticked.delete(tick); else state.unticked.add(tick);
+                });
+            }
+            const actions = element('div', undefined, box, 'vf-cc-actions');
+            const names = listNames(suggestion.groups);
+            button('Merge', actions, () => acceptSuggestion(suggestion), 'vectfox-btn vectfox-btn-primary').setAttribute('aria-label', `Merge ${names}`);
+            button('Not the same', actions, () => dismissSuggestion(suggestion)).setAttribute('aria-label', `Not the same: ${names}`);
+        }
+        showMore(shown.length - state.limit);
+        if (dismissals().pairs.length) {
+            button('Show dismissed suggestions again', items, () => restoreDismissed('pairs', 'Show every duplicate suggestion you dismissed again?'), 'vf-cc-link');
+        }
+    };
+
     const renderList = () => {
         chips.replaceChildren();
         items.replaceChildren();
         bulk.replaceChildren();
         const subjects = new Map(registry().subjects.filter(s => !s.retired).map(s => [aliasKey(s.aliases), s]));
         const ignored = state.ctx.ignoredTags;
+        const { duplicates, roles } = cleanup();
+        const roleReasons = new Map(roles.map(candidate => [aliasKey(candidate.group.aliases), candidate.reason]));
         const filters = [
             ['frequent', `${threshold()}+ events`, group => group.eventCount >= threshold()],
             ['cards', 'Has card', group => hasCard(group, subjects)],
             ['all', `All ${groups().length}`, () => true],
+            ...(duplicates.length || state.filter === 'duplicates' ? [['duplicates', `Possible duplicates ${duplicates.length}`, () => false]] : []),
+            ...(roles.length || state.filter === 'roles' ? [['roles', `Generic roles ${roles.length}`, group => roleReasons.has(aliasKey(group.aliases))]] : []),
             ...(ignored.length ? [['ignored', `Ignored ${ignored.length}`, () => false]] : []),
         ];
         if (!filters.some(([id]) => id === state.filter)) state.filter = 'frequent';
@@ -262,56 +389,50 @@ export function mountCharacterCardsWindow({ root, settings, collections, deps })
             button('Restore all ignored names', bulk, () => { persistIgnored([]); commit('Restored all ignored names.'); renderAll(); }, 'vf-cc-link');
             return;
         }
+        if (state.filter === 'duplicates') { renderDuplicates(duplicates, query, subjects); return; }
         const matches = filters.find(([id]) => id === state.filter)[2];
         const shown = groups().filter(group => matches(group)
             && [group.name, ...group.aliases].join(' ').toLowerCase().includes(query));
-        if (!shown.length) element('p', query ? 'No characters match that search.' : 'No characters in this view.', items, 'vf-cc-muted');
+        const reviewingRoles = state.filter === 'roles';
+        if (reviewingRoles) {
+            element('p', 'Names that look like unnamed roles or generic words, judged from the spelling alone. Tick the ones to ignore. Stored events are unchanged, and Ignored can restore them.', items, 'vf-cc-muted');
+            if (shown.length) button(`Select all ${shown.length.toLocaleString()}`, items, () => {
+                for (const group of shown) state.checked.add(aliasKey(group.aliases));
+                renderList();
+            }, 'vf-cc-link');
+        }
+        if (!shown.length) element('p', query ? 'No characters match that search.' : reviewingRoles ? 'No more role names to review.' : 'No characters in this view.', items, 'vf-cc-muted');
         for (const group of shown.slice(0, state.limit)) {
             const key = aliasKey(group.aliases);
-            const row = element('div', undefined, items, `vf-cc-row${state.selected === key ? ' vf-cc-selected' : ''}`);
-            const check = element('input', undefined, row);
-            check.type = 'checkbox';
-            check.checked = state.checked.has(key);
-            check.setAttribute('aria-label', `Select ${group.name}`);
-            check.addEventListener('change', () => {
-                if (check.checked) state.checked.add(key); else state.checked.delete(key);
+            const reason = reviewingRoles ? ROLE_REASONS[roleReasons.get(key)] : null;
+            const row = renderRow(items, group, subjects, state.checked.has(key), `Select ${group.name}`, on => {
+                if (on) state.checked.add(key); else state.checked.delete(key);
                 renderBulk();
-            });
-            const name = button(group.name, row, () => select(group), 'vf-cc-name');
-            if (group.aliases.length > 1) {
-                name.title = `Also: ${group.aliases.filter(a => a !== group.name).join(', ')}`;
-                name.setAttribute('aria-label', group.name);
-            }
-            if (hasCard(group, subjects)) element('i', undefined, row, 'fa-solid fa-id-card vf-cc-card-icon').setAttribute('aria-label', 'Has card');
-            if (group.isLead) element('span', 'Lead', row, 'vf-cc-badge');
-            element('span', group.eventCount.toLocaleString(), row, 'vf-cc-count');
+            }, reason);
+            if (reason) button('Keep', row, () => keepName(group), 'vf-cc-link').setAttribute('aria-label', `Keep ${group.name}`);
         }
-        if (shown.length > state.limit) {
-            button(`Show ${Math.min(LIST_PAGE, shown.length - state.limit)} more of ${shown.length - state.limit}`, items,
-                () => { state.limit += LIST_PAGE; renderList(); }, 'vf-cc-link');
+        showMore(shown.length - state.limit);
+        if (reviewingRoles && dismissals().roles.length) {
+            button('Suggest kept names as roles again', items, () => restoreDismissed('roles', 'Suggest the names you kept as possible roles again?'), 'vf-cc-link');
         }
         renderBulk();
     };
     const renderBulk = () => {
         bulk.replaceChildren();
-        if (!state.checked.size || state.filter === 'ignored') return;
+        if (!state.checked.size || ['ignored', 'duplicates'].includes(state.filter)) return;
         element('span', `${state.checked.size} selected`, bulk, 'vf-cc-muted');
         button('Merge', bulk, () => {
             if (state.checked.size < 2) { notify('Select at least two characters to merge.'); return; }
             if (!discardOk()) return;
-            const all = currentGroups();
-            const picked = all.filter(group => state.checked.has(aliasKey(visibleAliases(group))));
-            const merged = { name: picked[0].name, aliases: [...new Set(picked.flatMap(group => group.aliases))] };
-            const anchor = visibleAliases(picked[0])[0];
-            if (!persistGroups([...all.filter(group => !picked.includes(group)), merged])) return;
-            resetDraft();
-            state.selected = aliasKey(groups().find(group => group.aliases.includes(anchor))?.aliases || []);
+            const merged = mergeGroups(state.checked);
+            if (!merged) return;
             commit(`Merged into ${merged.name}.`);
             renderAll();
         });
         button('Ignore', bulk, () => {
             if (!discardOk()) return;
             const chosen = groups().filter(group => state.checked.has(aliasKey(group.aliases)));
+            if (state.filter === 'roles' && !deps.confirm(`Ignore ${listNames(chosen)}?\n\nIgnored names leave the character roster. Stored events are unchanged, and you can restore them from Ignored.`)) return;
             persistIgnored([...state.ctx.ignoredTags, ...chosen.flatMap(group => group.aliases)]);
             if (chosen.some(group => aliasKey(group.aliases) === state.selected)) { state.selected = null; resetDraft(); }
             commit(`Ignored ${plural(chosen.length, 'character')}. Stored events are unchanged.`);

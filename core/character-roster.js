@@ -4,6 +4,7 @@ import { log } from './log.js';
 import { buildResolvedBy, isActiveDuplicate } from './continuity.js';
 import { continuityBackendNamespace } from './continuity-scope.js';
 import { subjectRegistryKey } from './continuity-subjects.js';
+import { HONORIFICS } from './character-cleanup.js';
 
 export const CHARACTER_ROSTER_DEFAULTS = Object.freeze({
     eventbase_lead_share_threshold: 0.25,
@@ -17,7 +18,6 @@ let archiveRevision = 0;
 export function getEventArchiveRevision() { return archiveRevision; }
 // The current listing API scans the collection before slicing offset/limit.
 const LIST_LIMIT = Number.MAX_SAFE_INTEGER;
-const HONORIFICS = /^(?:(?:mr|mrs|ms|miss|dr|prof|sir|lady|lord|captain|capt|officer|judge|doctor|professor)\.?\s+)+/i;
 const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u;
 
 export function rosterCollectionId(id) {
