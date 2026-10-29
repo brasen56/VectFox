@@ -1180,7 +1180,7 @@ export function renderSettings(containerId, settings, callbacks) {
 
                             <div class="vectfox-form-group">
                                 <label class="vectfox-label">Max Events per Window <span id="VectFox_eventbase_max_events_per_window_val">3</span></label>
-                                <input type="range" id="VectFox_eventbase_max_events_per_window" min="1" max="10" step="1" class="vectfox-slider" />
+                                <input type="range" id="VectFox_eventbase_max_events_per_window" min="1" max="20" step="1" class="vectfox-slider" />
                                 <small class="VectFox_hint">Hard cap per LLM call. AI is instructed to return fewer (or zero) for filler / 日常 nichijou / non-narrative scenes.</small>
                             </div>
 

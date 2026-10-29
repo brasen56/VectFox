@@ -1010,6 +1010,7 @@ const _SLICE_OF_LIFE_GATES = `   ── GATE 1: THE FUTURE-CONTINUITY TEST ─�
 const _SLICE_OF_LIFE_IMPORTANCE = `  Score future continuity value, not dramatic intensity:
   - 1-2: filler, unsupported interpretations, or unchanged repetitions → DO NOT EXTRACT.
   - 3-5: supported new or changed routines, agreements, preferences, nicknames, boundaries, commitments, and concrete project milestones, whatever their event type. Never score a supported quiet fact below 3, and do not raise it to a dramatic score.
+    Within 3-5: 3 = small detail or passing preference; 4 = a clear agreement, boundary, nickname or commitment that will shape later scenes; 5 = a concrete milestone or a quiet fact that many future scenes depend on. When unsure whether something is worth extracting, skip it; never extract just to fill the cap. A mood, teasing, banter, playful or flirty moment, a one-off gesture (imitating someone, joining in an activity), and scene transitions (arriving home, moving to the next room, starting dinner prep) are NOT quiet facts: unless they establish a lasting fact, do not extract them, and never type them "other" with a score of 3.
   - Story changes (confrontations, revelations, betrayals, deaths, major milestones) use the type ranges below.
   - A resolution of a listed issue is scored by Rule 5 instead.
   Event types for quiet facts: dialogue_significant for preferences, nicknames and agreements; promise_or_oath for commitments; side_quest_update for practical milestones; other for routines when no more specific type fits.
