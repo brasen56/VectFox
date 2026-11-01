@@ -381,6 +381,13 @@ Validation results:
 
 ## Phase 6 — Documentation and polish
 
+**Status:** Implemented on 2026-11-01. The English README's **Floating token
+badge — last measured turn (optional)** section documents the saved opt-in
+setting, counted sources and exclusions, all five display states, lifecycle,
+sum-of-blocks convention, accuracy limits, privacy boundaries, and overhead.
+It uses the setting and breakdown labels from the UI and explicitly distinguishes
+context contribution from monetary cost and Search Debug character diagnostics.
+
 ### Tasks
 
 - Document the setting, counted sources, exclusions, and accuracy limitations.
@@ -395,3 +402,41 @@ Validation results:
 - UI and documentation use consistent terminology.
 - No character count is presented as tokens.
 - The feature remains opt-in and adds no dependencies.
+
+### Audit and implementation — 2026-11-01
+
+- **Trace rendering:** `addTrace` spreads details into each trace entry.
+  `renderTraceLog` in `ui/search-debug.js` serializes every field except `time`,
+  `stage`, and `action` into the visible trace details. The text-export path
+  likewise includes arbitrary details. Consequently, the old `totalTokens`
+  field could display a character count as tokens even without a named reader.
+  Renamed it to `charCount`, matching `debugData.injection.charCount` and the
+  existing **Characters** label. This remains JavaScript string length, not a
+  tokenizer count; multi-position debug text can include debug-only separators.
+  The badge continues to measure the registry's individual slots independently.
+- **Privacy:** audited the contract, accounting, host adapter, lifecycle, badge,
+  and preference wiring. Raw text is copied transiently and sent to the host
+  tokenizer endpoint (which may forward it to a configured remote backend).
+  Accounting results and lifecycle publications retain counts and metadata, not
+  prompt bodies or tokenizer exceptions; the badge renders those results, not
+  prompt text. The feature adds no prompt-text persistence or logging. Only
+  `show_token_badge` is saved. This is not a claim about pre-existing Search
+  Debug storage or host/backend logging policies.
+- **Regression coverage:** live host-mocked injection tests check `charCount`
+  and absence of `totalTokens` for single- and multiple-position injection,
+  including Unicode text. Lifecycle tests check text-free publications and no
+  console output for success, tokenizer/loader failure, and subscriber failure.
+  Existing accounting and badge tests cover text-free results/DOM, sanitized
+  error codes and metadata, disabled work, and opt-in persistence.
+- No dependencies or default preferences changed. Manual host validation from
+  phase 5 remains pending; documentation/polish does not establish real endpoint
+  compatibility, native keyboard activation, or desktop/mobile layout.
+
+Validation:
+
+| Check | Result |
+|---|---|
+| Four context-token suites plus source-chat/cleanup/trace suite | 5 files, 167 tests passed |
+| Full suite (`npm test -- --reporter=dot`) | 85 files, 1,797 tests passed |
+| `node --check` on the changed JavaScript files | Passed |
+| `git diff --check` | Passed |

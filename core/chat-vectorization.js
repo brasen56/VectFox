@@ -1657,7 +1657,7 @@ export async function rearrangeChat(chat, settings, type, { dryRun = false, test
             injectedCount: chunksToInject.length,
             skippedDuplicates: skippedDuplicates.length,
             injectedHashes: chunksToInject.map(c => c.hash),
-            totalTokens: injection.text.length,
+            charCount: injection.text.length,
             position: settings.position,
             depth: settings.depth,
             verified: injection.verified

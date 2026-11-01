@@ -402,6 +402,38 @@ New collections auto-activate for the current chat. "Active for current chat" ch
 
 Auto-Sync card shows whether the current chat is vectorized and how many events exist. World Info card shows vectorized lorebooks by name. Both link to the right vectorizer if something's missing.
 
+### 🦊 Floating token badge — last measured turn (optional)
+
+In the VectFox settings drawer, below **Enable VectFox**, turn on **Show floating token badge** (`show_token_badge`, default `false`). The preference is saved and takes effect immediately; no reload is needed. The badge appears just above the chat input. Turn the checkbox off to hide it and stop measurement. With the checkbox on but the master switch off, it shows `VectFox: Disabled` without counting.
+
+The badge measures **VectFox's context contribution, not monetary cost**. After a generation ends, it snapshots VectFox-owned prompt slots (registry tags starting with `3_vectfox`) and tokenizes their final stored text, including headings, formatting, XML wrappers, and substitutions already applied. Each non-empty slot is counted separately and the counts are added: **sum-of-blocks**, not tokenization of one concatenated prompt. Identical text in two slots counts twice.
+
+Click or tap the badge, or focus it and press Enter/Space, to open **Last measured turn**. The breakdown shows each slot's tag, position/depth, tokens, category subtotals, total, and tokenizer identity. Escape closes it and returns focus to the badge.
+
+| Counted source | Breakdown category |
+|---|---|
+| ChunkBase main injection and all position groups | ChunkBase |
+| EventBase retrieval | EventBase |
+| Summarizer injection, including bundled NPC state (counted once) | Summarizer |
+| Separate VectFox lorebook injection | Separate lorebook |
+| Other tags starting with `3_vectfox` | Other VectFox injection, identified by tag |
+
+Categories follow the injection slot, not the original content type: lorebook text placed in a ChunkBase slot counts as ChunkBase. **Excluded:** embedding requests, summarization/extraction requests, Agent Mode planner calls, ordinary chat history, native World Info not directly injected by VectFox, and other extensions' prompt slots. Ghosted-history savings are separate and are **not subtracted** from this total.
+
+| Badge | Meaning |
+|---|---|
+| `VectFox: Disabled` | The VectFox master switch is off. |
+| `VectFox: —` | No measured turn yet; generate a reply. Switching chats or re-enabling measurement resets this state. |
+| `VectFox: ~1,248 tokens` | Approximate context contribution for the last measured turn. |
+| `VectFox: 0 tokens` | A successful measurement found no injected content. |
+| `VectFox: Count unavailable` | The tokenizer is unavailable or measurement failed; this is not zero or a partial total. |
+
+Updates happen **after generation ends**, including aborted attempts and swipes/regenerations. The previous result stays visible while the next count is pending. Quiet generations can recount unchanged slots from the last live turn; dry-run query tests do not replace the live injection. Measurement failure does not interrupt generation or change injected text.
+
+**Accuracy:** the `~` is intentional. The host-selected tokenizer can differ from the provider's tokenizer, and later prompt processing, message formatting, or truncation can change what reaches the provider. Independently tokenized blocks can also differ from tokenizing the assembled request. This is neither an exact marginal provider-request token count nor a billing estimate. No character-count fallback is used; unsupported/estimation-only tokenizers or failed tokenizer requests report **Count unavailable**. Use successful counts to compare DenseText, Summary, or JSONArray and tune your context budget, not to calculate charges. Search Debug's **Characters** / `charCount` is a separate character-length diagnostic, not this token measurement.
+
+**Privacy and overhead:** the badge keeps counts, slot metadata, and tokenizer identity in memory, not raw prompt text in its results, DOM, settings, or logs. Prompt snapshots are transient while counting. Counting necessarily sends each non-empty slot's text to SillyTavern's tokenizer endpoint; with an API/remote tokenizer, that endpoint can forward it to your configured backend. The badge adds no prompt-text persistence or logging, but this does not change existing Search Debug or host/backend logging behavior. Only the display preference is saved by the feature; measurements do not survive reload. Disabled by default, it performs no registry reads or tokenizer requests while measurement is off and adds no dependencies.
+
 ### 🗂️ Tabbed interface
 
 Settings split into **Core** (backend, embedding, hybrid), **EventBase** (chat hsitory/archive chat file .jsonl), **ChunkBase** (lorebook/docs/URLs/wiki), **Action** (diagnostics, dev tools).

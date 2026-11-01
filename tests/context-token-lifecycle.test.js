@@ -37,6 +37,32 @@ beforeEach(() => {
 afterEach(() => lifecycle.dispose());
 
 describe('context token generation lifecycle', () => {
+    it.each(['success', 'tokenizer failure', 'loader failure', 'subscriber failure'])(
+        'publishes text-free state without logging on %s', async outcome => {
+            const spies = ['log', 'info', 'warn', 'error', 'debug', 'trace']
+                .map(method => vi.spyOn(console, method).mockImplementation(() => {}));
+            const privateText = 'PRIVATE BADGE PROMPT';
+            registry['3_vectfox'].value = privateText;
+            if (outcome === 'tokenizer failure') count.mockRejectedValueOnce(new Error(privateText));
+            if (outcome === 'loader failure') createTokenizer.mockRejectedValueOnce(new Error(privateText));
+            if (outcome === 'subscriber failure') lifecycle.subscribe(() => { throw new Error(privateText); });
+            const subscriber = vi.fn();
+            lifecycle.subscribe(subscriber);
+            try {
+                await emit('ended');
+                expect(lifecycle.getState().status).toBe(outcome.includes('failure') && outcome !== 'subscriber failure'
+                    ? 'unavailable' : 'available');
+                expect(subscriber).toHaveBeenCalledOnce();
+                expect(JSON.stringify(lifecycle.getState())).not.toContain(privateText);
+                expect(JSON.stringify(subscriber.mock.calls)).not.toContain(privateText);
+                expect(registry['3_vectfox'].value).toBe(privateText);
+                for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+            } finally {
+                for (const spy of spies) spy.mockRestore();
+            }
+        },
+    );
+
     it.each(['resolve', 'reject'])('discards an older tokenizer load that later %s', async outcome => {
         const loading = deferred();
         createTokenizer.mockReturnValueOnce(loading.promise);

@@ -40,6 +40,7 @@ vi.mock('../ui/search-debug.js', () => ({
     createDebugData: vi.fn(), setLastSearchDebug: vi.fn(), addTrace: vi.fn(), recordChunkFate: vi.fn(),
 }));
 vi.mock('../core/bounded-retrieval.js', () => ({ runBoundedRetrieval: vi.fn() }));
+vi.mock('../core/summarizer-injection.js', () => ({ runSummarizerInjection: vi.fn(), applyGhosting: vi.fn() }));
 vi.mock('../core/retrieval-budget.js', () => ({ resolveEventBaseRetrievalTimeoutMs: vi.fn() }));
 vi.mock('../core/log.js', () => ({
     log: { lifecycle: vi.fn(), verbose: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn(), enabled: () => false },
@@ -73,8 +74,46 @@ import { synchronizeChat, vectorizeAll, rearrangeChat } from '../core/chat-vecto
 import { extension_prompts, setExtensionPrompt } from '../../../../../script.js';
 import { runEventBaseIngestion } from '../core/eventbase-workflow.js';
 import { countContextTokens } from '../core/context-token-accounting.js';
+import { extractChatKeywords } from '../core/keyword-boost.js';
+import { runBoundedRetrieval } from '../core/bounded-retrieval.js';
+import { createDebugData, setLastSearchDebug, addTrace } from '../ui/search-debug.js';
+import { log } from '../core/log.js';
 
 const ingestionArgs = () => runEventBaseIngestion.mock.calls[0][0];
+
+describe('injection trace units', () => {
+    it.each([1, 2])('reports character length, never tokens, for %s position group(s)', async groups => {
+        vi.stubGlobal('window', {});
+        try {
+            const chunks = Array.from({ length: groups }, (_, index) => ({
+                hash: 100 + index, text: `Memory ${index}: 🦊`, score: 1,
+                collectionId: 'document', metadata: { position: index, depth: 2 },
+            }));
+            extractChatKeywords.mockReturnValueOnce([]);
+            createDebugData.mockReturnValueOnce({ stages: {}, stats: {} });
+            // Empty chat skips EventBase retrieval; testMessage drives ChunkBase.
+            runBoundedRetrieval.mockResolvedValueOnce(undefined) // Summarizer
+                .mockResolvedValueOnce(chunks); // ChunkBase (WI-only entry path)
+            log.domainEnabled = vi.fn(() => false);
+            setExtensionPrompt.mockImplementation((tag, value) => { extension_prompts[tag] = { value }; });
+
+            await rearrangeChat([], { enabled_world_info: true, position: 0, depth: 2 }, 'normal', { testMessage: 'Find memory' });
+
+            expect(toastr.error).not.toHaveBeenCalled();
+            expect(setLastSearchDebug).toHaveBeenCalledOnce();
+            const debug = setLastSearchDebug.mock.calls[0][0];
+            const finalTrace = addTrace.mock.calls.find(([, stage, action]) =>
+                stage === 'final' && action === 'PIPELINE COMPLETE - SUCCESS');
+            expect(finalTrace).toBeDefined();
+            expect(debug.injection.text).toContain('🦊');
+            expect(finalTrace[3]).toMatchObject({ charCount: debug.injection.text.length, injectedCount: groups });
+            expect(finalTrace[3]).not.toHaveProperty('totalTokens');
+            expect(finalTrace[3].charCount).toBe(debug.injection.charCount);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+});
 
 describe('position prompt cleanup', () => {
     it.each([false, true])('clears every stale position group before an early exit (master off: %s)', async masterOff => {
