@@ -38,6 +38,72 @@ function publish(status, result = null) {
 
 describe('context token badge', () => {
     it.each([
+        ['3_vectfox', 'ChunkBase'],
+        ['3_vectfox_eventbase', 'EventBase'],
+        ['3_vectfox_summarizer', 'Summarizer'],
+        ['3_vectfox_lorebook', 'Separate lorebook'],
+        ['3_vectfox_future', 'Other VectFox injection (3_vectfox_future)'],
+    ])('renders an isolated %s measurement and its subtotal', async (tag, category) => {
+        const result = await countContextTokens({ [tag]: { value: 'PRIVATE INJECTION' } },
+            { tokenizer: { count: () => 13 } });
+        badge.initialize();
+        publish('available', result);
+        expect(summary().textContent).toBe('VectFox: ~13 tokens');
+        expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
+        expect(document.querySelector('tbody code').textContent).toBe(tag);
+        expect(document.querySelector('dl').textContent).toBe(`${category}13Total13`);
+        expect(document.body.textContent).not.toContain('PRIVATE INJECTION');
+    });
+
+    it('preserves an open keyboard-focused breakdown through a generation update', async () => {
+        badge.initialize();
+        const details = summary().parentElement;
+        details.open = true;
+        const region = document.querySelector('[role="region"]');
+        region.focus();
+        const result = await countContextTokens({ '3_vectfox': { value: 'private' } },
+            { tokenizer: { count: () => 8 } });
+        publish('available', result);
+        expect(details.open).toBe(true);
+        expect(document.activeElement).toBe(region);
+        expect(region.tabIndex).toBe(0);
+        expect(region.getAttribute('aria-label')).toBe('VectFox context token breakdown');
+        const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        region.dispatchEvent(escape);
+        expect(escape.defaultPrevented).toBe(true);
+        expect(details.open).toBe(false);
+        expect(document.activeElement).toBe(summary());
+    });
+
+    it.each(['reject', 'unavailable'])('does not change narration prompts when the tokenizer is %s', async failure => {
+        const events = new Map();
+        const registry = Object.freeze({ '3_vectfox': Object.freeze({ value: '<memory>PRIVATE</memory>' }) });
+        const count = vi.fn().mockRejectedValue(new Error('PRIVATE tokenizer failure'));
+        const realLifecycle = createContextTokenLifecycle({
+            eventSource: { on: (name, handler) => events.set(name, handler), removeListener: name => events.delete(name) },
+            eventTypes: { GENERATION_ENDED: 'ended', CHAT_CHANGED: 'chat' },
+            readEnabled: () => visible, readChatId: () => 'chat', readRegistry: () => registry,
+            createTokenizer: async () => failure === 'unavailable' ? null : { count },
+        });
+        badge.dispose();
+        badge = createContextTokenBadge({ lifecycle: realLifecycle, readVisible: () => visible });
+        realLifecycle.initialize();
+        badge.initialize();
+        try {
+            const laterListener = vi.fn();
+            for (const listener of [events.get('ended'), laterListener]) await listener();
+            await settle();
+            expect(laterListener).toHaveBeenCalledOnce();
+            expect(registry['3_vectfox'].value).toBe('<memory>PRIVATE</memory>');
+            expect(summary().textContent).toBe('VectFox: Count unavailable');
+            expect(document.querySelector('dl').textContent).toContain('TotalUnavailable');
+            expect(document.body.textContent).not.toContain('PRIVATE');
+        } finally {
+            realLifecycle.dispose();
+        }
+    });
+
+    it.each([
         ['disabled', null, 'VectFox: Disabled'],
         ['unmeasured', null, 'VectFox: —'],
         ['unavailable', null, 'VectFox: Count unavailable'],

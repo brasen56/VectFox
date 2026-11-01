@@ -72,6 +72,7 @@ vi.mock('../core/model-config-notifier.js', () => ({
 import { synchronizeChat, vectorizeAll, rearrangeChat } from '../core/chat-vectorization.js';
 import { extension_prompts, setExtensionPrompt } from '../../../../../script.js';
 import { runEventBaseIngestion } from '../core/eventbase-workflow.js';
+import { countContextTokens } from '../core/context-token-accounting.js';
 
 const ingestionArgs = () => runEventBaseIngestion.mock.calls[0][0];
 
@@ -92,6 +93,14 @@ describe('position prompt cleanup', () => {
         expect(extension_prompts.other_vectfox_pos12.value).toBe('untouched');
         expect(extension_prompts['3_vectfox_eventbase'].value).toBe('untouched');
         expect(setExtensionPrompt).toHaveBeenCalledTimes(27);
+        // End-to-end accounting regression: cleared groups above 9 cannot inflate
+        // the next badge, and unrelated/category-specific prompts stay intact.
+        const count = vi.fn(() => 3);
+        const result = await countContextTokens(extension_prompts, { tokenizer: { count } });
+        expect(count.mock.calls).toEqual([['untouched']]);
+        expect(result).toMatchObject({ total: 3, perCategory: { eventbase: 3 },
+            slots: [{ tag: '3_vectfox_eventbase', count: 3 }] });
+        expect(result.slots).toHaveLength(1);
     });
 
     it.each([['quiet', false], ['normal', true]])('does not clear prompts for type %s with dryRun %s', async (type, dryRun) => {

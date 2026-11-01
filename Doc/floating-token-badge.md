@@ -357,6 +357,26 @@ Then manually validate in SillyTavern with ChunkBase-only, EventBase-only, summa
 - No new regression failures.
 - Badge failures do not change prompt contents or stop generation.
 
+### Automated validation completed — 2026-11-01
+
+- Extended the existing accounting, lifecycle, and jsdom badge suites with 23 tests; no production code or dependencies changed.
+- Accounting now explicitly exercises wrapper-inclusive final values for every slot kind and an unknown suffix, non-additive mock tokenization (sum individual blocks, never concatenate), and text-free, serializable results with tokenizer metadata restricted to known scalar fields.
+- Lifecycle regressions cover stale tokenizer loads resolving or rejecting after a newer generation, retaining the previous measured total while counting, frozen prompt registries, and later generation listeners continuing despite tokenizer or subscriber failures. Existing tests cover quiet/aborted generations, chat changes, toggles, disabled measurement, duplicate initialization, and cancellation.
+- Badge regressions cover isolated source subtotals, keyboard focus/disclosure preservation across updates, and real lifecycle/accounting failures producing "Count unavailable" without changing prompts or leaking private text.
+- Extended the host-mocked `rearrangeChat` cleanup regression in `tests/eventbase-source-chat-capture.test.js`: all 26 stale position tags (including `_pos999`) are emptied before early exits, then accounting excludes those empty blocks while preserving the separate EventBase block. Quiet and dry-run prompt-preservation tests remain in that suite.
+
+Validation results:
+
+| Check | Result |
+|---|---|
+| Full suite before changes (`npm test`) | 85 files, 1,768 tests passed; no baseline failures |
+| Three phase-5 suites (command above) | 3 files, 123 tests passed |
+| Phase-5 suites plus contract and source-chat/cleanup suites | 5 files, 161 tests passed |
+| Full suite after changes (`npm test`) | 85 files, 1,791 tests passed; no new failures |
+| `git diff --check` | Passed |
+
+**Manual host validation remains pending.** Mocked host tests and jsdom do not prove real tokenizer endpoint compatibility, native Enter/Space disclosure activation, or desktop/mobile layout. In SillyTavern, test ChunkBase-only, EventBase-only, summarizer-only, lorebook-only, combined, and >10-position-group configurations. Verify the displayed slot/category sums, next-turn stale-group cleanup, quiet/aborted generations, chat switching, immediate preference/master toggles, keyboard/touch access, reload persistence, and unobstructed chat/send controls. With an unavailable tokenizer, confirm generation still completes with unchanged injection text and the badge reports "Count unavailable", not zero.
+
 ---
 
 ## Phase 6 — Documentation and polish

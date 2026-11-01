@@ -6,6 +6,50 @@ const port = count => ({ identity: { id: 1, key: 'gpt2', name: 'GPT-2' }, count:
 const snapshot = value => ({ '3_vectfox': { value, position: 1, depth: 2 } });
 
 describe('context token accounting', () => {
+    it.each([
+        ['3_vectfox', 'chunkbase'],
+        ['3_vectfox_pos123', 'chunkbase'],
+        ['3_vectfox_eventbase', 'eventbase'],
+        ['3_vectfox_summarizer', 'summarizer'],
+        ['3_vectfox_lorebook', 'lorebook'],
+        ['3_vectfox_future', '3_vectfox_future'],
+    ])('counts the final wrapper and substituted text for %s', async (tag, category) => {
+        const value = '<memory>\nBackground for Alice\n\nFinal injected text\n</memory>';
+        const tokenizer = port(text => text === value ? 17 : 999);
+        const registry = Object.freeze({
+            [tag]: Object.freeze({ value, position: 0, depth: 4 }),
+            other_3_vectfox: Object.freeze({ value: 'unrelated extension' }),
+        });
+        const result = await countContextTokens(registry, { tokenizer });
+        expect(tokenizer.count.mock.calls).toEqual([[value]]);
+        expect(result).toMatchObject({ status: 'ok', total: 17, perCategory: { [category]: 17 },
+            slots: [{ tag, category, count: 17, position: 0, depth: 4 }] });
+        expect(JSON.stringify(result)).not.toContain(value);
+        expect(registry[tag].value).toBe(value);
+    });
+
+    it('sums independent blocks rather than tokenizing their concatenation', async () => {
+        const counts = new Map([['alpha', 2], ['beta', 3], ['alphabeta', 1]]);
+        const tokenizer = port(text => counts.get(text));
+        const result = await countContextTokens({ ...snapshot('alpha'),
+            '3_vectfox_pos0': { value: 'beta' } }, { tokenizer });
+        expect(tokenizer.count.mock.calls).toEqual([['alpha'], ['beta']]);
+        expect(result.total).toBe(5);
+        expect(Object.values(result.perCategory).reduce((sum, count) => sum + count, 0)).toBe(result.total);
+        expect(result.slots.reduce((sum, slot) => sum + slot.count, 0)).toBe(result.total);
+    });
+
+    it('does not retain arbitrary tokenizer metadata, functions or prompt payloads', async () => {
+        const tokenizer = port(() => 2);
+        Object.assign(tokenizer.identity, { prompt: 'PRIVATE PAYLOAD', nested: { value: 'PRIVATE PAYLOAD' },
+            callback: () => 'PRIVATE PAYLOAD' });
+        const result = await countContextTokens(snapshot('PRIVATE PAYLOAD'), { tokenizer });
+        expect(result.tokenizer).toEqual({ id: 1, key: 'gpt2', name: 'GPT-2' });
+        expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+        expect(JSON.stringify(result)).not.toContain('PRIVATE PAYLOAD');
+        expect(result.tokenizer).not.toBe(tokenizer.identity);
+    });
+
     it.each(['resolve', 'reject'])('discards cancelled accounting after a pending block %s', async outcome => {
         const controller = new AbortController();
         let resolve, reject;

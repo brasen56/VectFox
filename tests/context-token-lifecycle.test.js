@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createContextTokenLifecycle } from '../core/context-token-lifecycle.js';
 
 const deferred = () => {
@@ -34,7 +34,59 @@ beforeEach(() => {
     lifecycle.initialize();
 });
 
+afterEach(() => lifecycle.dispose());
+
 describe('context token generation lifecycle', () => {
+    it.each(['resolve', 'reject'])('discards an older tokenizer load that later %s', async outcome => {
+        const loading = deferred();
+        createTokenizer.mockReturnValueOnce(loading.promise);
+        await emit('ended');
+        registry['3_vectfox'].value = 'new generation';
+        await emit('ended');
+        const latest = lifecycle.getState();
+        expect(latest).toMatchObject({ status: 'available', result: { generationId: 2, total: 7 } });
+        const listener = vi.fn();
+        lifecycle.subscribe(listener);
+        if (outcome === 'resolve') loading.resolve({ count });
+        else loading.reject(new Error('private host failure'));
+        await settle();
+        expect(lifecycle.getState()).toBe(latest);
+        expect(listener).not.toHaveBeenCalled();
+        expect(count.mock.calls.map(([text]) => text)).toEqual(['new generation']);
+    });
+
+    it('keeps the last measured total visible until the next measurement completes', async () => {
+        await emit('ended');
+        const previous = lifecycle.getState();
+        const pending = deferred();
+        count.mockReturnValueOnce(pending.promise);
+        await emit('ended');
+        expect(lifecycle.getState()).toBe(previous);
+        pending.resolve(21);
+        await settle();
+        expect(lifecycle.getState()).toMatchObject({ status: 'available', result: { total: 21, generationId: 2 } });
+    });
+
+    it.each(['success', 'rejection', 'missing tokenizer', 'broken subscriber'])(
+        'isolates %s from prompt contents and later generation listeners', async outcome => {
+            Object.freeze(registry['3_vectfox']);
+            Object.freeze(registry);
+            const before = JSON.stringify(registry);
+            if (outcome === 'rejection') count.mockRejectedValue(new Error('private prompt failure'));
+            if (outcome === 'missing tokenizer') createTokenizer.mockResolvedValue(null);
+            if (outcome === 'broken subscriber') lifecycle.subscribe(() => { throw new Error('private UI failure'); });
+            const laterListener = vi.fn();
+            // Match a host emitter that awaits each listener in order.
+            for (const listener of [handlers.get('ended'), laterListener]) await listener();
+            await settle();
+            expect(laterListener).toHaveBeenCalledOnce();
+            expect(JSON.stringify(registry)).toBe(before);
+            expect(lifecycle.getState().status).toBe(['rejection', 'missing tokenizer'].includes(outcome)
+                ? 'unavailable' : 'available');
+            expect(JSON.stringify(lifecycle.getState())).not.toMatch(/private|<memory>/);
+        },
+    );
+
     it('does not block later listeners in an emitter that awaits each listener', async () => {
         const pending = deferred();
         count.mockReturnValue(pending.promise);
