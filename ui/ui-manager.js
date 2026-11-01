@@ -94,6 +94,11 @@ export function renderSettings(containerId, settings, callbacks) {
                             <span>Enable VectFox</span>
                         </label>
                         <small class="VectFox_hint" id="VectFox_master_hint">Master switch. When off, VectFox stops all automatic retrieval injection, auto-sync, and lorebook injection. Manual tools (Database Browser, Vectorize Content) stay available.</small>
+                        <label class="checkbox_label" for="VectFox_show_token_badge">
+                            <input type="checkbox" id="VectFox_show_token_badge" aria-describedby="VectFox_token_badge_hint" />
+                            <span>Show floating token badge</span>
+                        </label>
+                        <small class="VectFox_hint" id="VectFox_token_badge_hint">Last measured turn's VectFox context contribution, not monetary cost. Open the badge for per-slot counts.</small>
                     </div>
 
                     <!-- Tab Navigation -->
@@ -2539,6 +2544,17 @@ function bindSettingsEvents(settings, callbacks) {
     // Injection group on standard+no-plugin (its listChunks returns no metadata).
     let _refreshSummarizerInjectionAvailability = null;
 
+    // Token badge preference — persisted and applied without waiting for generation.
+    $('#VectFox_show_token_badge')
+        .prop('checked', settings.show_token_badge === true)
+        .off('change.vectfoxTokenBadge')
+        .on('change.vectfoxTokenBadge', function() {
+            settings.show_token_badge = $(this).prop('checked');
+            Object.assign(extension_settings.vectfox, settings);
+            saveSettingsDebounced();
+            callbacks.onTokenBadgeChange?.();
+        });
+
     // Master switch — global enable/disable. Default ON (only false disables);
     // mirrors core/feature-gate.js::isVectFoxEnabled so the UI and the runtime
     // gates agree. Dims the rest of the panel when off as a visual cue.
@@ -2555,6 +2571,7 @@ function bindSettingsEvents(settings, callbacks) {
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
             _applyMasterSwitchUI(on);
+            callbacks.onTokenBadgeChange?.();
             toastr.info(on ? 'VectFox enabled' : 'VectFox disabled', 'VectFox');
             log.lifecycle(`VectFox: master switch ${on ? 'ON' : 'OFF'}`);
 

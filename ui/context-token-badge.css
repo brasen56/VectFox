@@ -1,0 +1,68 @@
+/* In-flow floating-style badge: never overlays the composer or send controls. */
+.vectfox-context-token-badge {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    padding: 3px 8px;
+    box-sizing: border-box;
+    color: var(--SmartThemeBodyColor, #eee);
+    font-size: 0.8rem;
+}
+
+.vectfox-context-token-badge details {
+    width: fit-content;
+    max-width: 100%;
+    margin-left: auto;
+    border: 1px solid var(--SmartThemeBorderColor, #666);
+    border-radius: 12px;
+    background: var(--SmartThemeBlurTintColor, #262626);
+}
+
+.vectfox-context-token-badge summary {
+    cursor: pointer;
+    padding: 6px 10px;
+    min-height: 32px;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+
+.vectfox-context-token-badge summary:focus-visible,
+.vectfox-token-breakdown:focus-visible {
+    outline: 2px solid var(--SmartThemeQuoteColor, #818cf8);
+    outline-offset: 2px;
+}
+
+.vectfox-token-breakdown {
+    width: min(38rem, 100%);
+    max-height: min(40vh, 22rem);
+    overflow: auto;
+    padding: 8px 12px;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+
+.vectfox-token-breakdown table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.vectfox-token-breakdown th,
+.vectfox-token-breakdown td {
+    text-align: left;
+    vertical-align: top;
+    padding: 5px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #666);
+}
+
+.vectfox-token-breakdown th:first-child { width: 52%; }
+.vectfox-token-breakdown code { display: block; white-space: normal; font-size: 0.85em; }
+.vectfox-token-breakdown p { margin: 8px 0; }
+.vectfox-token-subtotals { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
+.vectfox-token-subtotals dd { margin: 0; text-align: right; }
+
+@media (max-width: 600px) {
+    .vectfox-context-token-badge { padding: 2px 4px; }
+    .vectfox-context-token-badge summary { min-height: 44px; padding: 10px; }
+    .vectfox-token-breakdown { max-height: 30vh; padding: 6px; }
+}

@@ -49,6 +49,7 @@ import { createContextTokenHostPort } from './core/context-token-host.js';
 // VectFox modules - UI
 import { renderSettings, openDiagnosticsModal, loadWebLlmModels, updateWebLlmStatus, refreshAutoSyncCheckbox } from './ui/ui-manager.js';
 import { initializeVisualizer } from './ui/chunk-visualizer.js';
+import { createContextTokenBadge } from './ui/context-token-badge.js';
 import { initializeDatabaseBrowser } from './ui/database-browser.js';
 import { initializeWorldInfoIntegration } from './core/world-info-integration.js';
 import { refreshWorldInfoEntryDepthCache } from './core/summarizer-injection.js';
@@ -66,7 +67,7 @@ const defaultSettings = {
     // (retrieval injection, auto-sync, lorebook WI injection). Default ON.
     // Single source of truth for reads: core/feature-gate.js::isVectFoxEnabled.
     enabled: true,
-    // Phase 3 runtime gate; the opt-in checkbox and badge arrive in phase 4.
+    // Optional last-measured-turn context contribution display.
     show_token_badge: false,
 
     // Core vector settings
@@ -486,8 +487,7 @@ const defaultSettings = {
 // Runtime settings (merged with saved settings)
 let settings = { ...defaultSettings };
 
-// Phase 4 can subscribe to text-free state and call refreshEnabled immediately
-// after changing show_token_badge. No measurement is performed by subscribing.
+// UI subscriptions receive only text-free accounting state.
 export const contextTokenLifecycle = createContextTokenLifecycle({
     eventSource,
     eventTypes: event_types,
@@ -495,6 +495,11 @@ export const contextTokenLifecycle = createContextTokenLifecycle({
     readChatId: getCurrentChatId,
     readRegistry: () => extension_prompts,
     createTokenizer: createContextTokenHostPort,
+});
+
+const contextTokenBadge = createContextTokenBadge({
+    lifecycle: contextTokenLifecycle,
+    readVisible: () => settings.show_token_badge === true,
 });
 
 // Module worker for automatic syncing
@@ -798,10 +803,7 @@ jQuery(async () => {
     }
 
     contextTokenLifecycle.initialize();
-    // Delegated so re-rendering settings cannot lose or duplicate the handler.
-    // The control's own handler updates settings before this bubbled event.
-    $(document).off('change.vectfoxContextTokens', '#VectFox_master_enabled')
-        .on('change.vectfoxContextTokens', '#VectFox_master_enabled', () => contextTokenLifecycle.refreshEnabled());
+    contextTokenBadge.initialize();
 
     // Render UI
     renderSettings('extensions_settings2', settings, {
@@ -809,6 +811,7 @@ jQuery(async () => {
         onPurge: onPurgeClick,
         onCleanupCorrupted: onCleanupCorruptedClick,
         onRunDiagnostics: onRunDiagnosticsClick,
+        onTokenBadgeChange: () => contextTokenBadge.refresh(),
     });
 
     // Initialize auto-sync checkbox state for current chat (if any)
