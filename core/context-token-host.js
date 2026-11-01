@@ -77,10 +77,14 @@ export async function createContextTokenHostPort({ load = loadHost, fetchImpl = 
         if (typeof fetchImpl !== 'function' || typeof host.getRequestHeaders !== 'function') return null;
         return {
             identity: Object.freeze(identity),
-            async count(text) {
+            async count(text, { signal } = {}) {
                 const controller = new AbortController();
+                const abort = () => controller.abort();
+                signal?.addEventListener('abort', abort, { once: true });
                 const timeout = setTimeout(() => controller.abort(), timeoutMs);
                 try {
+                    if (signal?.aborted) controller.abort();
+                    controller.signal.throwIfAborted();
                     const response = await fetchImpl(endpoint, {
                         method: 'POST', headers: host.getRequestHeaders(),
                         body: JSON.stringify({ ...params, text }), signal: controller.signal,
@@ -100,6 +104,7 @@ export async function createContextTokenHostPort({ load = loadHost, fetchImpl = 
                     return count;
                 } finally {
                     clearTimeout(timeout);
+                    signal?.removeEventListener('abort', abort);
                 }
             },
         };

@@ -44,7 +44,7 @@ vi.mock('../core/retrieval-budget.js', () => ({ resolveEventBaseRetrievalTimeout
 vi.mock('../core/log.js', () => ({
     log: { lifecycle: vi.fn(), verbose: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn(), enabled: () => false },
 }));
-vi.mock('../core/feature-gate.js', () => ({ isVectFoxEnabled: () => true }));
+vi.mock('../core/feature-gate.js', () => ({ isVectFoxEnabled: settings => settings?.enabled !== false }));
 vi.mock('../core/ils-expander.js', () => ({
     prepareMessagesForEventBase: messages => ({ messages: [...messages], stats: { summariesFound: 0 }, visibleCount: messages.length }),
 }));
@@ -69,10 +69,39 @@ vi.mock('../core/model-config-notifier.js', () => ({
     isInvalidModelConfigError: () => false, notifyInvalidModel: vi.fn(), pauseAutoSyncForChat: vi.fn(),
 }));
 
-import { synchronizeChat, vectorizeAll } from '../core/chat-vectorization.js';
+import { synchronizeChat, vectorizeAll, rearrangeChat } from '../core/chat-vectorization.js';
+import { extension_prompts, setExtensionPrompt } from '../../../../../script.js';
 import { runEventBaseIngestion } from '../core/eventbase-workflow.js';
 
 const ingestionArgs = () => runEventBaseIngestion.mock.calls[0][0];
+
+describe('position prompt cleanup', () => {
+    it.each([false, true])('clears every stale position group before an early exit (master off: %s)', async masterOff => {
+        for (const tag of Object.keys(extension_prompts)) delete extension_prompts[tag];
+        for (let i = 0; i < 25; i++) extension_prompts[`3_vectfox_pos${i}`] = { value: 'stale' };
+        extension_prompts['3_vectfox_pos999'] = { value: 'stale' };
+        extension_prompts['other_vectfox_pos12'] = { value: 'untouched' };
+        extension_prompts['3_vectfox_eventbase'] = { value: 'untouched' };
+        setExtensionPrompt.mockImplementation((tag, value) => { extension_prompts[tag] = { value }; });
+        // No selected chat: exercises cleanup without invoking any retrieval paths.
+        fixture.chatId = null;
+        await rearrangeChat([], { enabled: !masterOff }, 'normal');
+        const positionEntries = Object.entries(extension_prompts).filter(([tag]) => tag.startsWith('3_vectfox_pos'));
+        expect(positionEntries).toHaveLength(26);
+        expect(positionEntries.every(([, entry]) => entry.value === '')).toBe(true);
+        expect(extension_prompts.other_vectfox_pos12.value).toBe('untouched');
+        expect(extension_prompts['3_vectfox_eventbase'].value).toBe('untouched');
+        expect(setExtensionPrompt).toHaveBeenCalledTimes(27);
+    });
+
+    it.each([['quiet', false], ['normal', true]])('does not clear prompts for type %s with dryRun %s', async (type, dryRun) => {
+        const before = JSON.stringify(extension_prompts);
+        fixture.chatId = null;
+        await rearrangeChat([], {}, type, { dryRun });
+        expect(setExtensionPrompt).not.toHaveBeenCalled();
+        expect(JSON.stringify(extension_prompts)).toBe(before);
+    });
+});
 
 beforeEach(() => {
     vi.clearAllMocks();

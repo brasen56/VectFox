@@ -1301,9 +1301,8 @@ export async function rearrangeChat(chat, settings, type, { dryRun = false, test
         // Clear extension prompts (main + any position-specific tags from previous run)
         if (!dryRun) {
             setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, false);
-            for (let i = 0; i < 10; i++) {
-                const posTag = `${EXTENSION_PROMPT_TAG}_pos${i}`;
-                if (extension_prompts[posTag]) {
+            for (const posTag of Object.keys(extension_prompts)) {
+                if (posTag.startsWith(`${EXTENSION_PROMPT_TAG}_pos`)) {
                     setExtensionPrompt(posTag, '', 0, 0, false);
                 }
             }

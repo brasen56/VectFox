@@ -21,7 +21,7 @@ export function snapshotContextTokenPrompts(registry) {
 /**
  * @typedef {object} ContextTokenPort
  * @property {{id?: number, key?: string, name?: string, model?: string}} identity
- * @property {function(string): Promise<number>|number} count Receives literal text only.
+ * @property {function(string, {signal?: AbortSignal}?): Promise<number>|number} count Receives literal text and optional cancellation.
  */
 
 /**
@@ -38,9 +38,15 @@ export function snapshotContextTokenPrompts(registry) {
  * @param {string|null} [options.chatId=null]
  * @param {number|null} [options.generationId=null]
  * @param {ContextTokenPort|null} [options.tokenizer=null]
- * @returns {Promise<object>} Serializable, text-free measurement result.
+ * @param {AbortSignal} [options.signal] Aborts the active tokenizer request.
+ * @param {function(): boolean} [options.isCurrent] Checked before and after each block.
+ * @returns {Promise<object|null>} Serializable, text-free result, or null when invalidated.
  */
-export async function countContextTokens(snapshot, { chatId = null, generationId = null, tokenizer = null } = {}) {
+export async function countContextTokens(snapshot, {
+    chatId = null, generationId = null, tokenizer = null, signal, isCurrent = () => true,
+} = {}) {
+    const cancelled = () => signal?.aborted || !isCurrent();
+    if (cancelled()) return null;
     const result = {
         chatId, generationId, status: 'ok', total: null, partialTotal: 0,
         perCategory: {}, slots: [], tokenizer: null,
@@ -71,6 +77,7 @@ export async function countContextTokens(snapshot, { chatId = null, generationId
     }
     const categories = new Map();
     for (const [tag, entry] of Object.entries(entries)) {
+        if (cancelled()) return null;
         if (entry.value === '') continue;
         const { category, label } = classifyContextTokenTag(tag);
         const slot = {
@@ -85,7 +92,8 @@ export async function countContextTokens(snapshot, { chatId = null, generationId
             slot.error = 'unavailable-tokenizer';
         } else {
             try {
-                const count = await tokenizer.count(entry.value);
+                const count = await (signal ? tokenizer.count(entry.value, { signal }) : tokenizer.count(entry.value));
+                if (cancelled()) return null;
                 if (!Number.isSafeInteger(count) || count < 0 || !Number.isSafeInteger(result.partialTotal + count)) {
                     slot.error = 'invalid-count';
                 } else {
@@ -95,6 +103,7 @@ export async function countContextTokens(snapshot, { chatId = null, generationId
                     if (categories.get(category) !== null) categories.set(category, categories.get(category) + count);
                 }
             } catch {
+                if (cancelled()) return null;
                 slot.error = 'tokenization-failed';
             }
         }

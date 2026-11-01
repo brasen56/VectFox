@@ -227,6 +227,26 @@ and `npm test`.
 
 **Objective:** Measure the correct turn without stale or incomplete results.
 
+**Status:** Implemented (2026-11-01). `core/context-token-lifecycle.js` owns
+the testable event lifecycle, synchronous snapshots, monotonic generation IDs,
+chat/toggle/disposal invalidation, and nonfatal result publication. `index.js`
+installs it once and refreshes its gate immediately on master-switch changes.
+Measurement is opt-in through `show_token_badge: false`; no checkbox or badge
+is added until phase 4. The exported `contextTokenLifecycle` provides
+`getState()`, `subscribe(listener)` (returns an unsubscribe function), and
+`refreshEnabled()`. Phase 4 should render the current state on subscription and
+call `refreshEnabled()` immediately after updating the badge preference. States
+are `disabled`, `unmeasured`, `available`, and `unavailable`; only `available`
+contains a successful total, including zero. Published results retain no prompt
+text. `dispose()` removes host listeners and invalidates pending results.
+
+The `_pos` cleanup now iterates registry keys without a numeric cap. Coverage is
+in `tests/context-token-lifecycle.test.js` and the position-cleanup cases in
+`tests/eventbase-source-chat-capture.test.js` (26 groups, including `_pos999`,
+early exits, master-off, quiet, and dry-run behavior). Validation: 113 focused
+tests passed; the full suite passed with 84 files / 1,743 tests. Live
+SillyTavern validation remains a manual follow-up.
+
 ### Files
 
 - `index.js` — `GENERATION_ENDED` listener, staleness guards, badge enable/disable wiring.

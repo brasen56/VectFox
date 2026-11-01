@@ -6,6 +6,29 @@ const port = count => ({ identity: { id: 1, key: 'gpt2', name: 'GPT-2' }, count:
 const snapshot = value => ({ '3_vectfox': { value, position: 1, depth: 2 } });
 
 describe('context token accounting', () => {
+    it.each(['resolve', 'reject'])('discards cancelled accounting after a pending block %s', async outcome => {
+        const controller = new AbortController();
+        let resolve, reject;
+        const tokenizer = port(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
+        const pending = countContextTokens({ ...snapshot('first'), '3_vectfox_pos1': { value: 'second' } },
+            { tokenizer, signal: controller.signal });
+        expect(tokenizer.count).toHaveBeenCalledWith('first', { signal: controller.signal });
+        controller.abort();
+        if (outcome === 'resolve') resolve(3);
+        else reject(new Error('private'));
+        expect(await pending).toBeNull();
+        expect(tokenizer.count).toHaveBeenCalledOnce();
+    });
+
+    it('skips tokenization when already cancelled', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const tokenizer = port(() => 1);
+        expect(await countContextTokens(snapshot('text'), { tokenizer, signal: controller.signal })).toBeNull();
+        expect(await countContextTokens(snapshot('text'), { tokenizer, isCurrent: () => false })).toBeNull();
+        expect(tokenizer.count).not.toHaveBeenCalled();
+    });
+
     it('counts literal blocks once and rolls up all known and unknown slots', async () => {
         const tags = ['3_vectfox', '3_vectfox_pos12', '3_vectfox_eventbase', '3_vectfox_summarizer',
             '3_vectfox_lorebook', '3_vectfox_future', '3_vectfox2'];
@@ -169,6 +192,31 @@ describe('SillyTavern context token adapter', () => {
         options.fetchImpl.mockResolvedValue({ ok: false });
         const tokenizer = await createContextTokenHostPort(options);
         expect(await countContextTokens(snapshot('text'), { tokenizer })).toMatchObject({ status: 'failed', total: null });
+    });
+
+    it('aborts an active request on measurement cancellation and removes its listener', async () => {
+        const options = hostOptions();
+        const controller = new AbortController();
+        const remove = vi.spyOn(controller.signal, 'removeEventListener');
+        options.fetchImpl.mockImplementation((url, { signal }) => new Promise((resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        }));
+        const tokenizer = await createContextTokenHostPort(options);
+        const pending = tokenizer.count('text', { signal: controller.signal });
+        const rejected = expect(pending).rejects.toThrow('aborted');
+        controller.abort();
+        await rejected;
+        expect(options.fetchImpl.mock.calls[0][1].signal.aborted).toBe(true);
+        expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+    });
+
+    it('does not fetch when the measurement is already cancelled', async () => {
+        const options = hostOptions();
+        const tokenizer = await createContextTokenHostPort(options);
+        const controller = new AbortController();
+        controller.abort();
+        await expect(tokenizer.count('text', { signal: controller.signal })).rejects.toThrow();
+        expect(options.fetchImpl).not.toHaveBeenCalled();
     });
 
     it('aborts stalled requests', async () => {
