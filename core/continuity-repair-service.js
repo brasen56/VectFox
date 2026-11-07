@@ -122,9 +122,16 @@ export async function markEventResolved(collectionKey, eventId, settings, thread
     }
     const continuity = JSON.parse(JSON.stringify(event.continuity || { v: 1 }));
     if (continuity.v !== 1) throw new Error('Unsupported continuity version');
-    // Keep a displaced repair/extraction closure so Unmark is reversible.
-    if (continuity.closed_threads?.origin !== 'user' && continuity.closed_threads) continuity.user_previous_closure = continuity.closed_threads;
-    continuity.closed_threads = { threads, threads_digest: threadsDigest(event), how: String(how).slice(0, 200), origin: 'user', run: null, status: 'active' };
+    const digest = threadsDigest(event);
+    const current = continuity.closed_threads;
+    // Successive marks accumulate. Only a closure that still applies contributes indices.
+    const priorUser = current?.origin === 'user' && current.status === 'active' && current.threads_digest === digest ? current.threads : null;
+    const merged = threads === 'all' || priorUser === 'all' ? 'all'
+        : [...new Set([...(Array.isArray(priorUser) ? priorUser : []), ...threads])].sort((a, b) => a - b);
+    // A displaced repair/extraction closure stays in force underneath (getContinuityView
+    // applies it) and comes back as the closure on Unmark.
+    if (current?.origin !== 'user' && current) continuity.user_previous_closure = current;
+    continuity.closed_threads = { threads: merged, threads_digest: digest, how: String(how).slice(0, 200), origin: 'user', run: null, status: 'active' };
     await write(event, continuity);
 }
 

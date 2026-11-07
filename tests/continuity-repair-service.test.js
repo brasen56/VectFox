@@ -15,6 +15,7 @@ vi.mock('../core/collection-export.js', () => ({ fetchChunksWithVectors: mocks.f
 vi.mock('../core/llm-provider-call.js', () => ({ postChatCompletion: mocks.post, resolveModelParameterStyle: () => ({}), parseJsonArrayFromLlm: text => JSON.parse(text) }));
 vi.mock('../core/generation-rate-limiter.js', () => ({ generationRateLimiter: { execute: mocks.execute }, generationRateLimitSettings: () => ({}) }));
 import { createContinuityRepair, markEventResolved, unmarkEventResolved, removeResolutionLink, repairConfiguration } from '../core/continuity-repair-service.js';
+import { getContinuityView, threadsDigest } from '../core/continuity.js';
 
 beforeEach(() => {
     vi.clearAllMocks(); mocks.supported = true; mocks.settings.vectfox = {};
@@ -133,6 +134,41 @@ describe('continuity repair browser adapter', () => {
         await unmarkEventResolved('qdrant:collection', 'e1', {});
         expect(mocks.events.get('e1')).toEqual(archive);
         await expect(markEventResolved('qdrant:collection', 'e1', {}, [8])).rejects.toThrow('valid original thread');
+    });
+
+    it('accumulates successive partial marks instead of replacing them', async () => {
+        mocks.events.get('e1').open_threads = ['hurt', 'debt', 'rent'];
+        await markEventResolved('qdrant:collection', 'e1', {}, [0]);
+        await markEventResolved('qdrant:collection', 'e1', {}, [2], 'Rent paid');
+        const event = mocks.events.get('e1');
+        expect(event.continuity.closed_threads).toMatchObject({ threads: [0, 2], origin: 'user', how: 'Rent paid' });
+        expect(event.continuity.user_previous_closure).toBeUndefined();
+        expect(getContinuityView(event)).toMatchObject({ closedThreads: [0, 2], remainingThreads: ['debt'] });
+        await markEventResolved('qdrant:collection', 'e1', {}, 'all');
+        await markEventResolved('qdrant:collection', 'e1', {}, [1]);
+        expect(mocks.events.get('e1').continuity.closed_threads.threads).toBe('all');
+    });
+
+    it('keeps a displaced repair closure in force under a partial mark and restores it on unmark', async () => {
+        const event = mocks.events.get('e1');
+        event.open_threads = ['hurt', 'debt', 'rent'];
+        const repair = { threads: [0, 1], threads_digest: threadsDigest(event), how: 'Settled.', origin: 'repair', run: 'r1', status: 'active' };
+        event.continuity = { v: 1, closed_threads: repair };
+        await markEventResolved('qdrant:collection', 'e1', {}, [2]);
+        const marked = mocks.events.get('e1');
+        expect(marked.continuity).toMatchObject({ closed_threads: { threads: [2], origin: 'user' }, user_previous_closure: repair });
+        expect(getContinuityView(marked)).toMatchObject({ closedThreads: [0, 1, 2], fullyResolved: true });
+        await unmarkEventResolved('qdrant:collection', 'e1', {});
+        const unmarked = mocks.events.get('e1');
+        expect(unmarked.continuity).toEqual({ v: 1, closed_threads: repair });
+        expect(getContinuityView(unmarked).closedThreads).toEqual([0, 1]);
+    });
+
+    it('takes no indices from a prior user mark that no longer applies', async () => {
+        mocks.events.get('e1').continuity = { v: 1, closed_threads: { threads: [0], threads_digest: 'stale', origin: 'user', run: null, status: 'active' } };
+        await markEventResolved('qdrant:collection', 'e1', {}, [1]);
+        expect(mocks.events.get('e1').continuity.closed_threads.threads).toEqual([1]);
+        expect(getContinuityView(mocks.events.get('e1')).closedThreads).toEqual([1]);
     });
 
     it('removes exactly the selected outgoing link', async () => {

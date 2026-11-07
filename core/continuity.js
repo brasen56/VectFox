@@ -58,7 +58,12 @@ export function getContinuityView(event, rosterIndex = null) {
         resolutions.push({ event_id: resolver?.event_id || target.event_id, text: text || String(link.how || '').slice(0, 200),
             message_order: resolver?.source_window_end ?? null, origin: link.origin, threads: link.threads });
     };
-    if (target.continuity?.v === 1) apply(target.continuity.closed_threads);
+    if (target.continuity?.v === 1) {
+        apply(target.continuity.closed_threads);
+        // A user mark never reopens anything: the extraction/repair closure it displaced
+        // stays in force underneath, so undoing that run reopens exactly what it closed.
+        apply(target.continuity.user_previous_closure);
+    }
     const reverse = rosterIndex?.resolvedBy || buildResolvedBy(events);
     for (const { resolver, link } of reverse.get(eventKey(target)) || []) apply(link, resolver);
     // Outgoing links without eligible resolvers must not silently close anything.

@@ -59,6 +59,19 @@ describe('repair run recovery and cleanup', () => {
         await expect(engine.stopRun('old')).rejects.toThrow('current batch');
         await expect(engine.clearRun('old')).rejects.toThrow('current batch');
     });
+    it('undo reopens only the run\'s threads under a manual mark, keeping the user\'s own', async () => {
+        const { engine } = makeEngine();
+        const conflict = engine.events.get('conflict');
+        conflict.open_threads = ['hurt feelings', 'unpaid debt', 'broken lamp'];
+        const digest = threadsDigest(conflict);
+        conflict.continuity = { v: 1, repair_runs: [{ run: 'old', status: 'complete' }],
+            closed_threads: { threads: [2], threads_digest: digest, origin: 'user', run: null, status: 'active' },
+            user_previous_closure: { threads: [0, 1], threads_digest: digest, origin: 'repair', run: 'old', status: 'active' } };
+        expect(getContinuityView(conflict).closedThreads).toEqual([0, 1, 2]);
+        await engine.undo('old');
+        expect(engine.events.get('conflict').continuity.user_previous_closure).toBeUndefined();
+        expect(getContinuityView(engine.events.get('conflict')).closedThreads).toEqual([2]);
+    });
     it('retains undo history for an accepted closure displaced by a manual mark', async () => {
         const { engine } = makeEngine();
         engine.events.get('conflict').continuity = { v: 1, repair_runs: [{ run: 'old', status: 'complete' }],

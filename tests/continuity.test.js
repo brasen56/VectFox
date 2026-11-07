@@ -33,6 +33,18 @@ describe('derived continuity', () => {
         expect(threadsDigest(f.conflict)).not.toBe(digest);
         expect(getContinuityView(f.conflict, f.roster).fullyResolved).toBe(false);
     });
+    it('keeps a closure displaced by a user mark in force, and only while it still applies', () => {
+        const { conflict } = fixture();
+        const digest = threadsDigest(conflict);
+        conflict.continuity = { v: 1, closed_threads: { threads: [1], threads_digest: digest, origin: 'user', run: null, status: 'active' },
+            user_previous_closure: { threads: [0], threads_digest: digest, how: 'Settled.', origin: 'repair', run: 'r1', status: 'active' } };
+        expect(getContinuityView(conflict)).toMatchObject({ closedThreads: [0, 1], fullyResolved: true, inactiveLinks: [] });
+        conflict.continuity.user_previous_closure.threads_digest = 'stale';
+        expect(getContinuityView(conflict)).toMatchObject({ closedThreads: [1],
+            inactiveLinks: [{ origin: 'repair', reason: 'digest_mismatch' }] });
+        delete conflict.continuity.user_previous_closure; // what undoing run r1 does
+        expect(getContinuityView(conflict).closedThreads).toEqual([1]);
+    });
     it('unions incoming and local closure without changing the archive', () => {
         const f = fixture([0]);
         const original = JSON.stringify(f.conflict);
