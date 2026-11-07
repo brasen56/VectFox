@@ -1077,6 +1077,10 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <i class="fa-solid fa-bug"></i>
                                     <span>Debug Query</span>
                                 </button>
+                                <button id="VectFox_open_threads" class="vectfox-action-btn vectfox-btn-secondary">
+                                    <i class="fa-solid fa-list"></i>
+                                    <span>Open Threads</span>
+                                </button>
                                 <button id="VectFox_ask_story" class="vectfox-action-btn vectfox-btn-secondary">
                                     <i class="fa-solid fa-book-open"></i>
                                     <span>Ask the Story</span>
@@ -5125,6 +5129,10 @@ function bindSettingsEvents(settings, callbacks) {
             Object.assign(extension_settings.vectfox, settings);
             saveSettingsDebounced();
         });
+    });
+    $('#VectFox_open_threads').on('click', async () => {
+        const { openOpenThreads } = await import('./open-threads.js');
+        await openOpenThreads(settings);
     });
     $('#VectFox_debug_summarizer').on('click', () => {
         openSummarizerDebug(settings);

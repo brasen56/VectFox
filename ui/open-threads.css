@@ -1,0 +1,11 @@
+.vf-ot { width: min(1100px, 94vw); max-height: 90vh; overflow: auto; padding: 1rem; }
+.vf-ot header, .vf-ot-filters, .vf-ot-paging { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+.vf-ot header { justify-content: space-between; }
+.vf-ot label { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.vf-ot select { max-width: 100%; }
+.vf-ot > label { display: block; }
+.vf-ot > label select { display: block; width: 100%; margin: .5rem 0; }
+.vf-ot input[type="number"] { width: 5rem; }
+.vf-ot-results article { border: 1px solid var(--SmartThemeBorderColor, #666); border-radius: .5rem; padding: 1rem; margin: .75rem 0; overflow-wrap: anywhere; }
+.vf-ot-results li { margin: .5rem 0; white-space: pre-wrap; }
+.vf-ot-results button { text-align: left; overflow-wrap: anywhere; white-space: normal; }

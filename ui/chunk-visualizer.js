@@ -310,6 +310,11 @@ export function openVisualizer(results, collectionId, settings, onReload = null)
     // PERF: Build lookup map for O(1) chunk access
     allChunksMap = new Map(allChunks.map(c => [c.uniqueId, c]));
 
+    if (results?.focusEventId) {
+        selectedChunkId = allChunks.find(chunk => chunk.metadata?.event_id === results.focusEventId)?.uniqueId || null;
+        filterBy = 'all';
+    }
+
     applyFilters();
     createModal();
     // Sync persisted UI state into the freshly-rendered dropdowns. createModal()

@@ -56,7 +56,7 @@ export function getContinuityView(event, rosterIndex = null) {
         else link.threads.forEach(i => closed.add(i));
         const text = resolver ? summary(resolver).split(/(?<=[.!?。！？])\s+/u)[0].slice(0, 200) : String(link.how || '').slice(0, 200);
         resolutions.push({ event_id: resolver?.event_id || target.event_id, text: text || String(link.how || '').slice(0, 200),
-            message_order: resolver?.source_window_end ?? null, origin: link.origin, threads: link.threads });
+            message_order: resolver?.source_window_end ?? null, origin: link.origin, threads: link.threads, how: link.how || '' });
     };
     if (target.continuity?.v === 1) {
         apply(target.continuity.closed_threads);

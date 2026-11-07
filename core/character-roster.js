@@ -52,6 +52,8 @@ function slimEvent(item) {
         importance: event.importance,
         should_persist: event.should_persist,
         event_type: event.event_type,
+        locations: Array.isArray(event.locations) ? [...event.locations] : [],
+        keywords: Array.isArray(event.keywords) ? [...event.keywords] : [],
         source_window_end: event.source_window_end,
         source_window_start: event.source_window_start,
         created_at: event.created_at,
@@ -68,7 +70,7 @@ function slimEvent(item) {
 }
 
 /** Coalesced lazy build. Invalidation detaches the entry so an old fetch cannot revive it. */
-export function ensureCharacterIndex(collectionId, settings, loadBackend = null) {
+export function ensureCharacterIndex(collectionId, settings, loadBackend = null, options = {}) {
     const id = rosterCollectionId(collectionId);
     if (!id) return Promise.resolve(null);
     const existing = indexes.get(id);
@@ -88,9 +90,16 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null)
             entry.continuitySupported = backend.pluginAvailable !== false;
             let revision = entry.revision;
             for (let offset = 0; ; ) {
-                const result = await backend.listChunks(id, settings, { offset, limit: LIST_LIMIT });
+                options.signal?.throwIfAborted();
+                const limit = Math.min(options.pageSize || LIST_LIMIT, (options.maxRecords ?? Infinity) - offset);
+                if (limit <= 0) throw new Error('Roster metadata scan limit reached');
+                const result = await backend.listChunks(id, settings, { offset, limit });
+                options.signal?.throwIfAborted();
                 if (indexes.get(id) !== entry) return null;
                 if (!Array.isArray(result?.items)) throw new Error('Invalid listChunks response');
+                if (result.items.length > limit || result.total > (options.maxRecords ?? Infinity)) {
+                    throw new Error('Roster metadata scan limit reached');
+                }
                 // A mutation can move untouched records behind an already-read offset.
                 if (revision !== entry.revision) {
                     entry.events.clear();
@@ -107,6 +116,7 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null)
                     if (event) entry.events.set(event.event_id, event);
                 }
                 offset += items.length;
+                entry.scannedRecords = offset;
                 if (Number.isFinite(result.total) && offset < result.total) {
                     if (!items.length) throw new Error('Incomplete listChunks response');
                 } else break;

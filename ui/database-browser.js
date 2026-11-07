@@ -1314,7 +1314,7 @@ function formatBytes(bytes) {
  * Loads and opens the chunk visualizer for a collection.
  * Shared by both the collections tab and search results tab handlers.
  */
-async function openChunkVisualizer(collection) {
+async function openChunkVisualizer(collection, focusEventId = null) {
   try {
     toastr.info("Loading chunks...", "VectFox");
 
@@ -1383,7 +1383,7 @@ async function openChunkVisualizer(collection) {
       }));
 
       openVisualizer(
-        { chunks, collectionType: collection.type, dbChunkCount },
+        { chunks, collectionType: collection.type, dbChunkCount, focusEventId },
         collection.id,
         collectionSettings,
         doLoad,
@@ -1395,6 +1395,16 @@ async function openChunkVisualizer(collection) {
     console.error("VectFox: Failed to load chunks", error);
     toastr.error(`Failed to load chunks: ${error.message}`, "VectFox");
   }
+}
+
+/** Internal UI citation target; not part of the public event API. */
+export async function openDatabaseEvent(collectionKey, eventId) {
+  await openDatabaseBrowser();
+  const bare = String(collectionKey).replace(/^(?:qdrant|standard|vectra):/, '');
+  const collection = browserState.collections.find(item => item.id === collectionKey
+    || (item.id === bare && (!String(collectionKey).includes(':') || collectionKey.startsWith(`${item.backend}:`))));
+  if (!collection) throw new Error(`Collection unavailable: ${collectionKey}`);
+  await openChunkVisualizer(collection, eventId);
 }
 
 /**
