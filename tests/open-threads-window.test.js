@@ -99,6 +99,65 @@ describe('Open Threads window', () => {
         expect(root.textContent).toContain('Open: Still pending');
         expect(root.textContent).toContain('Inactive link: digest_mismatch');
     });
+    it('runs explicit manual actions with original indices and refreshes derived verdicts', async () => {
+        const event = { event_id: 'e', summary: 'Issue', open_threads: ['first', 'second'] };
+        const continuityAction = vi.fn(async (name, collection, id, args) => {
+            expect([collection, id]).toEqual(['a', 'e']);
+            expect(name).toBe('markEventResolved');
+            event.continuity = { v: 1, closed_threads: { threads: args[0], threads_digest: threadsDigest(event), origin: 'user', status: 'active', how: args[1] } };
+        });
+        const { root, deps } = mount([event], { continuityAction }); await settle();
+        expect(continuityAction).not.toHaveBeenCalled();
+        root.querySelector('[aria-label="Select thread 1"]').checked = true;
+        root.querySelector('[aria-label="Outcome (optional)"]').value = 'Paid';
+        click('Mark selected threads resolved'); await settle();
+        expect(continuityAction).toHaveBeenCalledWith('markEventResolved', 'a', 'e', [[1], 'Paid']);
+        expect(deps.ensureIndex).toHaveBeenCalledTimes(2);
+        expect(root.textContent).toContain('1 remaining / 1 closed');
+        expect(root.textContent).toContain('Unmark selected threads');
+    });
+
+    it('distinguishes external links and self-closures beneath a user mark', async () => {
+        const event = { event_id: 'e', open_threads: ['a', 'b'] };
+        const closure = { threads: [0], threads_digest: threadsDigest(event), origin: 'repair', status: 'active' };
+        event.continuity = { v: 1, closed_threads: { ...closure, threads: [1], origin: 'user' }, user_previous_closure: closure };
+        const link = { ...closure, event_id: 'e' };
+        const resolver = { event_id: 'resolver', summary: 'Settled', continuity: { v: 1, resolves: [link] } };
+        const continuityAction = vi.fn();
+        const { root } = mount([event, resolver], { continuityAction }); await settle();
+        change('Show closed threads', true, true);
+        expect(root.textContent).toContain('Self-closure: repair');
+        expect(root.textContent).toContain('External resolution link stored on resolver');
+        click('Remove link from resolver'); await settle();
+        expect(continuityAction).toHaveBeenLastCalledWith('removeResolutionLink', 'a', 'e', ['resolver', link]);
+        click('Reopen self-closure'); await settle();
+        expect(continuityAction).toHaveBeenLastCalledWith('reopenEventSelfClosure', 'a', 'e', []);
+        click('Unmark selected threads'); await settle();
+        expect(continuityAction).toHaveBeenLastCalledWith('unmarkEventResolved', 'a', 'e', [[]]);
+    });
+
+    it('reports write failures and allows retry without changing the displayed verdict', async () => {
+        const continuityAction = vi.fn().mockRejectedValue(new Error('Backend unavailable'));
+        const { root, deps } = mount([{ event_id: 'e', open_threads: ['pending'] }], { continuityAction }); await settle();
+        click('Mark resolved — all'); await settle();
+        expect(root.textContent).toContain('Continuity action failed: Backend unavailable');
+        expect(root.textContent).toContain('Open: pending');
+        expect(deps.ensureIndex).toHaveBeenCalledTimes(1);
+        expect([...root.querySelectorAll('.vf-continuity-actions button')].every(b => !b.disabled)).toBe(true);
+    });
+
+    it.each(['scope', 'close', 'context'])('does not refresh a stale window after an in-flight write: %s', async kind => {
+        let finish, context = 'a';
+        const continuityAction = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+        const { deps } = mount([{ event_id: 'e', open_threads: ['pending'] }], { continuityAction, contextKey: () => context });
+        await settle(); click('Mark resolved — all'); click('Mark resolved — all');
+        expect(continuityAction).toHaveBeenCalledTimes(1);
+        if (kind === 'scope') change('Collection scope', 'b');
+        if (kind === 'close') click('Close');
+        if (kind === 'context') { context = 'b'; document.dispatchEvent(new Event('vectfox:api-status-changed')); }
+        finish(); await settle();
+        expect(deps.ensureIndex).toHaveBeenCalledTimes(1);
+    });
     it.each(['scope', 'close', 'cancel', 'context'])('drops delayed renders on %s changes', async kind => {
         let finish, signal, context = 'chat-a';
         const { root, deps } = mount([], { contextKey: () => context,

@@ -1,4 +1,4 @@
-/** Host integration only. No repair-service, write, retrieval or model dependencies. */
+/** Host integration. Manual writes load lazily after an explicit action. */
 import { ensureCharacterIndex } from '../core/character-roster.js';
 import { mountOpenThreadsWindow } from './open-threads-window.js';
 import { getCurrentChatId } from '../../../../../script.js';
@@ -21,6 +21,12 @@ export async function openOpenThreads(settings) {
     mountOpenThreadsWindow({ root, settings, activeCollection: active?.registryKey || active?.collectionId,
         collections: available.map(c => c.registryKey || c.collectionId), deps: {
             ensureIndex: ensureCharacterIndex,
+            continuityAction: async (name, collection, eventId, args) => {
+                const service = await import('../core/continuity-repair-service.js');
+                if (name === 'removeResolutionLink') return service.removeResolutionLink(collection, args[0], args[1], settings);
+                if (!['markEventResolved', 'unmarkEventResolved', 'reopenEventSelfClosure'].includes(name)) throw new Error('Unknown continuity action');
+                return service[name](collection, eventId, settings, ...args);
+            },
             contextKey: () => JSON.stringify([getCurrentChatId(), resolveActiveEventBaseCollection(settings),
                 (status()?.available_collections || []).map(c => c.registryKey || c.collectionId)]),
             openEvent: async (collection, eventId) => {

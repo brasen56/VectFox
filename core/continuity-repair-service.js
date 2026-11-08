@@ -135,14 +135,46 @@ export async function markEventResolved(collectionKey, eventId, settings, thread
     await write(event, continuity);
 }
 
-export async function unmarkEventResolved(collectionKey, eventId, settings) {
+export async function unmarkEventResolved(collectionKey, eventId, settings, threads = 'all') {
     const { entry, write } = await continuityCollection(collectionKey, settings);
     const event = entry.events.get(eventId);
     if (event?.continuity?.closed_threads?.origin !== 'user') return;
     const continuity = JSON.parse(JSON.stringify(event.continuity));
+    if (continuity.v !== 1) throw new Error('Unsupported continuity version');
+    if (threads !== 'all') {
+        if (!Array.isArray(threads) || !threads.length || threads.some(i => !Number.isInteger(i) || i < 0 || i >= event.open_threads.length)) {
+            throw new Error('Select valid original thread indices');
+        }
+        const mark = continuity.closed_threads;
+        // Never revalidate stale/inactive marks by giving them a fresh digest.
+        if (mark.status !== 'active' || mark.threads_digest !== threadsDigest(event)) return;
+        const indices = mark.threads === 'all' ? event.open_threads.map((_, i) => i) : mark.threads;
+        if (!Array.isArray(indices) || indices.some(i => !Number.isInteger(i) || i < 0 || i >= event.open_threads.length)) {
+            throw new Error('Invalid stored user thread indices');
+        }
+        const remaining = indices.filter(i => !threads.includes(i));
+        if (remaining.length) {
+            continuity.closed_threads.threads = remaining;
+            await write(event, continuity);
+            return;
+        }
+    }
     delete continuity.closed_threads;
     if (continuity.user_previous_closure) continuity.closed_threads = continuity.user_previous_closure;
     delete continuity.user_previous_closure;
+    await write(event, continuity);
+}
+
+/** Whole extraction/repair self-closure only; user marks and external links survive. */
+export async function reopenEventSelfClosure(collectionKey, eventId, settings) {
+    const { entry, write } = await continuityCollection(collectionKey, settings);
+    const event = entry.events.get(eventId);
+    if (!event) throw new Error('Event is no longer in the collection');
+    const continuity = JSON.parse(JSON.stringify(event.continuity || { v: 1 }));
+    if (continuity.v !== 1) throw new Error('Unsupported continuity version');
+    const key = continuity.closed_threads?.origin === 'user' ? 'user_previous_closure' : 'closed_threads';
+    if (!['repair', 'extraction'].includes(continuity[key]?.origin)) return;
+    delete continuity[key];
     await write(event, continuity);
 }
 

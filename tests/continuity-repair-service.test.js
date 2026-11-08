@@ -14,7 +14,7 @@ vi.mock('../backends/backend-manager.js', () => ({ getBackendForCollection: asyn
 vi.mock('../core/collection-export.js', () => ({ fetchChunksWithVectors: mocks.fetch }));
 vi.mock('../core/llm-provider-call.js', () => ({ postChatCompletion: mocks.post, resolveModelParameterStyle: () => ({}), parseJsonArrayFromLlm: text => JSON.parse(text) }));
 vi.mock('../core/generation-rate-limiter.js', () => ({ generationRateLimiter: { execute: mocks.execute }, generationRateLimitSettings: () => ({}) }));
-import { createContinuityRepair, markEventResolved, unmarkEventResolved, removeResolutionLink, repairConfiguration } from '../core/continuity-repair-service.js';
+import { createContinuityRepair, markEventResolved, unmarkEventResolved, reopenEventSelfClosure, removeResolutionLink, repairConfiguration, continuityCollection } from '../core/continuity-repair-service.js';
 import { getContinuityView, threadsDigest } from '../core/continuity.js';
 
 beforeEach(() => {
@@ -176,6 +176,76 @@ describe('continuity repair browser adapter', () => {
         mocks.events.get('e1').continuity = { v: 1, resolves: [first, second] };
         await removeResolutionLink('qdrant:collection', 'e1', first, {});
         expect(mocks.events.get('e1').continuity.resolves).toEqual([second]);
+    });
+
+    it('unmarks selected indices from all and restores the prior closure after the last user index', async () => {
+        const event = mocks.events.get('e1');
+        const previous = { threads: [0], threads_digest: threadsDigest(event), origin: 'extraction', status: 'active' };
+        event.continuity = { v: 1, closed_threads: previous };
+        await markEventResolved('qdrant:collection', 'e1', {});
+        await unmarkEventResolved('qdrant:collection', 'e1', {}, [0]);
+        expect(mocks.events.get('e1').continuity.closed_threads.threads).toEqual([1]);
+        expect(getContinuityView(mocks.events.get('e1')).closedThreads).toEqual([0, 1]);
+        await unmarkEventResolved('qdrant:collection', 'e1', {}, [1]);
+        expect(mocks.events.get('e1').continuity).toEqual({ v: 1, closed_threads: previous });
+        expect(getContinuityView(mocks.events.get('e1')).closedThreads).toEqual([0]);
+        expect(mocks.fetch).not.toHaveBeenCalled();
+        expect(mocks.post).not.toHaveBeenCalled();
+    });
+
+    it.each(['repair', 'extraction'])('reopens a whole %s self-closure, directly and beneath user marks', async origin => {
+        const original = structuredClone(mocks.events.get('e1'));
+        const closure = { threads: [0], threads_digest: threadsDigest(original), origin, run: 'r1', status: 'active' };
+        for (const beneath of [false, true]) {
+            mocks.events.set('e1', { ...original, continuity: { v: 1, closed_threads: closure, resolves: [{ event_id: 'other' }] } });
+            if (beneath) await markEventResolved('qdrant:collection', 'e1', {}, [1]);
+            await reopenEventSelfClosure('qdrant:collection', 'e1', {});
+            const event = mocks.events.get('e1');
+            expect(getContinuityView(event).closedThreads).toEqual(beneath ? [1] : []);
+            expect(event.continuity.user_previous_closure).toBeUndefined();
+            expect(event.continuity.resolves).toEqual([{ event_id: 'other' }]);
+            const { continuity, ...archive } = event;
+            expect(archive).toEqual(original);
+        }
+        expect(mocks.write.mock.calls.every(call => Object.keys(call[2]).join() === 'continuity')).toBe(true);
+        expect(mocks.fetch).not.toHaveBeenCalled();
+        expect(mocks.post).not.toHaveBeenCalled();
+        expect(mocks.execute).not.toHaveBeenCalled();
+    });
+
+    it.each(['not_active', 'digest_mismatch'])('never activates an invalid prior closure on partial unmark: %s', async reason => {
+        const event = mocks.events.get('e1');
+        event.continuity = { v: 1, closed_threads: { threads: [0], threads_digest: reason === 'digest_mismatch' ? 'old' : threadsDigest(event),
+            origin: 'repair', status: reason === 'not_active' ? 'undone' : 'active' } };
+        await markEventResolved('qdrant:collection', 'e1', {});
+        await unmarkEventResolved('qdrant:collection', 'e1', {}, [0]);
+        expect(getContinuityView(mocks.events.get('e1')).closedThreads).toEqual([1]);
+        await unmarkEventResolved('qdrant:collection', 'e1', {});
+        expect(getContinuityView(mocks.events.get('e1')).closedThreads).toEqual([]);
+    });
+
+    it('restricts unmark to user marks and reopen to extraction/repair closures', async () => {
+        const event = mocks.events.get('e1');
+        event.continuity = { v: 1, closed_threads: { threads: 'all', threads_digest: threadsDigest(event), origin: 'repair', status: 'active' } };
+        await unmarkEventResolved('qdrant:collection', 'e1', {});
+        expect(mocks.write).not.toHaveBeenCalled();
+        await markEventResolved('qdrant:collection', 'e1', {});
+        await expect(unmarkEventResolved('qdrant:collection', 'e1', {}, [])).rejects.toThrow('valid original');
+        await reopenEventSelfClosure('qdrant:collection', 'e1', {});
+        mocks.write.mockClear();
+        await reopenEventSelfClosure('qdrant:collection', 'e1', {});
+        expect(mocks.write).not.toHaveBeenCalled();
+        expect(getContinuityView(mocks.events.get('e1')).closedThreads).toEqual([0, 1]);
+    });
+
+    it('rejects stale archive or continuity snapshots before metadata PATCH', async () => {
+        const context = await continuityCollection('qdrant:collection', {});
+        const event = structuredClone(mocks.events.get('e1'));
+        mocks.events.get('e1').summary = 'Edited';
+        await expect(context.write(event, { v: 1 })).rejects.toThrow('Event changed');
+        mocks.events.set('e1', { ...event, continuity: { v: 1 } });
+        await expect(context.write(event, { v: 1 })).rejects.toThrow('Event changed');
+        expect(mocks.write).not.toHaveBeenCalled();
     });
 
     it('routes stored vectors by collection backend and charges the repair rate gate with real usage', async () => {

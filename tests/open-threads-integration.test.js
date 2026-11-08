@@ -3,14 +3,19 @@ import { describe, expect, it } from 'vitest';
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 
 describe('Open Threads host wiring', () => {
-    it('wires the action and stylesheet without importing the repair service or public query methods', () => {
+    it('wires the action and stylesheet with lazy manual writes and no repair or query calls', () => {
         const manager = read('../ui/ui-manager.js');
         expect(manager).toContain('id="VectFox_open_threads"');
         expect(manager).toContain("import('./open-threads.js')");
         expect(read('../vectfox.css')).toContain("./ui/open-threads.css");
-        for (const file of ['../core/open-threads.js', '../ui/open-threads.js', '../ui/open-threads-window.js']) {
+        for (const file of ['../core/open-threads.js', '../ui/open-threads-window.js', '../ui/continuity-actions.js']) {
             expect(read(file)).not.toMatch(/continuity-repair-service|createContinuityRepair|continuityCollection|findEvents\(|querySemantic|completeStoryAnswer/);
         }
+        const host = read('../ui/open-threads.js');
+        expect(host).not.toMatch(/^import .*continuity-repair-service/m);
+        expect(host).not.toMatch(/createContinuityRepair|continuityCollection|findEvents\(|querySemantic|completeStoryAnswer/);
+        expect(host).toContain("continuityAction: async (name, collection, eventId, args) => {");
+        expect(host).toContain("await import('../core/continuity-repair-service.js')");
         expect(read('../ui/open-threads.js')).toContain('resolveActiveEventBaseCollection(settings)');
     });
     it('passes source-event identity through the browser to initial visualizer selection', () => {

@@ -16,3 +16,7 @@
 .vf-ot-results article { border: 1px solid var(--SmartThemeBorderColor, #666); border-radius: .5rem; padding: 1rem; margin: .75rem 0; overflow-wrap: anywhere; }
 .vf-ot-results li { margin: .5rem 0; white-space: pre-wrap; }
 .vf-ot-results button { text-align: left; overflow-wrap: anywhere; white-space: normal; }
+.vf-continuity-actions { margin-top: .75rem; }
+.vf-continuity-actions label { display: block; margin: .4rem 0; }
+.vf-continuity-actions button { margin: .25rem; }
+.vf-ot .vf-continuity-actions input[type="text"] { box-sizing: border-box; width: 100%; padding: .5rem; background: var(--SmartThemeBlurTintColor, #242424); color: var(--SmartThemeBodyColor, #ddd); border: 1px solid var(--SmartThemeBorderColor, #666); border-radius: .5rem; }

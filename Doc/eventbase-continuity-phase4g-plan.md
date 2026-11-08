@@ -157,10 +157,12 @@ Add explicit actions on top of 4G-1. Reuse `markEventResolved`,
 ### Decisions to settle in this phase
 
 - Whether to add per-thread unmarking beyond the current whole-user-closure API.
+ - Per-thread unmarking — yes, add it in 4G-2 rather than deferring
 - The precise self-closure reopening contract. The tracker's proposed option is
   a digest-checked **Reopen** action removing the self-closure, or the
   `user_previous_closure` beneath a user mark, through the same write mechanism.
   This is a proposal, not an already-agreed API.
+   - Self-closure reopening — adopt the tracker's proposed digest-checked per-event Reopen, at whole-closure granularity, and don't attempt per-thread reopen.
 
 ### Completion checks
 

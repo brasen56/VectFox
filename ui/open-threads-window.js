@@ -1,5 +1,6 @@
-/** DOM-only, read-only thread window; host and metadata reader are injected. */
+/** DOM-only thread window; host, metadata reader and explicit actions are injected. */
 import { loadOpenThreads, filterOpenThreads, OPEN_THREAD_LIMITS } from '../core/open-threads.js';
+import { mountContinuityActions } from './continuity-actions.js';
 
 export function mountOpenThreadsWindow({ root, settings, collections, activeCollection, deps }) {
     root.classList.add('vf-ot');
@@ -19,7 +20,7 @@ export function mountOpenThreadsWindow({ root, settings, collections, activeColl
         node.addEventListener('click', task);
         return node;
     };
-    let closed = false, operation = 0, controller = null, snapshot = null, page = 0, computed = '';
+    let closed = false, operation = 0, controller = null, snapshot = null, page = 0, computed = '', writing = false;
     const header = el('header');
     el('h3', 'Open Threads', header);
     const cancel = () => { operation++; controller?.abort(); controller = null; };
@@ -30,7 +31,7 @@ export function mountOpenThreadsWindow({ root, settings, collections, activeColl
         deps.onClose();
     };
     button('Close', close, header);
-    el('p', 'Archive-derived status, not whole-story coverage: extraction gaps are invisible. Audit closed threads to inspect potentially incorrect stored closures. Read-only; no model calls or pins.');
+    el('p', 'Archive-derived status, not whole-story coverage: extraction gaps are invisible. Audit closed threads to inspect potentially incorrect stored closures. Manual actions change continuity metadata only; no model calls or pins.');
     el('p', 'Age is the age of the event stating the thread, not its last mention. Approximate message positions are not globally comparable across sibling or slimmed chats. Story age is relative to the latest stored story date in each collection.');
     const scopeLabel = el('label', 'Collection scope (select 1–20; Ctrl/Cmd-click for additional archives)');
     const scope = el('select', null, scopeLabel);
@@ -93,6 +94,22 @@ export function mountOpenThreadsWindow({ root, settings, collections, activeColl
             for (const link of view.inactiveLinks) {
                 el('p', `Inactive link: ${link.reason} · origin ${link.origin || 'unknown'} · event ${link.event_id}. This link does not close threads.`, card);
             }
+            if (deps.continuityAction) mountContinuityActions({ host: card, event, index: row.index,
+                act: async (name, args) => {
+                    if (writing || closed) return;
+                    writing = true;
+                    const run = operation, context = deps.contextKey?.();
+                    root.querySelectorAll('.vf-continuity-actions button').forEach(node => { node.disabled = true; });
+                    try {
+                        await deps.continuityAction(name, collection, event.event_id, args);
+                        if (!closed && run === operation && context === deps.contextKey?.()) await load();
+                    } catch (error) {
+                        if (!closed && run === operation) status.textContent = `Continuity action failed: ${error.message}`;
+                    } finally {
+                        writing = false;
+                        root.querySelectorAll('.vf-continuity-actions button').forEach(node => { node.disabled = false; });
+                    }
+                } });
         }
         if (!rows.length) el('p', 'No stored threads match these filters.', output);
         const previous = button('Previous page', () => { page--; render(); }, paging); previous.disabled = page === 0;
