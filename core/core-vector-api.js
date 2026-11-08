@@ -1445,6 +1445,9 @@ export async function purgeVectorIndex(collectionId, settings) {
         log.lifecycle(`VectFox: Purged vector index for collection ${collectionId}`);
         // Stale-stats fix: entire collection is gone.
         _invalidateCorpusStats(collectionId, 'purge');
+        // A cached scan would still list the purged bucket as readable storage.
+        const { invalidateCollectionDiscovery } = await import('./collection-storage.js');
+        invalidateCollectionDiscovery();
         const { invalidateCharacterIndex } = await import('./character-roster.js');
         invalidateCharacterIndex(collectionId, settings);
         return true;

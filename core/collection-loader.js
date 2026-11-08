@@ -27,6 +27,7 @@ import {
 } from './collection-metadata.js';
 import { purgeVectorIndex } from './core-vector-api.js';
 import { log } from './log.js';
+import { primeCollectionDiscovery } from './collection-storage.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
 import {
     getChatUUID,
@@ -649,6 +650,8 @@ async function discoverViaPlugin(settings) {
         const data = await response.json();
 
         if (data.success && Array.isArray(data.collections)) {
+            // Archive storage routing reuses this scan instead of repeating it.
+            primeCollectionDiscovery(data.collections);
             log.lifecycle(`✅ VectFox: Plugin found ${data.collections.length} collections across all sources`);
 
             // Log the sources found

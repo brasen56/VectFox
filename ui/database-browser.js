@@ -1344,8 +1344,9 @@ async function openChunkVisualizer(collection, focusEventId = null) {
       const requestBody = {
         backend: collection.backend || "vectra",
         collectionId: collection.id,
-        source: storage.source,
-        model: storage.model,
+        // Qdrant storage has no source/model (the plugin ignores them there).
+        source: storage.source ?? (collection.source || "transformers"),
+        model: storage.model ?? (collection.model || ""),
         ...(limit ? { limit } : {}),
       };
 
