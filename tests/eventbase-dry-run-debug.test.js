@@ -56,7 +56,7 @@ const debug = {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    invalidateCharacterIndex('VectFox_eventbase_uuid');
+    invalidateCharacterIndex('qdrant:VectFox_eventbase_uuid');
     getCollectionRegistry.mockReturnValue(['qdrant:VectFox_eventbase_uuid']);
     retrieveEvents.mockResolvedValue({ events: [{ event_id: 'event' }], debug });
     retrieveEventsWithAgent.mockResolvedValue({ events: [{ event_id: 'event' }], debug });
@@ -77,7 +77,7 @@ describe('EventBase dry-run diagnostic contract', () => {
             { event_id: 'ann', summary: 'Ann opened the shop.', characters: ['Ann'] },
             { event_id: 'llc', summary: 'Filed the LLC.', characters: ['Brennan', 'Howard Brennan'] },
         ];
-        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({
+        await ensureCharacterIndex('qdrant:VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({
             items: events.map(event => ({ hash: event.event_id, metadata: event })),
         }) }));
         retrieveEvents.mockResolvedValue({ events: [], debug: {} });
@@ -96,7 +96,7 @@ describe('EventBase dry-run diagnostic contract', () => {
     });
 
     it.each([0, 1])('preserves no-query misses when maximum characters is %s', async maxCharacters => {
-        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: {
+        await ensureCharacterIndex('qdrant:VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: {
             event_id: 'llc', summary: 'Filed the LLC.', characters: ['Brennan'],
         } }] }) }));
         retrieveEvents.mockResolvedValue({ events: [], debug: {} });
@@ -113,7 +113,7 @@ describe('EventBase dry-run diagnostic contract', () => {
 
     it('does not count an unformatted main result as injected character coverage', async () => {
         const event = { event_id: 'llc', summary: 'Filed the LLC.', characters: ['Brennan'] };
-        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({
+        await ensureCharacterIndex('qdrant:VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({
             items: [{ hash: 'llc', metadata: event }],
         }) }));
         retrieveEvents.mockResolvedValue({ events: [event], debug: {} });
@@ -127,7 +127,7 @@ describe('EventBase dry-run diagnostic contract', () => {
     it.each([false, true])('recalls the LLC via cast history even with an empty main lane (Agent Mode=%s)', async agentic => {
         const event = { event_id: 'llc', summary: 'Drafted and filed the LLC formation and operating agreement.',
             characters: ['Howard Brennan'], DateTime: '2026-06-03', importance: 1, source_window_end: 1 };
-        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: event }] }) }));
+        await ensureCharacterIndex('qdrant:VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: event }] }) }));
         const mainDebug = { candidateOutcomes: { llc: { outcome: 'failed_importance_filter', summary: event.summary } },
             plannerQuerySummary: [{ queryText: 'LLC', hitsReturned: 1, uniqueHits: 1, survivedCount: 0 }] };
         retrieveEvents.mockResolvedValue({ events: [], debug: mainDebug });
@@ -150,7 +150,7 @@ describe('EventBase dry-run diagnostic contract', () => {
     });
 
     it('appends cast history after the main block inside the global wrapper', async () => {
-        await ensureCharacterIndex('VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: {
+        await ensureCharacterIndex('qdrant:VectFox_eventbase_uuid', {}, async () => ({ listChunks: async () => ({ items: [{ hash: 'llc', metadata: {
             event_id: 'llc', summary: 'Filed the LLC.', characters: ['Brennan'],
         } }] }) }));
         const result = await runEventBaseRetrieval({ ...params, testMessage: 'Brennan', settings: { rag_context: 'Background', rag_xml_tag: 'memory' } });

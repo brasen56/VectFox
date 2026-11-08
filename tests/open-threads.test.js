@@ -9,6 +9,33 @@ const event = (id, extra = {}) => ({ event_id: id, summary: `Summary ${id}`, ope
 const archive = events => [{ collection: 'a', events }];
 
 describe('read-only thread projection', () => {
+    it.each([undefined, null])('orders ingestion fallback before importance with position %s', position => {
+        const snapshot = buildOpenThreadSnapshot(archive([
+            event('new', { source_window_end: position, inserted_at: '2026-01-01', importance: 9 }),
+            event('old-low', { source_window_end: position, created_at: '2020-01-01', importance: 1 }),
+            event('old-high', { source_window_end: position, inserted_at: Date.parse('2020-01-01'), importance: 8 }),
+        ]));
+        expect(snapshot.rows.map(row => row.event.event_id)).toEqual(['old-high', 'old-low', 'new']);
+        expect(snapshot.rows.every(row => row.age.includes('(fallback)'))).toBe(true);
+    });
+
+    it('scans colliding backend IDs independently and keeps resolver authority local', async () => {
+        const target = event('same');
+        const resolver = event('resolver', { open_threads: [], continuity: { v: 1, resolves: [{ event_id: 'same',
+            threads: [0], threads_digest: threadsDigest(target), status: 'active', origin: 'extraction' }] } });
+        const readers = [vi.fn(async () => ({ items: [{ hash: 'q', metadata: target }, { hash: 'r', metadata: resolver }] })),
+            vi.fn(async () => ({ items: [{ hash: 's', metadata: { ...target, summary: 'Standard evidence' } }] }))];
+        const keys = ['qdrant:thread-collision', 'standard:thread-collision'];
+        for (const [i, key] of keys.entries()) {
+            invalidateCharacterIndex(key);
+            await ensureCharacterIndex(key, {}, async () => ({ listChunks: readers[i] }));
+        }
+        const snapshot = await loadOpenThreads(keys, {}, ensureCharacterIndex);
+        expect(readers.map(reader => reader.mock.calls.length)).toEqual([1, 1]);
+        expect(snapshot.rows.find(row => row.collection === keys[0]).indices).toEqual([1]);
+        expect(snapshot.rows.find(row => row.collection === keys[1])).toMatchObject({ indices: [0, 1], event: { hash: 's', summary: 'Standard evidence' } });
+        keys.forEach(key => invalidateCharacterIndex(key));
+    });
     it('uses all-scope enumeration, original partial indices and the resolver audit, without mutations', () => {
         const target = event('issue');
         const resolver = event('payment', { open_threads: [], continuity: { v: 1, resolves: [{ event_id: 'issue',

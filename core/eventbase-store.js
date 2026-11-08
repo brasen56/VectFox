@@ -411,7 +411,7 @@ export async function insertEvents(events, settings, abortSignal = null, collect
     log.lifecycle(`[EventBase] Inserting ${items.length} event(s) into collection "${collectionId}"`);
 
     await insertVectorItems(collectionId, items, settings, null, abortSignal);
-    upsertCharacterEvents(collectionId, items);
+    upsertCharacterEvents(collectionId, items, settings);
 
     // Register collection so it appears in the registry / DB browser.
     // Use backend:collectionId format so the key survives plugin-based discovery
@@ -487,7 +487,7 @@ export async function deleteEventByHash(hash, settings, chatUUID) {
     if (!collectionId) return;
 
     await deleteVectorItems(collectionId, [hash], settings);
-    pruneCharacterEvents(collectionId, [hash]);
+    pruneCharacterEvents(collectionId, [hash], settings);
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,7 +1026,7 @@ export function clearExtractionCachesForChat(chatUUID) {
     if (!uuid) return;
     clearWindowCacheForChat(uuid);
     clearVectorizationTip(uuid);
-    for (const collection of findEventBaseCollectionsForChat(uuid)) invalidateCharacterIndex(collection.collectionId);
+    for (const collection of findEventBaseCollectionsForChat(uuid)) invalidateCharacterIndex(collection.registryKey || collection.collectionId);
 }
 
 /**

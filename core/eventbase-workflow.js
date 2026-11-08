@@ -1288,7 +1288,7 @@ export async function runEventBaseRetrieval({ chat, searchText, settings, chatUU
         .slice(0, 4)
         .map(m => m.mes);
 
-    const continuityRoster = getCharacterRoster([...lockedLiveCollections, ...archiveCollections].map(c => c.collectionId), settings);
+    const continuityRoster = getCharacterRoster([...lockedLiveCollections, ...archiveCollections].map(c => c.registryKey || c.collectionId), settings);
     const { events, debug } = await retrieveFn({
         continuityRoster,
         searchText: effectiveSearchText,

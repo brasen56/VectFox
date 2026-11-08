@@ -15,6 +15,48 @@ const item = (id, characters, extra = {}) => {
 };
 const group = (roster, name) => roster.groups.find(g => g.name === name);
 
+describe('shared roster scan ownership', () => {
+    it.each([true, false])('keeps independent consumers alive when the panel cancels (panel first: %s)', async panelFirst => {
+        const id = `shared-${panelFirst}`;
+        invalidateCharacterIndex(id);
+        let release;
+        const listChunks = vi.fn(() => new Promise(resolve => { release = resolve; }));
+        const loader = async () => ({ listChunks });
+        const controller = new AbortController();
+        const panel = () => ensureCharacterIndex(id, {}, loader, { signal: controller.signal, maxRecords: 1, pageSize: 1 });
+        const independent = () => ensureCharacterIndex(id, {}, loader);
+        const first = panelFirst ? panel() : independent();
+        await Promise.resolve();
+        const second = panelFirst ? independent() : panel();
+        const cancelled = expect(panelFirst ? first : second).rejects.toMatchObject({ name: 'AbortError' });
+        controller.abort();
+        await cancelled;
+        release({ items: [item('1', ['Kai'])], total: 1 });
+        const entry = await (panelFirst ? second : first);
+        expect(entry.ready).toBe(true);
+        expect(entry.events.size).toBe(1);
+        expect(listChunks).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([true, false])('enforces each joining caller ceiling (bounded first: %s)', async boundedFirst => {
+        const id = `ceilings-${boundedFirst}`;
+        invalidateCharacterIndex(id);
+        let release;
+        const listChunks = vi.fn().mockImplementationOnce(() => new Promise(resolve => { release = resolve; }))
+            .mockResolvedValue({ items: [item('2', ['Kai'])], total: 2 });
+        const loader = async () => ({ listChunks });
+        const bounded = () => ensureCharacterIndex(id, {}, loader, { maxRecords: 1, pageSize: 1 });
+        const unbounded = () => ensureCharacterIndex(id, {}, loader);
+        const first = boundedFirst ? bounded() : unbounded();
+        await Promise.resolve();
+        const second = boundedFirst ? unbounded() : bounded();
+        release({ items: boundedFirst ? [item('1', ['Kai'])] : [item('1', ['Kai']), item('2', ['Kai'])], total: 2 });
+        expect(await (boundedFirst ? first : second)).toBeNull();
+        expect((await (boundedFirst ? second : first)).events.size).toBe(2);
+        expect(await bounded()).toBeNull();
+    });
+});
+
 describe('character alias grouping', () => {
     it('combines Ezra and Ezra Blackwell automatically when the longer name is unique', () => {
         const roster = buildCharacterRoster([event('1', ['Ezra']), event('2', ['Ezra Blackwell']), event('3', ['Ezra', 'Ezra Blackwell'])]);
@@ -107,13 +149,15 @@ describe('collection event index', () => {
         const first = Array.from({ length: 500 }, (_, i) => item(String(i), ['Brennan']));
         const listChunks = vi.fn().mockResolvedValueOnce({ items: first, total: 501 }).mockResolvedValueOnce({ items: [item('500', ['Howard Brennan'])], total: 501 });
         const loader = vi.fn(async () => ({ listChunks }));
-        const promise = ensureCharacterIndex('qdrant:one', {}, loader);
-        expect(ensureCharacterIndex('one', {}, loader)).toBe(promise);
-        expect(getCharacterRoster(['one']).ready).toBe(false);
+        const settings = { vector_backend: 'qdrant' };
+        const promise = ensureCharacterIndex('qdrant:one', settings, loader);
+        expect(ensureCharacterIndex('one', settings, loader)).toBe(promise);
+        expect(getCharacterRoster(['one'], settings).ready).toBe(false);
         await promise;
         expect(loader).toHaveBeenCalledTimes(1);
         expect(listChunks.mock.calls.map(c => [c[0], c[2].offset])).toEqual([['one', 0], ['one', 500]]);
-        expect(getCharacterRoster(['one']).totalEvents).toBe(501);
+        expect(getCharacterRoster(['one'], settings).totalEvents).toBe(501);
+        invalidateCharacterIndex('qdrant:one');
     });
 
     it('continues through backend-capped short pages when total says there is more', async () => {
@@ -168,7 +212,7 @@ describe('collection event index', () => {
         await ensureCharacterIndex('one', {}, async () => ({ listChunks: async () => ({ items: [item('1', ['Kai']), item('2', ['Brennan'])] }) }));
         await ensureCharacterIndex('two', {}, async () => ({ listChunks: async () => ({ items: [item('1', ['Kai']), item('3', ['Howard Brennan'])] }) }));
         const settings = { eventbase_character_alias_overrides: { two: [{ name: 'Lawyer', aliases: ['Brennan', 'Howard Brennan'] }] } };
-        const union = getCharacterRoster(['one', 'qdrant:two'], settings);
+        const union = getCharacterRoster(['one', 'standard:two'], settings);
         expect(union.totalEvents).toBe(3);
         expect(group(union, 'Lawyer').eventCount).toBe(2);
         expect(getCharacterRoster(['one']).totalEvents).toBe(2);
@@ -267,7 +311,7 @@ describe('collection event index', () => {
         for (const id of ['one', 'two']) await ensureCharacterIndex(id, {}, async () => ({ listChunks: async () => ({ items }) }));
         const settings = { eventbase_character_ignored_tags: { one: ['the nurse'] } };
         expect(group(getCharacterRoster(['one'], settings), 'the nurse')).toBeUndefined();
-        expect(group(getCharacterRoster(['qdrant:one', 'two'], settings), 'the nurse').eventCount).toBe(1);
+        expect(group(getCharacterRoster(['standard:one', 'two'], settings), 'the nurse').eventCount).toBe(1);
         settings.eventbase_character_ignored_tags.two = ['the nurse'];
         const union = getCharacterRoster(['one', 'two'], settings);
         expect(union.totalEvents).toBe(1);

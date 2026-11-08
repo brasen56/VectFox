@@ -1,18 +1,30 @@
 /** Browser integration: backend routing, tiny settings checkpoints and shared generation quota. */
 import { extension_settings } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
-import { ensureCharacterIndex, getCharacterRoster, rosterCollectionId, upsertCharacterEvents } from './character-roster.js';
+import { ensureCharacterIndex, getCharacterRoster, rosterCollectionId, rosterCollectionKey, upsertCharacterEvents } from './character-roster.js';
 import { resolveBackendForCollection } from './collection-ids.js';
 import { getBackend, getBackendForCollection } from '../backends/backend-manager.js';
 import { fetchChunksWithVectors } from './collection-export.js';
 import { postChatCompletion, parseJsonArrayFromLlm, resolveModelParameterStyle } from './llm-provider-call.js';
 import { generationRateLimiter, generationRateLimitSettings } from './generation-rate-limiter.js';
 import { ContinuityRepair, repairLanguageMode } from './continuity-repair.js';
-import { threadsDigest } from './continuity.js';
+import { threadsDigest, continuityActionSnapshot } from './continuity.js';
 
 const collectionOperations = new Map();
+const eventWrites = new Map();
+
+/** One-runtime check/PATCH/cache transaction. Other tabs need backend conditional writes. */
+async function serializeEventWrite(key, operation) {
+    const previous = eventWrites.get(key) || Promise.resolve();
+    const pending = previous.then(operation);
+    const tail = pending.catch(() => {});
+    eventWrites.set(key, tail);
+    try { return await pending; }
+    finally { if (eventWrites.get(key) === tail) eventWrites.delete(key); }
+}
 
 export async function continuityCollection(collectionKey, settings) {
+    collectionKey = rosterCollectionKey(collectionKey, settings);
     const id = rosterCollectionId(collectionKey);
     const resolved = resolveBackendForCollection(collectionKey);
     const backend = resolved.backend ? await getBackendForCollection(resolved.backend, settings) : await getBackend(settings);
@@ -24,19 +36,20 @@ export async function continuityCollection(collectionKey, settings) {
         return entry;
     };
     const entry = await currentEntry();
-    const write = async (event, continuity) => {
+    const write = (event, continuity, expected = null) => serializeEventWrite(JSON.stringify([collectionKey, event.event_id]), async () => {
         const latest = (await currentEntry()).events.get(event.event_id);
-        if (!latest || threadsDigest(latest) !== threadsDigest(event)
+        assertReviewedEvent(latest, expected);
+        if (!latest || latest.hash !== event.hash || threadsDigest(latest) !== threadsDigest(event)
             || JSON.stringify(latest.continuity) !== JSON.stringify(event.continuity)) {
-            throw new Error('Event changed before continuity write; retry with the current inventory');
+            throw new Error('Event changed before continuity write. Refresh and review the current inventory before trying again.');
         }
         // Metadata PATCH changes no text, vector, archive fields or extraction bookkeeping.
         const result = await backend.updateChunkMetadata(id, event.hash, { continuity }, settings);
         if (result?.success === false) throw new Error(result.error || 'Continuity write failed');
         const current = (await currentEntry()).events.get(event.event_id);
-        if (current) upsertCharacterEvents(id, [{ hash: current.hash, metadata: { ...current, continuity } }]);
-    };
-    return { id, entry, backend, write, currentEntry };
+        if (current) upsertCharacterEvents(collectionKey, [{ hash: current.hash, metadata: { ...current, continuity } }], settings);
+    });
+    return { id, key: collectionKey, entry, backend, write, currentEntry };
 }
 
 export function repairConfiguration(settings, override = {}) {
@@ -69,11 +82,11 @@ export async function createContinuityRepair(collectionKey, settings, override =
     };
     await loadVectors(context.entry.events);
     if (vectors.size < context.entry.events.size) throw new Error('Incomplete vector inventory; repair cannot safely proceed');
-    if (!collectionOperations.has(context.id)) collectionOperations.set(context.id, { tail: Promise.resolve() });
+    if (!collectionOperations.has(context.key)) collectionOperations.set(context.key, { tail: Promise.resolve() });
     const effectiveModel = `${provider}/${model}`;
     const engine = new ContinuityRepair({ events: context.entry.events, vectors,
-        operations: collectionOperations.get(context.id),
-        groups: getCharacterRoster([context.id], settings).groups, write: context.write, model: effectiveModel, endpoint: url,
+        operations: collectionOperations.get(context.key),
+        groups: getCharacterRoster([context.key], settings).groups, write: context.write, model: effectiveModel, endpoint: url,
         language: repairLanguageMode(settings),
         refresh: async () => {
             const events = (await context.currentEntry()).events;
@@ -81,7 +94,7 @@ export async function createContinuityRepair(collectionKey, settings, override =
                 // Missing or stale exported vectors are excluded, never paired with edited text.
                 await loadVectors(events);
             }
-            return { events, vectors, groups: getCharacterRoster([context.id], settings).groups };
+            return { events, vectors, groups: getCharacterRoster([context.key], settings).groups };
         },
         checkpoint: state => {
             settings.eventbase_continuity_repair ??= {};
@@ -113,9 +126,16 @@ export async function createContinuityRepair(collectionKey, settings, override =
     return engine;
 }
 
-export async function markEventResolved(collectionKey, eventId, settings, threads = 'all', how = 'Marked resolved by the user.') {
+function assertReviewedEvent(event, expected) {
+    if (expected && (!event || JSON.stringify(continuityActionSnapshot(event)) !== JSON.stringify(expected))) {
+        throw new Error('Event changed since review. Refresh and review the current evidence before trying again.');
+    }
+}
+
+export async function markEventResolved(collectionKey, eventId, settings, threads = 'all', how = 'Marked resolved by the user.', expected = null) {
     const { entry, write } = await continuityCollection(collectionKey, settings);
     const event = entry.events.get(eventId);
+    assertReviewedEvent(event, expected);
     if (!event) throw new Error('Event is no longer in the collection');
     if (threads !== 'all' && (!Array.isArray(threads) || !threads.length || threads.some(i => !Number.isInteger(i) || i < 0 || i >= event.open_threads.length))) {
         throw new Error('Select valid original thread indices');
@@ -132,12 +152,13 @@ export async function markEventResolved(collectionKey, eventId, settings, thread
     // applies it) and comes back as the closure on Unmark.
     if (current?.origin !== 'user' && current) continuity.user_previous_closure = current;
     continuity.closed_threads = { threads: merged, threads_digest: digest, how: String(how).slice(0, 200), origin: 'user', run: null, status: 'active' };
-    await write(event, continuity);
+    await write(event, continuity, expected);
 }
 
-export async function unmarkEventResolved(collectionKey, eventId, settings, threads = 'all') {
+export async function unmarkEventResolved(collectionKey, eventId, settings, threads = 'all', expected = null) {
     const { entry, write } = await continuityCollection(collectionKey, settings);
     const event = entry.events.get(eventId);
+    assertReviewedEvent(event, expected);
     if (event?.continuity?.closed_threads?.origin !== 'user') return;
     const continuity = JSON.parse(JSON.stringify(event.continuity));
     if (continuity.v !== 1) throw new Error('Unsupported continuity version');
@@ -155,34 +176,36 @@ export async function unmarkEventResolved(collectionKey, eventId, settings, thre
         const remaining = indices.filter(i => !threads.includes(i));
         if (remaining.length) {
             continuity.closed_threads.threads = remaining;
-            await write(event, continuity);
+            await write(event, continuity, expected);
             return;
         }
     }
     delete continuity.closed_threads;
     if (continuity.user_previous_closure) continuity.closed_threads = continuity.user_previous_closure;
     delete continuity.user_previous_closure;
-    await write(event, continuity);
+    await write(event, continuity, expected);
 }
 
 /** Whole extraction/repair self-closure only; user marks and external links survive. */
-export async function reopenEventSelfClosure(collectionKey, eventId, settings) {
+export async function reopenEventSelfClosure(collectionKey, eventId, settings, expected = null) {
     const { entry, write } = await continuityCollection(collectionKey, settings);
     const event = entry.events.get(eventId);
+    assertReviewedEvent(event, expected);
     if (!event) throw new Error('Event is no longer in the collection');
     const continuity = JSON.parse(JSON.stringify(event.continuity || { v: 1 }));
     if (continuity.v !== 1) throw new Error('Unsupported continuity version');
     const key = continuity.closed_threads?.origin === 'user' ? 'user_previous_closure' : 'closed_threads';
     if (!['repair', 'extraction'].includes(continuity[key]?.origin)) return;
     delete continuity[key];
-    await write(event, continuity);
+    await write(event, continuity, expected);
 }
 
-export async function removeResolutionLink(collectionKey, owner, link, settings) {
+export async function removeResolutionLink(collectionKey, owner, link, settings, expected = null) {
     const { entry, write } = await continuityCollection(collectionKey, settings);
     const event = entry.events.get(owner);
+    assertReviewedEvent(event, expected);
     if (!event?.continuity) return;
     const continuity = JSON.parse(JSON.stringify(event.continuity));
     continuity.resolves = (continuity.resolves || []).filter(candidate => JSON.stringify(candidate) !== JSON.stringify(link));
-    await write(event, continuity);
+    await write(event, continuity, expected);
 }

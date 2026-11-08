@@ -69,7 +69,7 @@ export function mountCharacterCardsWindow({ root, settings, collections, deps })
     selector.hidden = collections.length < 2;
     iconButton('fa-rotate', 'Reload characters', header, () => {
         if (!discardOk()) return;
-        deps.invalidate?.(state.key);
+        deps.invalidate?.(state.key, settings);
         void load();
     });
     iconButton('fa-xmark', 'Close', header, () => { if (discardOk()) deps.onClose(); });
@@ -98,7 +98,7 @@ export function mountCharacterCardsWindow({ root, settings, collections, deps })
     const buildContext = () => {
         const id = deps.collectionId(state.key);
         const namespace = continuityBackendNamespace(state.key, settings);
-        return { id, namespace, identityKey: subjectRegistryKey(namespace, id), roster: deps.getRoster([id], settings),
+        return { id, namespace, identityKey: subjectRegistryKey(namespace, id), roster: deps.getRoster([state.key], settings),
             ignoredTags: deps.ignoredTags(id, settings), snapshots: new Map(), cleanup: null };
     };
     const load = async () => {

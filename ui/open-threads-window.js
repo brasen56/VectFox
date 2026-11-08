@@ -20,7 +20,7 @@ export function mountOpenThreadsWindow({ root, settings, collections, activeColl
         node.addEventListener('click', task);
         return node;
     };
-    let closed = false, operation = 0, controller = null, snapshot = null, page = 0, computed = '', writing = false;
+    let closed = false, operation = 0, scopeRevision = 0, controller = null, snapshot = null, page = 0, computed = '', writing = false;
     const header = el('header');
     el('h3', 'Open Threads', header);
     const cancel = () => { operation++; controller?.abort(); controller = null; };
@@ -95,16 +95,16 @@ export function mountOpenThreadsWindow({ root, settings, collections, activeColl
                 el('p', `Inactive link: ${link.reason} · origin ${link.origin || 'unknown'} · event ${link.event_id}. This link does not close threads.`, card);
             }
             if (deps.continuityAction) mountContinuityActions({ host: card, event, index: row.index,
-                act: async (name, args) => {
+                act: async (name, args, expected) => {
                     if (writing || closed) return;
                     writing = true;
-                    const run = operation, context = deps.contextKey?.();
+                    const run = scopeRevision, context = deps.contextKey?.();
                     root.querySelectorAll('.vf-continuity-actions button').forEach(node => { node.disabled = true; });
                     try {
-                        await deps.continuityAction(name, collection, event.event_id, args);
-                        if (!closed && run === operation && context === deps.contextKey?.()) await load();
+                        await deps.continuityAction(name, collection, event.event_id, args, expected);
+                        if (!closed && run === scopeRevision && context === deps.contextKey?.()) await load();
                     } catch (error) {
-                        if (!closed && run === operation) status.textContent = `Continuity action failed: ${error.message}`;
+                        if (!closed && run === scopeRevision && context === deps.contextKey?.()) status.textContent = `Continuity action failed: ${error.message}`;
                     } finally {
                         writing = false;
                         root.querySelectorAll('.vf-continuity-actions button').forEach(node => { node.disabled = false; });
@@ -117,9 +117,9 @@ export function mountOpenThreadsWindow({ root, settings, collections, activeColl
         const next = button('Next page', () => { page++; render(); }, paging);
         next.disabled = (page + 1) * OPEN_THREAD_LIMITS.pageSize >= rows.length;
     };
-    const clear = message => { cancel(); snapshot = null; output.replaceChildren(); paging.replaceChildren(); status.textContent = message; };
+    const clear = (message, invalidate = true) => { if (invalidate) scopeRevision++; cancel(); snapshot = null; output.replaceChildren(); paging.replaceChildren(); status.textContent = message; };
     const load = async () => {
-        clear('Loading archive metadata…');
+        clear('Loading archive metadata…', false);
         const run = operation, context = deps.contextKey?.();
         const request = new AbortController(); controller = request;
         try {

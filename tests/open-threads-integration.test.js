@@ -14,7 +14,7 @@ describe('Open Threads host wiring', () => {
         const host = read('../ui/open-threads.js');
         expect(host).not.toMatch(/^import .*continuity-repair-service/m);
         expect(host).not.toMatch(/createContinuityRepair|continuityCollection|findEvents\(|querySemantic|completeStoryAnswer/);
-        expect(host).toContain("continuityAction: async (name, collection, eventId, args) => {");
+        expect(host).toContain("continuityAction: async (name, collection, eventId, args, expected) => {");
         expect(host).toContain("await import('../core/continuity-repair-service.js')");
         expect(read('../ui/open-threads.js')).toContain('resolveActiveEventBaseCollection(settings)');
     });

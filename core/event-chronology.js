@@ -65,7 +65,8 @@ export function storyTimeMs(event, range = null) {
 
 /** Ingestion order, which follows story order for sequential auto-sync. */
 export function ingestedAtMs(event) {
-    return Number(event?.inserted_at) || Number(event?.created_at) || Date.parse(event?.created_at) || 0;
+    return Number(event?.inserted_at) || Date.parse(event?.inserted_at)
+        || Number(event?.created_at) || Date.parse(event?.created_at) || 0;
 }
 
 const positionOf = event => (Number.isFinite(Number(event?.source_window_end)) ? Number(event.source_window_end) : -Infinity);

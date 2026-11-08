@@ -21,6 +21,12 @@ export function threadsDigest(event) {
     return (hash >>> 0).toString(36);
 }
 
+/** Immutable precondition captured from the evidence displayed by manual controls. */
+export function continuityActionSnapshot(event) {
+    return { eventId: event.event_id, hash: event.hash, digest: threadsDigest(event),
+        continuity: JSON.stringify(event.continuity) };
+}
+
 export function buildResolvedBy(events) {
     const map = new Map();
     for (const resolver of events) {

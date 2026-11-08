@@ -49,12 +49,14 @@ export function buildOpenThreadSnapshot(archives, settings = {}) {
     // compareChronology includes deterministic position/id tie-breaks; equal age gets importance first.
     rows.sort((a, b) => {
         const ta = storyTimeMs(a.event, a.range), tb = storyTimeMs(b.event, b.range);
-        const tied = ta === tb && (ta != null || a.event.source_window_end === b.event.source_window_end);
+        const pa = a.event.source_window_end ?? (ingestedAtMs(a.event) || undefined);
+        const pb = b.event.source_window_end ?? (ingestedAtMs(b.event) || undefined);
+        const tied = ta === tb && (ta != null || pa === pb);
         return (tied ? Number(b.event.importance || 0) - Number(a.event.importance || 0) : 0)
             || compareChronology({ ...a.event, DateTime: ta == null ? null : a.event.DateTime,
-                source_window_end: a.event.source_window_end ?? (ingestedAtMs(a.event) || undefined) },
+                source_window_end: pa },
                 { ...b.event, DateTime: tb == null ? null : b.event.DateTime,
-                    source_window_end: b.event.source_window_end ?? (ingestedAtMs(b.event) || undefined) })
+                    source_window_end: pb })
             || a.collection.localeCompare(b.collection);
     });
     return { rows, groups };

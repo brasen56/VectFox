@@ -21,11 +21,13 @@ export async function openOpenThreads(settings) {
     mountOpenThreadsWindow({ root, settings, activeCollection: active?.registryKey || active?.collectionId,
         collections: available.map(c => c.registryKey || c.collectionId), deps: {
             ensureIndex: ensureCharacterIndex,
-            continuityAction: async (name, collection, eventId, args) => {
+            continuityAction: async (name, collection, eventId, args, expected) => {
                 const service = await import('../core/continuity-repair-service.js');
-                if (name === 'removeResolutionLink') return service.removeResolutionLink(collection, args[0], args[1], settings);
+                if (name === 'removeResolutionLink') return service.removeResolutionLink(collection, args[0], args[1], settings, expected);
                 if (!['markEventResolved', 'unmarkEventResolved', 'reopenEventSelfClosure'].includes(name)) throw new Error('Unknown continuity action');
-                return service[name](collection, eventId, settings, ...args);
+                if (name === 'markEventResolved') return service.markEventResolved(collection, eventId, settings, ...args, expected);
+                if (name === 'unmarkEventResolved') return service.unmarkEventResolved(collection, eventId, settings, args[0], expected);
+                return service.reopenEventSelfClosure(collection, eventId, settings, expected);
             },
             contextKey: () => JSON.stringify([getCurrentChatId(), resolveActiveEventBaseCollection(settings),
                 (status()?.available_collections || []).map(c => c.registryKey || c.collectionId)]),

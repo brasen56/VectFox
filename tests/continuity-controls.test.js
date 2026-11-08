@@ -5,7 +5,7 @@ vi.mock('../core/continuity-repair-service.js', () => ({ continuityCollection: m
     markEventResolved: mocks.mark, unmarkEventResolved: mocks.unmark,
     reopenEventSelfClosure: mocks.reopen, removeResolutionLink: mocks.remove }));
 import { mountContinuityControls } from '../ui/continuity-controls.js';
-import { threadsDigest } from '../core/continuity.js';
+import { continuityActionSnapshot, threadsDigest } from '../core/continuity.js';
 
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const click = text => [...document.querySelectorAll('button')].find(node => node.textContent === text).click();
@@ -37,20 +37,20 @@ describe('database-browser shared continuity controls', () => {
         expect([...root.querySelectorAll('button')].some(node => node.textContent === 'Unmark')).toBe(false);
         root.querySelector('[aria-label="Select thread 1"]').checked = true;
         click('Mark selected threads resolved'); await settle();
-        expect(mocks.mark).toHaveBeenCalledWith('archive', 'e', settings, [1], 'Marked resolved by the user.');
+        expect(mocks.mark).toHaveBeenCalledWith('archive', 'e', settings, [1], 'Marked resolved by the user.', continuityActionSnapshot(event));
         expect(root.textContent).toContain('Resolved');
         expect(root.textContent).toContain('Unmark selected threads');
         expect(changed).toHaveBeenCalledWith(events.get('e').continuity);
         root.querySelector('[aria-label="Select thread 1"]').checked = true;
         click('Unmark selected threads'); await settle();
-        expect(mocks.unmark).toHaveBeenCalledWith('archive', 'e', settings, [1]);
+        expect(mocks.unmark).toHaveBeenCalledWith('archive', 'e', settings, [1], continuityActionSnapshot(events.get('e')));
         click('Reopen self-closure'); await settle();
-        expect(mocks.reopen).toHaveBeenCalledWith('archive', 'e', settings);
+        expect(mocks.reopen).toHaveBeenCalledWith('archive', 'e', settings, continuityActionSnapshot(events.get('e')));
         const link = { ...closure, event_id: 'e' };
         events.set('owner', { event_id: 'owner', continuity: { v: 1, resolves: [link] } });
         click('Unmark'); await settle();
         click('Remove link from owner'); await settle();
-        expect(mocks.remove).toHaveBeenCalledWith('archive', 'owner', link, settings);
+        expect(mocks.remove).toHaveBeenCalledWith('archive', 'owner', link, settings, continuityActionSnapshot(events.get('owner')));
         expect(currentEntry.mock.calls.length).toBeGreaterThan(5);
     });
 });

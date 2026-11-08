@@ -1,5 +1,8 @@
 /** Shared DOM controls. Writes are supplied by the host and never run on mount. */
+import { continuityActionSnapshot } from '../core/continuity.js';
+
 export function mountContinuityActions({ host, event, index, act }) {
+    const reviewed = continuityActionSnapshot(event);
     const el = (tag, text, parent = host) => {
         const node = document.createElement(tag);
         if (text != null) node.textContent = text;
@@ -21,10 +24,10 @@ export function mountContinuityActions({ host, event, index, act }) {
     note.type = 'text'; note.maxLength = 200; note.placeholder = 'Outcome (optional)';
     note.setAttribute('aria-label', 'Outcome (optional)');
     const selected = () => checks.flatMap((check, i) => check.checked ? [i] : []);
-    const action = (text, name, args) => {
+    const action = (text, name, args, expected = reviewed) => {
         const button = el('button', text, controls);
         button.type = 'button'; button.className = 'vectfox-btn vectfox-btn-secondary menu_button';
-        button.addEventListener('click', () => act(name, args()));
+        button.addEventListener('click', () => act(name, args(), expected));
     };
     const markArgs = threads => [threads, note.value || 'Marked resolved by the user.'];
     action('Mark resolved — all', 'markEventResolved', () => markArgs('all'));
@@ -41,7 +44,7 @@ export function mountContinuityActions({ host, event, index, act }) {
     }
     for (const { resolver, link } of index.resolvedBy.get(event.event_id) || []) {
         el('p', `External resolution link stored on ${resolver.event_id}: ${resolver.summary || ''} · ${link.origin} · ${link.status} · threads ${JSON.stringify(link.threads)} · ${link.how || '(no note)'}`, controls);
-        action(`Remove link from ${resolver.event_id}`, 'removeResolutionLink', () => [resolver.event_id, link]);
+        action(`Remove link from ${resolver.event_id}`, 'removeResolutionLink', () => [resolver.event_id, link], continuityActionSnapshot(resolver));
     }
     return controls;
 }

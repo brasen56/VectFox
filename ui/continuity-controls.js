@@ -19,13 +19,15 @@ export async function mountContinuityControls(host, collectionKey, eventId, sett
         $('<h4>').text('Event continuity').appendTo(host);
         $('<p>').text(view.fullyResolved ? 'Resolved' : `${view.remainingThreads.length} remaining threads`).appendTo(host);
         $('<p>').text(renderResolution(view) || 'No active resolution.').appendTo(host);
-        mountContinuityActions({ host: host[0], event: current, index: roster, act: async (name, args) => {
+        mountContinuityActions({ host: host[0], event: current, index: roster, act: async (name, args, expected) => {
             if (busy) return;
             busy = true;
             host[0].querySelectorAll('button').forEach(node => { node.disabled = true; });
             try {
-                if (name === 'removeResolutionLink') await service.removeResolutionLink(collectionKey, args[0], args[1], settings);
-                else await service[name](collectionKey, eventId, settings, ...args);
+                if (name === 'removeResolutionLink') await service.removeResolutionLink(collectionKey, args[0], args[1], settings, expected);
+                else if (name === 'markEventResolved') await service.markEventResolved(collectionKey, eventId, settings, ...args, expected);
+                else if (name === 'unmarkEventResolved') await service.unmarkEventResolved(collectionKey, eventId, settings, args[0], expected);
+                else await service.reopenEventSelfClosure(collectionKey, eventId, settings, expected);
                 const fresh = await context.currentEntry();
                 changed?.(fresh.events.get(eventId)?.continuity);
                 await render();

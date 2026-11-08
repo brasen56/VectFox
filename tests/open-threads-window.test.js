@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 vi.mock('../core/log.js', () => ({ log: { warn: vi.fn() } }));
 import { mountOpenThreadsWindow } from '../ui/open-threads-window.js';
-import { threadsDigest } from '../core/continuity.js';
+import { continuityActionSnapshot, threadsDigest } from '../core/continuity.js';
 
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const click = text => [...document.querySelectorAll('button')].find(node => node.textContent === text).click();
@@ -110,8 +110,9 @@ describe('Open Threads window', () => {
         expect(continuityAction).not.toHaveBeenCalled();
         root.querySelector('[aria-label="Select thread 1"]').checked = true;
         root.querySelector('[aria-label="Outcome (optional)"]').value = 'Paid';
+        const expected = continuityActionSnapshot(event);
         click('Mark selected threads resolved'); await settle();
-        expect(continuityAction).toHaveBeenCalledWith('markEventResolved', 'a', 'e', [[1], 'Paid']);
+        expect(continuityAction).toHaveBeenCalledWith('markEventResolved', 'a', 'e', [[1], 'Paid'], expected);
         expect(deps.ensureIndex).toHaveBeenCalledTimes(2);
         expect(root.textContent).toContain('1 remaining / 1 closed');
         expect(root.textContent).toContain('Unmark selected threads');
@@ -129,11 +130,29 @@ describe('Open Threads window', () => {
         expect(root.textContent).toContain('Self-closure: repair');
         expect(root.textContent).toContain('External resolution link stored on resolver');
         click('Remove link from resolver'); await settle();
-        expect(continuityAction).toHaveBeenLastCalledWith('removeResolutionLink', 'a', 'e', ['resolver', link]);
+        expect(continuityAction).toHaveBeenLastCalledWith('removeResolutionLink', 'a', 'e', ['resolver', link], continuityActionSnapshot(resolver));
         click('Reopen self-closure'); await settle();
-        expect(continuityAction).toHaveBeenLastCalledWith('reopenEventSelfClosure', 'a', 'e', []);
+        expect(continuityAction).toHaveBeenLastCalledWith('reopenEventSelfClosure', 'a', 'e', [], continuityActionSnapshot(event));
         click('Unmark selected threads'); await settle();
-        expect(continuityAction).toHaveBeenLastCalledWith('unmarkEventResolved', 'a', 'e', [[]]);
+        expect(continuityAction).toHaveBeenLastCalledWith('unmarkEventResolved', 'a', 'e', [[]], continuityActionSnapshot(event));
+    });
+
+    it('refreshes again after a write completes despite a same-scope refresh during the write', async () => {
+        let finish;
+        const event = { event_id: 'e', open_threads: ['pending'] };
+        const continuityAction = vi.fn(async () => {
+            await new Promise(resolve => { finish = resolve; });
+            event.continuity = { v: 1, closed_threads: { threads: 'all', threads_digest: threadsDigest(event), origin: 'user', status: 'active' } };
+        });
+        const { root, deps } = mount([event], { continuityAction }); await settle();
+        change('Show closed threads', true, true);
+        click('Mark resolved — all'); click('Refresh'); await settle();
+        expect(root.textContent).toContain('1 remaining threads');
+        finish(); await settle();
+        expect(deps.ensureIndex).toHaveBeenCalledTimes(3);
+        expect(root.textContent).toContain('0 remaining threads');
+        expect(root.textContent).toContain('Closed: pending');
+        expect(root.textContent).toContain('Unmark');
     });
 
     it('reports write failures and allows retry without changing the displayed verdict', async () => {

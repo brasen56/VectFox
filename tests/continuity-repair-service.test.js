@@ -5,6 +5,7 @@ vi.mock('../../../../extensions.js', () => ({ extension_settings: mocks.settings
 vi.mock('../../../../../script.js', () => ({ saveSettingsDebounced: mocks.save }));
 vi.mock('../core/character-roster.js', () => ({
     rosterCollectionId: key => key.replace(/^qdrant:/, ''),
+    rosterCollectionKey: key => key.includes(':') ? key : `qdrant:${key}`,
     ensureCharacterIndex: async () => ({ ready: true, events: mocks.events }),
     getCharacterRoster: () => ({ groups: [] }),
     upsertCharacterEvents: (id, items) => items.forEach(item => mocks.events.set(item.metadata.event_id, item.metadata)),
@@ -15,7 +16,7 @@ vi.mock('../core/collection-export.js', () => ({ fetchChunksWithVectors: mocks.f
 vi.mock('../core/llm-provider-call.js', () => ({ postChatCompletion: mocks.post, resolveModelParameterStyle: () => ({}), parseJsonArrayFromLlm: text => JSON.parse(text) }));
 vi.mock('../core/generation-rate-limiter.js', () => ({ generationRateLimiter: { execute: mocks.execute }, generationRateLimitSettings: () => ({}) }));
 import { createContinuityRepair, markEventResolved, unmarkEventResolved, reopenEventSelfClosure, removeResolutionLink, repairConfiguration, continuityCollection } from '../core/continuity-repair-service.js';
-import { getContinuityView, threadsDigest } from '../core/continuity.js';
+import { continuityActionSnapshot, getContinuityView, threadsDigest } from '../core/continuity.js';
 
 beforeEach(() => {
     vi.clearAllMocks(); mocks.supported = true; mocks.settings.vectfox = {};
@@ -28,6 +29,22 @@ beforeEach(() => {
 });
 
 describe('continuity repair browser adapter', () => {
+    it.each(['mark', 'unmark', 'reopen', 'remove'])('rejects changes since review before %s can PATCH', async action => {
+        const event = mocks.events.get('e1');
+        event.continuity = { v: 1, closed_threads: { threads: 'all', threads_digest: threadsDigest(event),
+            origin: action === 'unmark' ? 'user' : 'repair', status: 'active' } };
+        const expected = continuityActionSnapshot(event);
+        mocks.events.set('e1', { ...event, hash: 99, summary: 'Replacement', open_threads: ['Unrelated replacement'] });
+        const invoke = () => action === 'mark' ? markEventResolved('collection', 'e1', {}, [0], 'Paid', expected)
+            : action === 'unmark' ? unmarkEventResolved('collection', 'e1', {}, [0], expected)
+                : action === 'reopen' ? reopenEventSelfClosure('collection', 'e1', {}, expected)
+                    : removeResolutionLink('collection', 'e1', {}, {}, expected);
+        await expect(invoke()).rejects.toThrow('Refresh and review');
+        mocks.events.set('e1', { ...event, continuity: { ...event.continuity, closed_threads: { ...event.continuity.closed_threads, how: 'New closure' } } });
+        await expect(invoke()).rejects.toThrow('Refresh and review');
+        expect(mocks.write).not.toHaveBeenCalled();
+    });
+
     it.each([true, false])('reloads changed hashes and excludes stale exported vectors (fresh: %s)', async fresh => {
         const original = mocks.events.get('e1');
         mocks.events.set('copy', { ...original, event_id: 'copy', hash: 2 });

@@ -5,6 +5,7 @@ import { buildResolvedBy, isActiveDuplicate } from './continuity.js';
 import { continuityBackendNamespace } from './continuity-scope.js';
 import { subjectRegistryKey } from './continuity-subjects.js';
 import { HONORIFICS } from './character-cleanup.js';
+import { normalizeBackendForId, resolveBackendForCollection } from './collection-id-routing.js';
 
 export const CHARACTER_ROSTER_DEFAULTS = Object.freeze({
     eventbase_lead_share_threshold: 0.25,
@@ -22,6 +23,13 @@ const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u;
 
 export function rosterCollectionId(id) {
     return String(id || '').replace(/^(?:qdrant|standard|vectra):/, '');
+}
+
+/** Bare IDs follow the same routing as backend APIs; legacy vectra is Standard. */
+export function rosterCollectionKey(collectionId, settings = {}) {
+    const resolved = resolveBackendForCollection(collectionId);
+    const backend = normalizeBackendForId(resolved.backend || settings.vector_backend || 'standard');
+    return `${backend}:${resolved.collectionId}`;
 }
 
 /** Exact stored spellings; ignoring one tag must not hide similarly named people. */
@@ -69,35 +77,56 @@ function slimEvent(item) {
     };
 }
 
+/** A caller may stop waiting without cancelling a session-shared metadata build. */
+function waitForIndex(entry, options) {
+    const { signal, maxRecords = Infinity } = options;
+    if (!signal && maxRecords === Infinity) return entry.promise;
+    return new Promise((resolve, reject) => {
+        const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
+        if (signal?.aborted) { reject(signal.reason); return; }
+        signal?.addEventListener('abort', abort, { once: true });
+        entry.promise.then(result => {
+            signal?.removeEventListener('abort', abort);
+            if (signal?.aborted) return;
+            resolve(result && (result.scannedRecords ?? result.events.size) > maxRecords ? null : result);
+        }, error => { signal?.removeEventListener('abort', abort); reject(error); });
+    });
+}
+
 /** Coalesced lazy build. Invalidation detaches the entry so an old fetch cannot revive it. */
 export function ensureCharacterIndex(collectionId, settings, loadBackend = null, options = {}) {
     const id = rosterCollectionId(collectionId);
     if (!id) return Promise.resolve(null);
-    const existing = indexes.get(id);
-    if (existing) return existing.promise;
-    const entry = { ready: false, events: new Map(), mutations: new Map(), revision: 0, promise: null };
-    indexes.set(id, entry);
+    const key = rosterCollectionKey(collectionId, settings);
+    const existing = indexes.get(key);
+    if (options.signal?.aborted) return Promise.reject(options.signal.reason);
+    if (existing) {
+        // A broader consumer may extend the shared scan, but cannot relax another
+        // caller's acceptance ceiling (checked separately by waitForIndex).
+        existing.maxRecords = Math.max(existing.maxRecords, options.maxRecords ?? Infinity);
+        return waitForIndex(existing, options);
+    }
+    const entry = { ready: false, events: new Map(), mutations: new Map(), revision: 0, promise: null,
+        maxRecords: options.maxRecords ?? Infinity };
+    indexes.set(key, entry);
     entry.promise = (async () => {
         try {
             let backend;
             if (loadBackend) backend = await loadBackend(id, settings);
             else {
                 const { getBackend, getBackendForCollection } = await import('../backends/backend-manager.js');
-                const { resolveBackendForCollection } = await import('./collection-ids.js');
-                const resolved = resolveBackendForCollection(collectionId);
+                const resolved = resolveBackendForCollection(key);
                 backend = resolved.backend ? await getBackendForCollection(resolved.backend, settings) : await getBackend(settings);
             }
             entry.continuitySupported = backend.pluginAvailable !== false;
             let revision = entry.revision;
             for (let offset = 0; ; ) {
-                options.signal?.throwIfAborted();
-                const limit = Math.min(options.pageSize || LIST_LIMIT, (options.maxRecords ?? Infinity) - offset);
+                const limit = Math.min(options.pageSize || LIST_LIMIT, entry.maxRecords - offset);
                 if (limit <= 0) throw new Error('Roster metadata scan limit reached');
                 const result = await backend.listChunks(id, settings, { offset, limit });
-                options.signal?.throwIfAborted();
-                if (indexes.get(id) !== entry) return null;
+                if (indexes.get(key) !== entry) return null;
                 if (!Array.isArray(result?.items)) throw new Error('Invalid listChunks response');
-                if (result.items.length > limit || result.total > (options.maxRecords ?? Infinity)) {
+                if (result.items.length > limit || result.total > entry.maxRecords) {
                     throw new Error('Roster metadata scan limit reached');
                 }
                 // A mutation can move untouched records behind an already-read offset.
@@ -131,22 +160,22 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null,
             entry.ready = true;
             return entry;
         } catch (err) {
-            if (indexes.get(id) === entry) indexes.delete(id); // Retry on next warm-up.
+            if (indexes.get(key) === entry) indexes.delete(key); // Retry on next warm-up.
             log.warn(`[Character roster] Failed to index ${id}:`, err?.message || err);
             return null;
         }
     })();
-    return entry.promise;
+    return waitForIndex(entry, options);
 }
 
-export function invalidateCharacterIndex(collectionId) {
+export function invalidateCharacterIndex(collectionId, settings = {}) {
     archiveRevision++;
-    indexes.delete(rosterCollectionId(collectionId));
+    indexes.delete(rosterCollectionKey(collectionId, settings));
 }
 
-export function upsertCharacterEvents(collectionId, items) {
+export function upsertCharacterEvents(collectionId, items, settings = {}) {
     archiveRevision++;
-    const entry = indexes.get(rosterCollectionId(collectionId));
+    const entry = indexes.get(rosterCollectionKey(collectionId, settings));
     if (!entry) return;
     for (const item of items) {
         const event = slimEvent(item);
@@ -161,9 +190,9 @@ export function upsertCharacterEvents(collectionId, items) {
     entry.resolvedBy = buildResolvedBy(entry.events.values());
 }
 
-export function pruneCharacterEvents(collectionId, hashes) {
+export function pruneCharacterEvents(collectionId, hashes, settings = {}) {
     archiveRevision++;
-    const entry = indexes.get(rosterCollectionId(collectionId));
+    const entry = indexes.get(rosterCollectionKey(collectionId, settings));
     if (!entry) return;
     const removed = new Set(hashes);
     if (!entry.ready && removed.size) {
@@ -269,8 +298,9 @@ export function getCharacterRoster(collectionIds, settings = {}) {
     const overrides = [];
     const pendingCollections = [];
     const unsupportedCollections = [];
-    for (const id of new Set(collectionIds.map(rosterCollectionId))) {
-        const entry = indexes.get(id);
+    for (const key of new Set(collectionIds.map(id => rosterCollectionKey(id, settings)))) {
+        const id = rosterCollectionId(key);
+        const entry = indexes.get(key);
         if (!entry?.ready) { pendingCollections.push(id); continue; }
         if (entry.continuitySupported === false) unsupportedCollections.push(id);
         const ignored = new Set(getIgnoredCharacterTags(id, settings));

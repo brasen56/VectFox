@@ -915,13 +915,13 @@ export async function insertVectorItems(collectionId, items, settings, onProgres
         // must rebuild instead of returning pre-write df values. Fire-and-forget.
         _invalidateCorpusStats(collectionId, `insert ${items.length} item(s)`);
         const { upsertCharacterEvents } = await import('./character-roster.js');
-        upsertCharacterEvents(collectionId, items);
+        upsertCharacterEvents(collectionId, items, settings);
     } catch (error) {
         // VEC-18: Record error
         recordError(settings?.vector_backend || 'standard', error);
         // A batched insert can fail after earlier batches have committed.
         const { invalidateCharacterIndex } = await import('./character-roster.js');
-        invalidateCharacterIndex(collectionId);
+        invalidateCharacterIndex(collectionId, settings);
         throw error;
     }
 }
@@ -1019,7 +1019,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
 
         totalProcessed += itemsToWrite.length;
         const { upsertCharacterEvents } = await import('./character-roster.js');
-        upsertCharacterEvents(collectionId, itemsToWrite);
+        upsertCharacterEvents(collectionId, itemsToWrite, settings);
 
         // Update progress
         if (onProgress) {
@@ -1051,7 +1051,7 @@ export async function deleteVectorItems(collectionId, hashes, settings) {
         // Stale-stats fix: corpus shrank.
         _invalidateCorpusStats(collectionId, `delete ${hashes?.length || 0} hash(es)`);
         const { pruneCharacterEvents } = await import('./character-roster.js');
-        pruneCharacterEvents(collectionId, hashes);
+        pruneCharacterEvents(collectionId, hashes, settings);
         return result;
     } catch (error) {
         // VEC-18: Record error
@@ -1446,7 +1446,7 @@ export async function purgeVectorIndex(collectionId, settings) {
         // Stale-stats fix: entire collection is gone.
         _invalidateCorpusStats(collectionId, 'purge');
         const { invalidateCharacterIndex } = await import('./character-roster.js');
-        invalidateCharacterIndex(collectionId);
+        invalidateCharacterIndex(collectionId, settings);
         return true;
     } catch (error) {
         // VEC-33: Invalidate health cache on operation error
@@ -1519,7 +1519,7 @@ export async function updateChunkText(collectionId, hash, newText, settings) {
     const backend = await getBackend(settings);
     const result = await backend.updateChunkText(collectionId, hash, newText, settings);
     const { invalidateCharacterIndex } = await import('./character-roster.js');
-    invalidateCharacterIndex(collectionId);
+    invalidateCharacterIndex(collectionId, settings);
     return result;
 }
 
@@ -1534,6 +1534,6 @@ export async function updateChunkMetadata(collectionId, hash, metadata, settings
     const backend = await getBackend(settings);
     const result = await backend.updateChunkMetadata(collectionId, hash, metadata, settings);
     const { invalidateCharacterIndex } = await import('./character-roster.js');
-    invalidateCharacterIndex(collectionId);
+    invalidateCharacterIndex(collectionId, settings);
     return result;
 }
