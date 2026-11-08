@@ -1,8 +1,10 @@
 /* Override the shared flex modal: sections must not shrink as results grow. */
 .vectfox-modal-content.vf-ot { display: block; width: min(1100px, 94vw); max-width: 1100px; max-height: 90vh; max-height: 90dvh; overflow: auto; padding: 1rem; color: var(--SmartThemeBodyColor, #ddd); }
 .vf-ot { overflow-wrap: anywhere; }
-.vf-ot header, .vf-ot-filters, .vf-ot-paging { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+.vf-ot header, .vf-ot-filters, .vf-ot-actions, .vf-ot-paging { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
 .vf-ot header { justify-content: space-between; }
+/* Host menu buttons may use min-content sizing; keep labels at a readable width. */
+.vf-ot button.menu_button { display: inline-block; box-sizing: border-box; width: auto; max-width: 100%; flex: 0 0 auto; white-space: normal; overflow-wrap: normal; word-break: normal; }
 .vf-ot label { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; min-width: 0; }
 .vf-ot select, .vf-ot input[type="number"] { box-sizing: border-box; min-width: 0; max-width: 100%; padding: .5rem; border: 1px solid var(--SmartThemeBorderColor, #666); border-radius: .5rem; background: var(--SmartThemeBlurTintColor, #242424); color: var(--SmartThemeBodyColor, #ddd); font: inherit; }
 .vf-ot option { background: var(--SmartThemeBlurTintColor, #242424); color: var(--SmartThemeBodyColor, #ddd); white-space: nowrap; overflow-wrap: normal; word-break: normal; }
@@ -15,7 +17,7 @@
 .vf-ot input[type="number"] { width: 5rem; }
 .vf-ot-results article { border: 1px solid var(--SmartThemeBorderColor, #666); border-radius: .5rem; padding: 1rem; margin: .75rem 0; overflow-wrap: anywhere; }
 .vf-ot-results li { margin: .5rem 0; white-space: pre-wrap; }
-.vf-ot-results button { text-align: left; overflow-wrap: anywhere; white-space: normal; }
+.vf-ot button.vf-ot-source { width: 100%; text-align: left; overflow-wrap: anywhere; }
 .vf-continuity-actions { margin-top: .75rem; }
 .vf-continuity-actions label { display: block; margin: .4rem 0; }
 .vf-continuity-actions button { margin: .25rem; }

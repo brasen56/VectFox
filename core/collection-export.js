@@ -87,8 +87,8 @@ export async function fetchChunksWithVectors(collectionId, settings) {
         body: JSON.stringify({
             backend: backendName === 'standard' ? 'vectra' : backendName,
             collectionId: collectionId,
-            source: settings.embedding_provider || 'transformers',
-            model: getModelFromSettings(settings),
+            source: settings.collection_storage?.source ?? settings.embedding_provider ?? 'transformers',
+            model: settings.collection_storage?.model ?? getModelFromSettings(settings),
             limit: 50000, // High limit to get all chunks
             includeVectors: true, // Include the actual embedding vectors
             // Qdrant scroll batch — pure read, no indexing overhead, so push past the

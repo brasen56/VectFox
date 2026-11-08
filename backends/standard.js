@@ -927,8 +927,8 @@ export class StandardBackend extends VectorBackend {
                     body: JSON.stringify({
                         backend: 'vectra',
                         collectionId: collectionId,
-                        source: settings.embedding_provider || 'transformers',
-                        model: getModelFromSettings(settings),
+                        source: settings.collection_storage?.source ?? settings.embedding_provider ?? 'transformers',
+                        model: settings.collection_storage?.model ?? getModelFromSettings(settings),
                         offset: options.offset || 0,
                         limit: options.limit || 100,
                         includeVectors: options.includeVectors || false,
@@ -1044,8 +1044,8 @@ export class StandardBackend extends VectorBackend {
                 backend: 'vectra',
                 collectionId: collectionId,
                 metadata: metadata,
-                source: settings.embedding_provider || 'transformers',
-                model: getModelFromSettings(settings),
+                source: settings.collection_storage?.source ?? settings.embedding_provider ?? 'transformers',
+                model: settings.collection_storage?.model ?? getModelFromSettings(settings),
             }),
         });
 

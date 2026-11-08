@@ -49,6 +49,40 @@ describe('Open Threads window', () => {
             }
         } finally { style.remove(); }
     });
+    it('keeps every panel button content-sized despite compact host menu-button styles', async () => {
+        const style = document.createElement('style');
+        style.textContent = '.menu_button { display: flex; width: min-content; overflow-wrap: anywhere; word-break: break-all; }'
+            + readFileSync('ui/open-threads.css', 'utf8');
+        document.head.append(style);
+        try {
+            const { root } = mount([{ event_id: 'e', open_threads: ['pending'] }], { continuityAction: vi.fn() });
+            await settle();
+            const toolbar = root.querySelector('.vf-ot-actions');
+            expect(toolbar).not.toBeNull();
+            expect([...toolbar.querySelectorAll('button')].map(node => node.textContent)).toEqual(['Refresh', 'Cancel load']);
+            for (const row of [toolbar, root.querySelector('.vf-ot-paging')]) {
+                expect(getComputedStyle(row).display).toBe('flex');
+                expect(getComputedStyle(row).flexWrap).toBe('wrap');
+            }
+            expect(root.querySelector('.vf-continuity-actions button')).not.toBeNull();
+            for (const button of root.querySelectorAll('button')) {
+                const computed = getComputedStyle(button);
+                expect(computed.display).toBe('inline-block');
+                expect(computed.boxSizing).toBe('border-box');
+                expect(computed.maxWidth).toBe('100%');
+                expect(computed.whiteSpace).toBe('normal');
+                expect(computed.wordBreak).toBe('normal');
+                if (button.classList.contains('vf-ot-source')) {
+                    expect(computed.width).toBe('100%');
+                    expect(computed.overflowWrap).toBe('anywhere');
+                } else {
+                    expect(computed.width).toBe('auto');
+                    expect(computed.overflowWrap).toBe('normal');
+                }
+            }
+            expect(root.querySelectorAll('.vf-ot-source')).toHaveLength(1);
+        } finally { style.remove(); }
+    });
     it('preserves long collection identifiers and exposes the full name as a tooltip', async () => {
         const collection = `qdrant:VectFox_${'long_archive_name_'.repeat(20)}`;
         const root = document.createElement('div'); document.body.append(root);

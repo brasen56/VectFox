@@ -24,7 +24,7 @@ export function threadsDigest(event) {
 /** Immutable precondition captured from the evidence displayed by manual controls. */
 export function continuityActionSnapshot(event) {
     return { eventId: event.event_id, hash: event.hash, digest: threadsDigest(event),
-        continuity: JSON.stringify(event.continuity) };
+        continuity: JSON.stringify(event.continuity), storageIdentity: event._storageIdentity };
 }
 
 export function buildResolvedBy(events) {

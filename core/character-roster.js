@@ -6,6 +6,7 @@ import { continuityBackendNamespace } from './continuity-scope.js';
 import { subjectRegistryKey } from './continuity-subjects.js';
 import { HONORIFICS } from './character-cleanup.js';
 import { normalizeBackendForId, resolveBackendForCollection } from './collection-id-routing.js';
+import { resolveCollectionStorage, collectionStorageSettings } from './collection-storage.js';
 
 export const CHARACTER_ROSTER_DEFAULTS = Object.freeze({
     eventbase_lead_share_threshold: 0.25,
@@ -52,6 +53,7 @@ function slimEvent(item) {
     return {
         event_id: event.event_id,
         hash: item.hash,
+        _storageIdentity: event._storageIdentity,
         // EventBase keeps the summary only in the embed text, and the Qdrant
         // plugin stores `summary: null` on every point, so null must not win.
         summary: String(event.summary || parsed.summary || '').split(/\r?\n/)[0],
@@ -98,6 +100,19 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null,
     const id = rosterCollectionId(collectionId);
     if (!id) return Promise.resolve(null);
     const key = rosterCollectionKey(collectionId, settings);
+    if (!loadBackend && !options.storage && !indexes.get(key)?.injectedBackend) {
+        return resolveCollectionStorage(key, settings).then(storage =>
+            ensureCharacterIndex(collectionId, settings, null, { ...options, storage })
+        ).catch(error => {
+            log.warn(`[Character roster] Storage unavailable for ${id}:`, error.message);
+            return null;
+        });
+    }
+    const storage = options.storage;
+    if (storage && indexes.get(key)?.storage?.identity !== storage.identity) {
+        if (indexes.has(key)) archiveRevision++;
+        indexes.delete(key);
+    }
     const existing = indexes.get(key);
     if (options.signal?.aborted) return Promise.reject(options.signal.reason);
     if (existing) {
@@ -107,7 +122,7 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null,
         return waitForIndex(existing, options);
     }
     const entry = { ready: false, events: new Map(), mutations: new Map(), revision: 0, promise: null,
-        maxRecords: options.maxRecords ?? Infinity };
+        maxRecords: options.maxRecords ?? Infinity, storage, injectedBackend: !!loadBackend };
     indexes.set(key, entry);
     entry.promise = (async () => {
         try {
@@ -123,7 +138,7 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null,
             for (let offset = 0; ; ) {
                 const limit = Math.min(options.pageSize || LIST_LIMIT, entry.maxRecords - offset);
                 if (limit <= 0) throw new Error('Roster metadata scan limit reached');
-                const result = await backend.listChunks(id, settings, { offset, limit });
+                const result = await backend.listChunks(id, storage ? collectionStorageSettings(settings, storage) : settings, { offset, limit });
                 if (indexes.get(key) !== entry) return null;
                 if (!Array.isArray(result?.items)) throw new Error('Invalid listChunks response');
                 if (result.items.length > limit || result.total > entry.maxRecords) {
@@ -142,7 +157,7 @@ export function ensureCharacterIndex(collectionId, settings, loadBackend = null,
                 }
                 for (const item of items) {
                     const event = slimEvent(item);
-                    if (event) entry.events.set(event.event_id, event);
+                    if (event) entry.events.set(event.event_id, { ...event, _storageIdentity: storage?.identity });
                 }
                 offset += items.length;
                 entry.scannedRecords = offset;
@@ -180,6 +195,7 @@ export function upsertCharacterEvents(collectionId, items, settings = {}) {
     for (const item of items) {
         const event = slimEvent(item);
         if (!event) continue;
+        event._storageIdentity = entry.storage?.identity;
         if (!entry.ready) {
             entry.mutations.set(item.hash, event);
             entry.revision++;

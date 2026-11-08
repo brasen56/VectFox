@@ -82,6 +82,7 @@ import {
   isVectFoxPNG,
 } from "../core/png-export.js";
 import { renderSizeInspectorTab } from "./size-inspector.js";
+import { findCollectionByIdentity, collectionStorageDescriptor } from "../core/collection-storage.js";
 
 // Browser state
 // checkPluginAvailable() is imported from ../core/collection-loader.js —
@@ -1339,11 +1340,12 @@ async function openChunkVisualizer(collection, focusEventId = null) {
     };
 
     const doLoad = async (limit) => {
+      const storage = collectionStorageDescriptor(collection);
       const requestBody = {
         backend: collection.backend || "vectra",
         collectionId: collection.id,
-        source: collection.source || "transformers",
-        model: collection.model || "",
+        source: storage.source,
+        model: storage.model,
         ...(limit ? { limit } : {}),
       };
 
@@ -1400,9 +1402,7 @@ async function openChunkVisualizer(collection, focusEventId = null) {
 /** Internal UI citation target; not part of the public event API. */
 export async function openDatabaseEvent(collectionKey, eventId) {
   await openDatabaseBrowser();
-  const bare = String(collectionKey).replace(/^(?:qdrant|standard|vectra):/, '');
-  const collection = browserState.collections.find(item => item.id === collectionKey
-    || (item.id === bare && (!String(collectionKey).includes(':') || collectionKey.startsWith(`${item.backend}:`))));
+  const collection = findCollectionByIdentity(browserState.collections, collectionKey, browserState.settings);
   if (!collection) throw new Error(`Collection unavailable: ${collectionKey}`);
   await openChunkVisualizer(collection, eventId);
 }

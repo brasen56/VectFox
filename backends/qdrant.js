@@ -764,8 +764,8 @@ export class QdrantBackend extends VectorBackend {
             body: JSON.stringify({
                 backend: BACKEND_TYPE,
                 collectionId: actualCollectionId, // Use separate collection per content type
-                source: settings.embedding_provider || 'transformers',
-                model: getModelFromSettings(settings),
+                source: settings.collection_storage?.source ?? settings.embedding_provider ?? 'transformers',
+                model: settings.collection_storage?.model ?? getModelFromSettings(settings),
                 offset: options.offset || 0,
                 limit: options.limit || 100,
                 includeVectors: options.includeVectors || false,
@@ -817,8 +817,8 @@ export class QdrantBackend extends VectorBackend {
                 backend: BACKEND_TYPE,
                 collectionId: actualCollectionId, // Use separate collection per content type
                 metadata: metadata,
-                source: settings.embedding_provider || 'transformers',
-                model: getModelFromSettings(settings),
+                source: settings.collection_storage?.source ?? settings.embedding_provider ?? 'transformers',
+                model: settings.collection_storage?.model ?? getModelFromSettings(settings),
             }),
         });
 

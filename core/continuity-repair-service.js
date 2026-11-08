@@ -9,6 +9,7 @@ import { postChatCompletion, parseJsonArrayFromLlm, resolveModelParameterStyle }
 import { generationRateLimiter, generationRateLimitSettings } from './generation-rate-limiter.js';
 import { ContinuityRepair, repairLanguageMode } from './continuity-repair.js';
 import { threadsDigest, continuityActionSnapshot } from './continuity.js';
+import { collectionStorageSettings } from './collection-storage.js';
 
 const collectionOperations = new Map();
 const eventWrites = new Map();
@@ -37,17 +38,24 @@ export async function continuityCollection(collectionKey, settings) {
     };
     const entry = await currentEntry();
     const write = (event, continuity, expected = null) => serializeEventWrite(JSON.stringify([collectionKey, event.event_id]), async () => {
-        const latest = (await currentEntry()).events.get(event.event_id);
+        const latestEntry = await currentEntry();
+        const latest = latestEntry.events.get(event.event_id);
         assertReviewedEvent(latest, expected);
-        if (!latest || latest.hash !== event.hash || threadsDigest(latest) !== threadsDigest(event)
+        if (!latest || latest._storageIdentity !== event._storageIdentity || latest.hash !== event.hash || threadsDigest(latest) !== threadsDigest(event)
             || JSON.stringify(latest.continuity) !== JSON.stringify(event.continuity)) {
             throw new Error('Event changed before continuity write. Refresh and review the current inventory before trying again.');
         }
         // Metadata PATCH changes no text, vector, archive fields or extraction bookkeeping.
-        const result = await backend.updateChunkMetadata(id, event.hash, { continuity }, settings);
+        const writeSettings = latestEntry.storage ? collectionStorageSettings(settings, latestEntry.storage) : settings;
+        const result = await backend.updateChunkMetadata(id, event.hash, { continuity }, writeSettings);
         if (result?.success === false) throw new Error(result.error || 'Continuity write failed');
-        const current = (await currentEntry()).events.get(event.event_id);
-        if (current) upsertCharacterEvents(collectionKey, [{ hash: current.hash, metadata: { ...current, continuity } }], settings);
+        const refreshed = await currentEntry();
+        const current = refreshed.events.get(event.event_id);
+        // A preferred bucket may change while PATCH is in flight. Never copy its
+        // result into an entry for another physical storage location.
+        if (current && refreshed.storage?.identity === latestEntry.storage?.identity) {
+            upsertCharacterEvents(collectionKey, [{ hash: current.hash, metadata: { ...current, continuity } }], settings);
+        }
     });
     return { id, key: collectionKey, entry, backend, write, currentEntry };
 }
@@ -62,7 +70,8 @@ export async function createContinuityRepair(collectionKey, settings, override =
     const context = await continuityCollection(collectionKey, settings);
     const { provider, model, url } = repairConfiguration(settings, override);
     if (!model || !['openrouter', 'vllm'].includes(provider)) throw new Error('Select a valid repair provider and model');
-    const vectorSettings = { ...settings, vector_backend: context.backend.type || resolveBackendForCollection(collectionKey).backend || settings.vector_backend };
+    const vectorSettings = context.entry.storage ? collectionStorageSettings(settings, context.entry.storage)
+        : { ...settings, vector_backend: context.backend.type || resolveBackendForCollection(collectionKey).backend || settings.vector_backend };
     let vectors = new Map(), vectorHashes = new Map();
     const loadVectors = async events => {
         const raw = await fetchChunksWithVectors(context.id, vectorSettings);

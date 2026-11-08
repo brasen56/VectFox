@@ -12,6 +12,13 @@ vi.mock('../core/collection-export.js', () => ({ fetchChunksWithVectors: vi.fn()
 vi.mock('../core/llm-provider-call.js', () => ({ postChatCompletion: vi.fn(), parseJsonArrayFromLlm: vi.fn(), resolveModelParameterStyle: vi.fn() }));
 vi.mock('../core/generation-rate-limiter.js', () => ({ generationRateLimiter: {}, generationRateLimitSettings: vi.fn() }));
 vi.mock('../core/log.js', () => ({ log: { warn: vi.fn() } }));
+vi.mock('../core/collection-storage.js', async importOriginal => ({
+    ...await importOriginal(),
+    resolveCollectionStorage: async key => {
+        const backend = key.split(':')[0];
+        return { backend, source: 'transformers', model: '', identity: backend };
+    },
+}));
 
 import { ensureCharacterIndex, getCharacterRoster, invalidateCharacterIndex, pruneCharacterEvents, upsertCharacterEvents } from '../core/character-roster.js';
 import { markEventResolved, removeResolutionLink, reopenEventSelfClosure } from '../core/continuity-repair-service.js';
@@ -38,7 +45,8 @@ describe('canonical cache and continuity write isolation', () => {
         expect(await ensureCharacterIndex(`vectra:${id}`, {})).toBe(s);
         await markEventResolved(`standard:${id}`, 'e', {}, [0]);
         expect(mocks.backends.standard.updateChunkMetadata).toHaveBeenCalledWith(id, 'standard',
-            { continuity: expect.objectContaining({ closed_threads: expect.objectContaining({ threads: [0] }) }) }, {});
+            { continuity: expect.objectContaining({ closed_threads: expect.objectContaining({ threads: [0] }) }) },
+            expect.objectContaining({ embedding_provider: 'transformers', collection_storage: expect.objectContaining({ identity: 'standard' }) }));
         expect(q.events.get('e').continuity).toBeUndefined();
         const link = { event_id: 'other', threads: 'all', status: 'active' };
         const stored = s.events.get('e');

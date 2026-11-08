@@ -53,15 +53,19 @@ export function mountOpenThreadsWindow({ root, settings, collections, activeColl
     const audit = el('input', null, auditLabel); audit.type = 'checkbox';
     audit.setAttribute('aria-label', 'Show closed threads');
     auditLabel.append(document.createTextNode(' Show closed threads (audit)'));
-    const actions = el('div');
+    const actions = el('div'); actions.className = 'vf-ot-actions';
     const status = el('p'); status.setAttribute('role', 'status');
     const output = el('div'); output.className = 'vf-ot-results';
     const paging = el('div'); paging.className = 'vf-ot-paging';
     const selectedScope = () => [...scope.selectedOptions].map(option => option.value);
-    const cite = (collection, event, parent) => button(`${collection} / ${event.event_id} — View source event`, async () => {
-        try { await deps.openEvent(collection, event.event_id); }
-        catch (error) { if (!closed) status.textContent = `Source view unavailable: ${error.message}`; }
-    }, parent);
+    const cite = (collection, event, parent) => {
+        const source = button(`${collection} / ${event.event_id} — View source event`, async () => {
+            try { await deps.openEvent(collection, event.event_id); }
+            catch (error) { if (!closed) status.textContent = `Source view unavailable: ${error.message}`; }
+        }, parent);
+        source.classList.add('vf-ot-source');
+        return source;
+    };
     const render = () => {
         output.replaceChildren(); paging.replaceChildren();
         if (!snapshot || closed) return;
