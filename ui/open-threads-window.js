@@ -37,7 +37,7 @@ export function mountOpenThreadsWindow({ root, settings, collections, activeColl
     scope.multiple = true; scope.size = Math.min(5, Math.max(2, collections.length));
     scope.setAttribute('aria-label', 'Collection scope');
     for (const key of [...new Set([activeCollection, ...collections].filter(Boolean))]) {
-        const option = el('option', key, scope); option.value = key; option.selected = key === activeCollection;
+        const option = el('option', key, scope); option.value = key; option.title = key; option.selected = key === activeCollection;
     }
     const filters = el('div'); filters.className = 'vf-ot-filters';
     const castLabel = el('label', 'Cast group');

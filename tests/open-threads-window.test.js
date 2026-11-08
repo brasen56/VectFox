@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 vi.mock('../core/log.js', () => ({ log: { warn: vi.fn() } }));
 import { mountOpenThreadsWindow } from '../ui/open-threads-window.js';
 import { threadsDigest } from '../core/continuity.js';
@@ -22,6 +23,47 @@ const mount = (events, extra = {}) => {
 };
 
 describe('Open Threads window', () => {
+    it('overrides the shared modal layout and explicitly themes the form controls', () => {
+        const style = document.createElement('style');
+        // jsdom cannot resolve custom properties in background shorthands.
+        style.textContent = (readFileSync('styles/modals.css', 'utf8')
+            + readFileSync('ui/open-threads.css', 'utf8'))
+            .replace(/var\(--SmartThemeBlurTintColor(?:,[^)]*)?\)/g, '#242424')
+            .replace(/var\(--SmartThemeBodyColor(?:,[^)]*)?\)/g, '#ddd');
+        document.head.append(style);
+        try {
+            const { root } = mount([]);
+            root.classList.add('vectfox-modal-content');
+            expect(getComputedStyle(root).display).toBe('block');
+            expect(getComputedStyle(root).overflow).toBe('auto');
+            expect(getComputedStyle(root).maxWidth).toBe('1100px');
+            const scope = root.querySelector('[aria-label="Collection scope"]');
+            expect(getComputedStyle(scope).width).toBe('100%');
+            expect(getComputedStyle(scope).whiteSpace).toBe('nowrap');
+            expect(getComputedStyle(scope.options[0]).whiteSpace).toBe('nowrap');
+            for (const control of [scope, scope.options[0], root.querySelector('[aria-label="Cast group"]'),
+                root.querySelector('[aria-label="Minimum importance"]')]) {
+                const computed = getComputedStyle(control);
+                expect(computed.backgroundColor).toBe('rgb(36, 36, 36)');
+                expect(computed.color).toBe('rgb(221, 221, 221)');
+            }
+        } finally { style.remove(); }
+    });
+    it('preserves long collection identifiers and exposes the full name as a tooltip', async () => {
+        const collection = `qdrant:VectFox_${'long_archive_name_'.repeat(20)}`;
+        const root = document.createElement('div'); document.body.append(root);
+        const ensureIndex = vi.fn(async () => ({ ready: true, events: new Map() }));
+        windowHandle = mountOpenThreadsWindow({ root, settings: {}, collections: [collection, 'other'],
+            activeCollection: collection, deps: { ensureIndex, onClose: () => root.remove() } });
+        await settle();
+        const scope = root.querySelector('[aria-label="Collection scope"]');
+        expect(scope.multiple).toBe(true);
+        expect(scope.size).toBe(2);
+        expect(scope.options[0].textContent).toBe(collection);
+        expect(scope.options[0].title).toBe(collection);
+        expect(scope.selectedOptions[0].value).toBe(collection);
+        expect(ensureIndex.mock.calls[0][0]).toBe(collection);
+    });
     it('renders safe metadata, partial sibling status, source links and opt-in audit without reloading on filters', async () => {
         const event = { event_id: 'issue', summary: '<img src=x> debt', open_threads: ['paid', '<script>unpaid</script>'],
             characters: ['Kai'], locations: ['Port'], keywords: ['loan'], importance: 8 };
